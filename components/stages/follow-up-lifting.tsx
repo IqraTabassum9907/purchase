@@ -1188,10 +1188,10 @@ export default function FollowUpLifting() {
                           {h.freightAmount ? `₹ ${parseFloat(String(h.freightAmount).replace(/,/g, '')).toLocaleString()}` : "-"}
                         </TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+                    )))
+                  )}
+                </TableBody>
+              </Table>
             </div>
           </div>
         </TabsContent>

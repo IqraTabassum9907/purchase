@@ -543,7 +543,7 @@ export default function ApprovedVendor() {
                         </TableCell>
                       </TableRow>
                     );
-                  })}
+                  }))}
                 </TableBody>
               </table>
             </div>

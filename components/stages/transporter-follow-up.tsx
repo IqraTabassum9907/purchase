@@ -727,7 +727,6 @@ export default function TransporterFollowUp() {
                                                 const val = rec.data[c.key];
 
 
-
                                                 // Planned, Actual & Expected Date Logic
                                                 if (c.key === "plannedDate" || c.key === "actualDate" || c.key === "expectedDate") {
                                                     return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{formatDateDash(val)}</TableCell>;
@@ -737,12 +736,10 @@ export default function TransporterFollowUp() {
                                                 return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{safeValue(val)}</TableCell>;
                                             })}
                                         </TableRow>
-                                    ))}
+                                    )))}
                                 </TableBody>
                             </table>
                         </div>
-
-                        )}
                     </TabsContent>
                 </Tabs>
             )}
