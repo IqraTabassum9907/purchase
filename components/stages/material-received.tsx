@@ -937,43 +937,45 @@ export default function Stage7() {
                     <>
                         {/* ---------- PENDING ---------- */}
                         <TabsContent value="pending" className="mt-0 outline-none">
-                            {pending.length === 0 ? (
-                                <div className="text-center py-12 text-gray-500">
-                                    <p className="text-lg">No pending receipts</p>
-                                </div>
-                            ) : (
-                                <div className="border rounded-lg overflow-x-auto h-[70vh] relative">
-                                    <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
-                                        <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
-                                            <TableRow className="hover:bg-transparent border-none">
-                                                {activeTab === "pending" && (
-                                                    <TableHead className="sticky left-0 z-40 bg-slate-200 w-[50px] border-b text-center">
-                                                        <Checkbox
-                                                            checked={
-                                                                pending.length > 0 &&
-                                                                selectedRecordIds.length === pending.length
+                            <div className="border rounded-lg overflow-x-auto h-[70vh] relative">
+                                <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
+                                    <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
+                                        <TableRow className="hover:bg-transparent border-none">
+                                            {activeTab === "pending" && (
+                                                <TableHead className="sticky left-0 z-40 bg-slate-200 w-[50px] border-b text-center">
+                                                    <Checkbox
+                                                        checked={
+                                                            pending.length > 0 &&
+                                                            selectedRecordIds.length === pending.length
+                                                        }
+                                                        onCheckedChange={(checked) => {
+                                                            if (checked) {
+                                                                setSelectedRecordIds(pending.map((r) => r.id));
+                                                            } else {
+                                                                setSelectedRecordIds([]);
                                                             }
-                                                            onCheckedChange={(checked) => {
-                                                                if (checked) {
-                                                                    setSelectedRecordIds(pending.map((r) => r.id));
-                                                                } else {
-                                                                    setSelectedRecordIds([]);
-                                                                }
-                                                            }}
-                                                        />
-                                                    </TableHead>
-                                                )}
-                                                <TableHead className="sticky left-[50px] z-40 bg-slate-200 w-[150px] border-b text-center whitespace-nowrap px-4">Actions</TableHead>
-                                                {PENDING_COLUMNS.filter((c) =>
-                                                    selectedPendingColumns.includes(c.key)
-                                                ).map((c) => (
-                                                    <TableHead key={c.key} className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap">{c.label}</TableHead>
-                                                ))}
+                                                        }}
+                                                    />
+                                                </TableHead>
+                                            )}
+                                            <TableHead className="sticky left-[50px] z-40 bg-slate-200 w-[150px] border-b text-center whitespace-nowrap px-4">Actions</TableHead>
+                                            {PENDING_COLUMNS.filter((c) =>
+                                                selectedPendingColumns.includes(c.key)
+                                            ).map((c) => (
+                                                <TableHead key={c.key} className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap">{c.label}</TableHead>
+                                            ))}
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {pending.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={selectedPendingColumns.length + 2} className="h-32 text-center text-gray-500 font-medium">
+                                                    No pending receipts found.
+                                                </TableCell>
                                             </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {pending.map((rec) => (
-                                                <TableRow key={rec.id} className="hover:bg-gray-50 group">
+                                        ) : (
+                                            pending.map((rec) => (
+                                                <TableRow key={rec.id} className="bg-white hover:bg-gray-50 transition-colors group">
                                                     {activeTab === "pending" && (
                                                         <TableCell className="sticky left-0 z-20 bg-white group-hover:bg-gray-50 border-b text-center">
                                                             <Checkbox
@@ -1004,7 +1006,6 @@ export default function Stage7() {
                                                     ).map((col) => {
                                                         const val = rec.data[col.key];
 
-                                                        // Handle Bilty Copy as a link
                                                         if (col.key === "biltyCopy") {
                                                             const biltyRaw = rec.data.biltyCopy;
                                                             let biltyUrl = biltyRaw;
@@ -1029,7 +1030,6 @@ export default function Stage7() {
                                                             );
                                                         }
 
-                                                        // Handle PO Copy as a link
                                                         if (col.key === "poCopy") {
                                                             const poRaw = rec.data.poCopy;
                                                             let poUrl = poRaw;
@@ -1054,7 +1054,6 @@ export default function Stage7() {
                                                             );
                                                         }
 
-                                                        // Handle date columns - format as DD-MM-YYYY
                                                         if (col.key === "nextFollowUpDate" || col.key === "dispatchDate" || col.key === "paymentDate" || col.key === "planned6") {
                                                             return (
                                                                 <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700">
@@ -1063,7 +1062,6 @@ export default function Stage7() {
                                                             );
                                                         }
 
-                                                        // Handle currency columns
                                                         if (col.key === "freightAmount" || col.key === "advanceAmount") {
                                                             return (
                                                                 <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700">
@@ -1072,7 +1070,6 @@ export default function Stage7() {
                                                             );
                                                         }
 
-                                                        // Default rendering
                                                         return (
                                                             <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700">
                                                                 {val || "-"}
@@ -1080,35 +1077,37 @@ export default function Stage7() {
                                                         );
                                                     })}
                                                 </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </table>
-                                </div>
-                            )}
+                                            ))
+                                        )}
+                                    </TableBody>
+                                </table>
+                            </div>
                         </TabsContent>
 
                         {/* ---------- HISTORY ---------- */}
                         <TabsContent value="history" className="mt-6">
-                            {completed.length === 0 ? (
-                                <div className="text-center py-12 text-gray-500">
-                                    <p className="text-lg">No completed receipts</p>
-                                </div>
-                            ) : (
-                                <div className="border rounded-lg overflow-x-auto h-[70vh] relative">
-                                    <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
-                                        <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
-                                            <TableRow className="hover:bg-transparent border-none">
-                                                {HISTORY_COLUMNS.filter((c) =>
-                                                    selectedHistoryColumns.includes(c.key)
-                                                ).map((c) => (
-                                                    <TableHead key={c.key} className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap">
-                                                        {c.label}
-                                                    </TableHead>
-                                                ))}
+                            <div className="border rounded-lg overflow-x-auto h-[70vh] relative">
+                                <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
+                                    <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
+                                        <TableRow className="hover:bg-transparent border-none">
+                                            {HISTORY_COLUMNS.filter((c) =>
+                                                selectedHistoryColumns.includes(c.key)
+                                            ).map((c) => (
+                                                <TableHead key={c.key} className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap">
+                                                    {c.label}
+                                                </TableHead>
+                                            ))}
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {completed.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={selectedHistoryColumns.length} className="h-32 text-center text-gray-500 font-medium">
+                                                    No completed receipts found.
+                                                </TableCell>
                                             </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {completed.map((record) => {
+                                        ) : (
+                                            completed.map((record) => {
                                                 const historyData = record.data;
 
                                                 return (

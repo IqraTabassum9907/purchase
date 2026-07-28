@@ -397,11 +397,6 @@ export default function ApprovedVendor() {
               <Loader2 className="w-12 h-12 animate-spin text-black mb-4" />
               <p className="text-lg font-medium text-gray-900">Loading Indents...</p>
             </div>
-          ) : pending.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 border rounded-lg bg-gray-50">
-              <p className="text-lg">No pending approved vendor decisions</p>
-              <p className="text-sm mt-1">All caught up!</p>
-            </div>
           ) : (
             <div className="flex-1 overflow-auto border rounded-xl bg-white shadow-sm scrollbar-thin scrollbar-thumb-slate-200">
               <table className="w-full caption-bottom text-sm border-collapse">
@@ -433,40 +428,48 @@ export default function ApprovedVendor() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pending.map((group) => (
-                    <TableRow key={group.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
-                      <TableCell className="px-4 py-3">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleOpenForm(group)}
-                          className="h-8 text-xs font-semibold px-3 border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-                        >
-                          Approve
-                        </Button>
+                  {pending.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={selectedColumns.length + 1} className="h-32 text-center text-gray-500 font-medium">
+                        No pending approved vendor decisions found.
                       </TableCell>
-                      {selectedColumns.includes("indentNumber") && (
-                        <TableCell className="text-sm font-semibold text-slate-900 font-mono px-4">
-                          {group.indentNumbers}
-                        </TableCell>
-                      )}
-                      {selectedColumns.includes("itemName") && (
-                        <TableCell className="text-sm text-slate-800 px-4 font-medium">
-                          {group.itemNames}
-                        </TableCell>
-                      )}
-                      {selectedColumns.includes("quantity") && (
-                        <TableCell className="text-sm text-slate-750 px-4 font-semibold">
-                          {group.records.map((r: any) => r.data.quantity).join(", ")}
-                        </TableCell>
-                      )}
-                      {selectedColumns.includes("actual3") && (
-                        <TableCell className="text-sm text-slate-700 px-4">
-                          {formatDateDash(group.actual3)}
-                        </TableCell>
-                      )}
                     </TableRow>
-                  ))}
+                  ) : (
+                    pending.map((group) => (
+                      <TableRow key={group.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
+                        <TableCell className="px-4 py-3">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenForm(group)}
+                            className="h-8 text-xs font-semibold px-3 border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+                          >
+                            Approve
+                          </Button>
+                        </TableCell>
+                        {selectedColumns.includes("indentNumber") && (
+                          <TableCell className="text-sm font-semibold text-slate-900 font-mono px-4">
+                            {group.indentNumbers}
+                          </TableCell>
+                        )}
+                        {selectedColumns.includes("itemName") && (
+                          <TableCell className="text-sm text-slate-800 px-4 font-medium">
+                            {group.itemNames}
+                          </TableCell>
+                        )}
+                        {selectedColumns.includes("quantity") && (
+                          <TableCell className="text-sm text-slate-750 px-4 font-semibold">
+                            {group.records.map((r: any) => r.data.quantity).join(", ")}
+                          </TableCell>
+                        )}
+                        {selectedColumns.includes("actual3") && (
+                          <TableCell className="text-sm text-slate-700 px-4">
+                            {formatDateDash(group.actual3)}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </table>
             </div>
@@ -478,10 +481,6 @@ export default function ApprovedVendor() {
             <div className="flex flex-col items-center justify-center py-24 bg-white border rounded-lg shadow-sm">
               <Loader2 className="w-12 h-12 animate-spin text-black mb-4" />
               <p className="text-lg font-medium text-gray-900">Loading History...</p>
-            </div>
-          ) : completed.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 border rounded-lg bg-gray-50">
-              <p className="text-lg">No completed approved vendors</p>
             </div>
           ) : (
             <div className="flex-1 overflow-auto border rounded-xl bg-white shadow-sm scrollbar-thin scrollbar-thumb-slate-200">
@@ -505,7 +504,14 @@ export default function ApprovedVendor() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {completed.map((record) => {
+                  {completed.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={selectedColumns.length + 3} className="h-32 text-center text-gray-500 font-medium">
+                        No completed approved vendors found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    completed.map((record) => {
                     const selId = String(record.data.selectedVendor || "vendor1");
                     const idx = parseInt(selId.replace("vendor", ""), 10) || 1;
 

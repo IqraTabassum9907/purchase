@@ -647,9 +647,7 @@ export default function TransporterFollowUp() {
                     </div>
 
                     <TabsContent value="pending" className="mt-0 flex-1 flex flex-col overflow-hidden">
-                        {pending.length === 0 ? (
-                            <div className="text-center py-12 text-gray-500">No pending transporter follow-ups</div>
-                        ) : (<div className="border rounded-lg flex-1 overflow-auto shadow-sm relative h-full">
+                        <div className="border rounded-lg flex-1 overflow-auto shadow-sm relative h-full">
                             <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
                                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                                     <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
@@ -666,45 +664,47 @@ export default function TransporterFollowUp() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {pending.map(rec => (
-                                        <TableRow key={rec.id}>
-                                            <TableCell className="sticky left-0 z-10 bg-white border-b border-r px-4 py-2">
-                                                <Checkbox
-                                                    checked={selectedRows.has(rec.id)}
-                                                    onCheckedChange={() => toggleRow(rec.id)}
-                                                />
+                                    {pending.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={pendingColumns.length + 2} className="h-32 text-center text-gray-500 font-medium">
+                                                No pending transporter follow-ups found.
                                             </TableCell>
-                                            <TableCell className="sticky left-[50px] z-10 bg-white border-b border-r px-4 py-2 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center">
-                                                <Button size="sm" onClick={() => handleOpenForm(rec)} className="bg-blue-600 hover:bg-blue-700">
-                                                    Follow-Up
-                                                </Button>
-                                            </TableCell>
-                                            {pendingColumns.map((c) => {
-                                                const val = rec.data[c.key];
-
-
-
-                                                // Planned & Expected Date Logic
-                                                if (c.key === "plannedDate" || c.key === "expectedDate") {
-                                                    return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{formatDateDash(val)}</TableCell>;
-                                                }
-
-                                                // Default Logic
-                                                return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{safeValue(val)}</TableCell>;
-                                            })}
                                         </TableRow>
-                                    ))}
+                                    ) : (
+                                        pending.map(rec => (
+                                            <TableRow key={rec.id}>
+                                                <TableCell className="sticky left-0 z-10 bg-white border-b border-r px-4 py-2">
+                                                    <Checkbox
+                                                        checked={selectedRows.has(rec.id)}
+                                                        onCheckedChange={() => toggleRow(rec.id)}
+                                                    />
+                                                </TableCell>
+                                                <TableCell className="sticky left-[50px] z-10 bg-white border-b border-r px-4 py-2 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center">
+                                                    <Button size="sm" onClick={() => handleOpenForm(rec)} className="bg-blue-600 hover:bg-blue-700">
+                                                        Follow-Up
+                                                    </Button>
+                                                </TableCell>
+                                                {pendingColumns.map((c) => {
+                                                    const val = rec.data[c.key];
+
+                                                    // Planned & Expected Date Logic
+                                                    if (c.key === "plannedDate" || c.key === "expectedDate") {
+                                                        return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{formatDateDash(val)}</TableCell>;
+                                                    }
+
+                                                    // Default Logic
+                                                    return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{safeValue(val)}</TableCell>;
+                                                })}
+                                            </TableRow>
+                                        ))
+                                    )}
                                 </TableBody>
                             </table>
                         </div>
-
-                        )}
                     </TabsContent>
 
                     <TabsContent value="history" className="mt-0 flex-1 flex flex-col overflow-hidden">
-                        {completed.length === 0 ? (
-                            <div className="text-center py-12 text-gray-500">No follow-up history</div>
-                        ) : (<div className="border rounded-lg overflow-auto shadow-sm flex-1 relative h-full">
+                        <div className="border rounded-lg overflow-auto shadow-sm flex-1 relative h-full">
                             <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
                                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                                     <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
@@ -714,7 +714,14 @@ export default function TransporterFollowUp() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {completed.map(rec => (
+                                    {completed.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={historyColumns.length} className="h-32 text-center text-gray-500 font-medium">
+                                                No follow-up history found.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        completed.map(rec => (
                                         <TableRow key={rec.id}>
                                             {historyColumns.map((c) => {
                                                 const val = rec.data[c.key];

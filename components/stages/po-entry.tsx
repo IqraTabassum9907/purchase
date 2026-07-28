@@ -952,39 +952,39 @@ export default function Stage5() {
               <Loader2 className="w-12 h-12 animate-spin text-black mb-4" />
               <p className="text-lg font-medium text-gray-900">Loading...</p>
             </div>
-          ) : pending.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 border rounded-lg bg-gray-50">
-              <p className="text-lg">No pending PO entries</p>
-              <p className="text-sm mt-1">All purchase orders are created!</p>
-            </div>
           ) : (
-            <>
-
-              <div className="border rounded-lg flex-1 overflow-auto shadow-sm relative h-full">
-                <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
-                  <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
-                    <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
-                      <TableHead className="w-12 sticky top-0 z-20 bg-slate-200 border-none pl-4 py-3 ">
-                        <div className="flex items-center justify-start h-full">
-                          <Checkbox
-                            checked={selectedRecordIds.length > 0 && pending.filter((r) => getVendorData(r).name === selectedVendorName).length === selectedRecordIds.length}
-                            onCheckedChange={toggleSelectAll}
-                          />
-                        </div>
-                      </TableHead>
-                      {baseColumns
-                        .filter((c) => selectedColumns.includes(c.key))
-                        .map((col) => (
-                          <TableHead key={col.key} className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">{col.label}</TableHead>
-                        ))}
-                      <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Vendor</TableHead>
-                      <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Rate</TableHead>
-                      <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Payment Terms</TableHead>
-                      <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Exp. Delivery</TableHead>
+            <div className="border rounded-lg flex-1 overflow-auto shadow-sm relative h-full">
+              <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
+                <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
+                  <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
+                    <TableHead className="w-12 sticky top-0 z-20 bg-slate-200 border-none pl-4 py-3 ">
+                      <div className="flex items-center justify-start h-full">
+                        <Checkbox
+                          checked={selectedRecordIds.length > 0 && pending.filter((r) => getVendorData(r).name === selectedVendorName).length === selectedRecordIds.length}
+                          onCheckedChange={toggleSelectAll}
+                        />
+                      </div>
+                    </TableHead>
+                    {baseColumns
+                      .filter((c) => selectedColumns.includes(c.key))
+                      .map((col) => (
+                        <TableHead key={col.key} className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">{col.label}</TableHead>
+                      ))}
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Vendor</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Rate</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Payment Terms</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Exp. Delivery</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pending.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={selectedColumns.length + 5} className="h-32 text-center text-gray-500 font-medium">
+                        No pending PO entries found. All purchase orders are created!
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pending.map((record) => {
+                  ) : (
+                    pending.map((record) => {
                       const v = getVendorData(record);
                       const isSelected = selectedRecordIds.includes(record.id);
                       const isRowDisabled = selectedVendorName !== null && v.name !== selectedVendorName;
@@ -1019,11 +1019,11 @@ export default function Stage5() {
                           </TableCell>
                         </TableRow>
                       );
-                    })}
-                  </TableBody>
-                </table>
-              </div>
-            </>
+                    })
+                  )}
+                </TableBody>
+              </table>
+            </div>
           )}
         </TabsContent>
 
@@ -1034,10 +1034,6 @@ export default function Stage5() {
               <Loader2 className="w-12 h-12 animate-spin text-black mb-4" />
               <p className="text-lg font-medium text-gray-900">Loading History...</p>
               <p className="text-sm text-gray-500 mt-1">Fetching completed orders</p>
-            </div>
-          ) : completed.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 border rounded-lg bg-gray-50">
-              <p className="text-lg">No completed POs</p>
             </div>
           ) : (
             <div className="border rounded-lg flex-1 overflow-auto shadow-sm relative h-full">
@@ -1056,7 +1052,14 @@ export default function Stage5() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {completed.map((record) => {
+                  {completed.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="h-32 text-center text-gray-500 font-medium">
+                        No completed PO entries found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    completed.map((record) => {
                     const v = getVendorData(record);
                     return (
                       <TableRow key={record.id} className="bg-green-50/50 hover:bg-green-100/50">
@@ -1188,10 +1191,10 @@ export default function Stage5() {
           <form onSubmit={handleBulkSubmit} className="flex-1 overflow-y-auto">
             <div className="mx-auto max-w-6xl space-y-5 p-6">
               <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
-                <div className="flex items-center justify-center gap-8 bg-slate-50 px-6 py-6">
-                  <img src="null" alt="Logo" className="h-10 w-10 object-contain" />
+                <div className="flex items-center justify-center gap-6 bg-slate-50 px-6 py-6">
+                  <img src="/logo.png" alt="Purchase Logo" className="h-24 w-auto max-w-[320px] object-contain" />
                   <div>
-                    <h2 className="text-2xl font-bold text-slate-900">Botivate</h2>
+                    <h2 className="text-lg font-semibold text-slate-900">Purchase</h2>
                     <p className="text-sm text-slate-600">Gateway Park, Mumbai, Maharashtra</p>
                     <p className="text-sm text-slate-600">Phone No: +9820012345</p>
                   </div>

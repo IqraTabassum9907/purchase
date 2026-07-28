@@ -465,10 +465,6 @@ export default function Stage2() {
               <Loader2 className="w-12 h-12 animate-spin text-black mb-4" />
               <p className="text-lg font-medium text-gray-900">Loading...</p>
             </div>
-          ) : pending.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="text-lg">No records found</p>
-            </div>
           ) : (
             <div className="border rounded-lg overflow-auto flex-1 shadow-sm relative h-full">
               <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
@@ -499,8 +495,8 @@ export default function Stage2() {
                 <TableBody>
                   {pending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={selectedColumns.length + 1} className="h-24 text-center">
-                        No records found.
+                      <TableCell colSpan={selectedColumns.length + 1} className="h-32 text-center text-gray-500 font-medium">
+                        No pending indents found for approval.
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -526,7 +522,9 @@ export default function Stage2() {
                               !["actualDate", "delay", "status", "remarks", "approvedQty"].includes(c.key))
                             .map((col) => (
                               <TableCell key={col.key}>
-                                {col.key === "leadTime"
+                                {col.key === "plannedDate" || col.key === "indentDate"
+                                  ? formatDateDash(record.data[col.key])
+                                  : col.key === "leadTime"
                                   ? `${record.data[col.key] || 0} days`
                                   : record.data[col.key] || "-"}
                               </TableCell>
@@ -548,10 +546,6 @@ export default function Stage2() {
               <p className="text-lg font-medium text-gray-900">Loading History...</p>
               <p className="text-sm text-gray-500 mt-1">Fetching completed records</p>
             </div>
-          ) : history.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="text-lg">No completed records found</p>
-            </div>
           ) : (
             <div className="border rounded-lg overflow-auto flex-1 shadow-sm relative h-full">
               <table className="w-full caption-bottom text-sm border-collapse">
@@ -571,24 +565,32 @@ export default function Stage2() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {history.map((record, index) => (
-                    <TableRow key={record.id} className="hover:bg-slate-50/50 transition-colors">
-                      <TableCell className="text-center font-medium text-slate-500 text-sm">
-                        {index + 1}
+                  {history.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={selectedColumns.length + 1} className="h-32 text-center text-gray-500 font-medium">
+                        No completed approval records found.
                       </TableCell>
-                      {columns
-                        .filter((c) => selectedColumns.includes(c.key) && c.key !== "delay")
-                        .map((col) => (
-                          <TableCell key={col.key} className="text-sm text-slate-700">
-                            {col.key === "leadTime"
-                              ? `${record.data[col.key] || 0} days`
-                              : col.key === "actualDate"
-                                ? formatDateDash(record.data[col.key])
-                                : record.data[col.key] || "-"}
-                          </TableCell>
-                        ))}
                     </TableRow>
-                  ))}
+                  ) : (
+                    history.map((record, index) => (
+                      <TableRow key={record.id} className="hover:bg-slate-50/50 transition-colors">
+                        <TableCell className="text-center font-medium text-slate-500 text-sm">
+                          {index + 1}
+                        </TableCell>
+                        {columns
+                          .filter((c) => selectedColumns.includes(c.key) && c.key !== "delay")
+                          .map((col) => (
+                            <TableCell key={col.key} className="text-sm text-slate-700">
+                              {col.key === "leadTime"
+                                ? `${record.data[col.key] || 0} days`
+                                : col.key === "actualDate"
+                                  ? formatDateDash(record.data[col.key])
+                                  : record.data[col.key] || "-"}
+                            </TableCell>
+                          ))}
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </table>
             </div>

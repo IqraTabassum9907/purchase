@@ -888,11 +888,14 @@ export default function PurchaseDashboard() {
     <div className="p-4 md:p-6 space-y-6 bg-gray-50 min-h-screen">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Purchase Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Monitor and manage your purchase orders
-          </p>
+        <div className="flex items-center gap-3">
+          <img src="/logo.png" alt="Purchase Logo" className="h-16 w-auto max-w-[260px] object-contain" />
+          <div>
+            <h1 className="text-2xl font-bold">Purchase Dashboard</h1>
+            <p className="text-sm text-muted-foreground">
+              Monitor and manage your purchase workflow
+            </p>
+          </div>
         </div>
       </div>
 

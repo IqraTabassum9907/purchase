@@ -10,11 +10,13 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'Purchase App',
-  description: 'Purchase App',
+  title: 'Purchase',
+  description: 'Purchase Management System',
   generator: 'v0.app',
   icons: {
-    icon: 'null',
+    icon: '/favicon.ico',
+    shortcut: '/favicon.ico',
+    apple: '/apple-icon.png',
   },
 }
 

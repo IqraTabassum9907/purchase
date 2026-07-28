@@ -480,31 +480,27 @@ export default function Stage12() {
           ) : (
             <div className="bg-white border rounded-2xl shadow-sm overflow-hidden flex flex-col h-full">
               <TabsContent value="pending" className="flex-1 mt-0 focus-visible:outline-none">
-                {pending.length === 0 ? (
-                  <div className="py-20 flex flex-col items-center justify-center text-center">
-                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4 transition-transform hover:scale-110">
-                      <FileText className="w-10 h-10 text-slate-300" />
-                    </div>
-                    <h3 className="text-xl font-semibold text-slate-900">No pending returns</h3>
-                    <p className="text-slate-500 mt-2 max-w-sm">
-                      All rejected items have been processed or there are no QC rejections currently.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
-                    <table className="w-full text-sm text-left border-collapse min-w-[1200px]">
-                      <thead className="sticky top-0 z-10 shadow-sm">
-                        <tr className="bg-slate-200 border-b border-slate-300">
-                          <th className="px-4 py-4 font-semibold text-slate-900 w-24">Actions</th>
-                          {PENDING_COLUMNS.map((col) => (
-                            <th key={col.key} className="px-4 py-4 font-semibold text-slate-900 whitespace-nowrap">
-                              {col.label}
-                            </th>
-                          ))}
+                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
+                  <table className="w-full text-sm text-left border-collapse min-w-[1200px]">
+                    <thead className="sticky top-0 z-10 shadow-sm">
+                      <tr className="bg-slate-200 border-b border-slate-300">
+                        <th className="px-4 py-4 font-semibold text-slate-900 w-24">Actions</th>
+                        {PENDING_COLUMNS.map((col) => (
+                          <th key={col.key} className="px-4 py-4 font-semibold text-slate-900 whitespace-nowrap">
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {pending.length === 0 ? (
+                        <tr>
+                          <td colSpan={PENDING_COLUMNS.length + 1} className="h-32 text-center text-slate-400 font-medium">
+                            No pending returns found.
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {pending.map((record) => (
+                      ) : (
+                        pending.map((record) => (
                           <tr key={record.id} className="hover:bg-slate-50/80 transition-colors group">
                             <td className="px-4 py-3 whitespace-nowrap">
                               <Button
@@ -522,38 +518,34 @@ export default function Stage12() {
                               </td>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </TabsContent>
 
               <TabsContent value="history" className="flex-1 mt-0 focus-visible:outline-none">
-                {completed.length === 0 ? (
-                  <div className="py-20 flex flex-col items-center justify-center text-center">
-                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4 transition-transform hover:scale-110">
-                      <Search className="w-10 h-10 text-slate-300" />
-                    </div>
-                    <h3 className="text-xl font-semibold text-slate-900">No history found</h3>
-                    <p className="text-slate-500 mt-2 max-w-sm">
-                      Processed purchase returns will appear here once they are submitted.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
-                    <table className="w-full text-sm text-left border-collapse min-w-[1400px]">
-                      <thead className="sticky top-0 z-10 shadow-sm">
-                        <tr className="bg-slate-200 border-b border-slate-300">
-                          {HISTORY_COLUMNS.map((col) => (
-                            <th key={col.key} className="px-4 py-4 font-semibold text-slate-900 whitespace-nowrap">
-                              {col.label}
-                            </th>
-                          ))}
+                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
+                  <table className="w-full text-sm text-left border-collapse min-w-[1400px]">
+                    <thead className="sticky top-0 z-10 shadow-sm">
+                      <tr className="bg-slate-200 border-b border-slate-300">
+                        {HISTORY_COLUMNS.map((col) => (
+                          <th key={col.key} className="px-4 py-4 font-semibold text-slate-900 whitespace-nowrap">
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {completed.length === 0 ? (
+                        <tr>
+                          <td colSpan={HISTORY_COLUMNS.length} className="h-32 text-center text-slate-400 font-medium">
+                            No history found.
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {completed.map((record) => (
+                      ) : (
+                        completed.map((record) => (
                           <tr key={record.id} className="hover:bg-slate-50/80 transition-colors">
                             {HISTORY_COLUMNS.map((col) => (
                               <td key={col.key} className="px-4 py-3 text-slate-600 whitespace-nowrap">
@@ -561,11 +553,11 @@ export default function Stage12() {
                               </td>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </TabsContent>
             </div>
           )}

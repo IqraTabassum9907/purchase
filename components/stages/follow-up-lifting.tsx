@@ -1061,36 +1061,37 @@ export default function FollowUpLifting() {
 
           <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm flex flex-col">
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {pending.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-center">
-                  <ClipboardList className="w-12 h-12 text-slate-300 mb-3" />
-                  <p className="text-slate-500 font-medium">No pending follow-up indents found.</p>
-                </div>
-              ) : (
-                <Table className="text-xs">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <Table className="text-xs">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead className="w-12 text-center">
+                      <Checkbox
+                        checked={selectedRecordIds.length === pending.length && pending.length > 0}
+                        onCheckedChange={selectAll}
+                      />
+                    </TableHead>
+                    <TableHead className="text-center w-24">Actions</TableHead>
+                    {baseColumns
+                      .filter((c) => selectedColumns.includes(c.key))
+                      .map((c) => (
+                        <TableHead key={c.key} className={cn((c.key === "totalLifted" || c.key === "pendingLifted") && "text-center")}>
+                          {c.label}
+                        </TableHead>
+                      ))}
+                    <TableHead>Vendor</TableHead>
+                    <TableHead>PO Number</TableHead>
+                    <TableHead className="text-right">Basic Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pending.length === 0 ? (
                     <TableRow>
-                      <TableHead className="w-12 text-center">
-                        <Checkbox
-                          checked={selectedRecordIds.length === pending.length && pending.length > 0}
-                          onCheckedChange={selectAll}
-                        />
-                      </TableHead>
-                      <TableHead className="text-center w-24">Actions</TableHead>
-                      {baseColumns
-                        .filter((c) => selectedColumns.includes(c.key))
-                        .map((c) => (
-                          <TableHead key={c.key} className={cn((c.key === "totalLifted" || c.key === "pendingLifted") && "text-center")}>
-                            {c.label}
-                          </TableHead>
-                        ))}
-                      <TableHead>Vendor</TableHead>
-                      <TableHead>PO Number</TableHead>
-                      <TableHead className="text-right">Basic Value</TableHead>
+                      <TableCell colSpan={selectedColumns.length + 5} className="h-32 text-center text-slate-400 font-medium">
+                        No pending follow-up indents found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pending.map((record) => {
+                  ) : (
+                    pending.map((record) => {
                       const v = getVendorData(record);
                       return (
                         <TableRow key={record.id} className="hover:bg-slate-50/50">
@@ -1125,10 +1126,10 @@ export default function FollowUpLifting() {
                           </TableCell>
                         </TableRow>
                       );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
+                    })
+                  )}
+                </TableBody>
+              </Table>
             </div>
           </div>
         </TabsContent>
@@ -1136,30 +1137,31 @@ export default function FollowUpLifting() {
         <TabsContent value="history" className="flex-1 overflow-hidden flex flex-col min-h-0 relative">
           <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm flex flex-col">
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {history.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-center">
-                  <History className="w-12 h-12 text-slate-300 mb-3" />
-                  <p className="text-slate-500 font-medium">No material lifting history logs found.</p>
-                </div>
-              ) : (
-                <Table className="text-xs">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <Table className="text-xs">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead>Lift Number</TableHead>
+                    <TableHead>Indent No</TableHead>
+                    <TableHead>Item Details</TableHead>
+                    <TableHead>Vendor</TableHead>
+                    <TableHead>PO Number</TableHead>
+                    <TableHead className="text-center">Lifting Qty</TableHead>
+                    <TableHead>Transporter</TableHead>
+                    <TableHead>Vehicle No</TableHead>
+                    <TableHead>LR / Bilty</TableHead>
+                    <TableHead>Dispatch Date</TableHead>
+                    <TableHead className="text-right">Freight Amount</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {history.length === 0 ? (
                     <TableRow>
-                      <TableHead>Lift Number</TableHead>
-                      <TableHead>Indent No</TableHead>
-                      <TableHead>Item Details</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead>PO Number</TableHead>
-                      <TableHead className="text-center">Lifting Qty</TableHead>
-                      <TableHead>Transporter</TableHead>
-                      <TableHead>Vehicle No</TableHead>
-                      <TableHead>LR / Bilty</TableHead>
-                      <TableHead>Dispatch Date</TableHead>
-                      <TableHead className="text-right">Freight Amount</TableHead>
+                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                        No material lifting history logs found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {history.map((h) => (
+                  ) : (
+                    history.map((h) => (
                       <TableRow key={h.id} className="hover:bg-slate-50/50">
                         <TableCell className="font-bold text-slate-800">{h.liftNo}</TableCell>
                         <TableCell className="font-mono">{h.indentNumber}</TableCell>

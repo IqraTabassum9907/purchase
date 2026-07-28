@@ -577,6 +577,12 @@ export default function OrderCancelPage() {
                       </div>
                     </TableCell>
                   </TableRow>
+                ) : filteredCancelledOrders.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                      No cancelled orders found.
+                    </TableCell>
+                  </TableRow>
                 ) : (
                   filteredCancelledOrders.map((order) => (
                     <TableRow key={order.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 group">

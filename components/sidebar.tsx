@@ -221,9 +221,12 @@ export default function Sidebar() {
   return (
     <>
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-sidebar border-b border-sidebar-border">
-        <h1 className="text-lg font-semibold text-sidebar-foreground">
-          Purchase Workflow
-        </h1>
+        <div className="flex items-center gap-3">
+          <img src="/logo.png" alt="Purchase Logo" className="h-10 w-auto max-w-[150px] object-contain" />
+          <h1 className="text-sm font-semibold text-sidebar-foreground">
+            Purchase
+          </h1>
+        </div>
         <button
           onClick={() => setIsOpen(!isOpen)}
           className="text-sidebar-foreground focus:outline-none"
@@ -238,9 +241,10 @@ export default function Sidebar() {
         ${isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
         <div className="p-4 overflow-y-auto h-full scrollbar-hide">
-          <div className="hidden lg:block">
-            <h1 className="text-xl font-bold text-sidebar-foreground mb-6">
-              Purchase Workflow
+          <div className="hidden lg:flex items-center gap-3 mb-6 px-1">
+            <img src="/logo.png" alt="Purchase Logo" className="h-12 w-auto max-w-[180px] object-contain" />
+            <h1 className="text-base font-semibold text-sidebar-foreground">
+              Purchase
             </h1>
           </div>
 

@@ -635,11 +635,6 @@ export default function Quotation() {
               <Loader2 className="w-12 h-12 animate-spin text-black mb-4" />
               <p className="text-lg font-medium text-gray-900">Loading Indents...</p>
             </div>
-          ) : pending.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 border rounded-lg bg-gray-50">
-              <p className="text-lg">No pending quotations</p>
-              <p className="text-sm mt-1">All caught up!</p>
-            </div>
           ) : (
             <div className="flex-1 overflow-auto border rounded-xl bg-white shadow-sm scrollbar-thin scrollbar-thumb-slate-200">
               <table className="w-full caption-bottom text-sm border-collapse">
@@ -665,42 +660,50 @@ export default function Quotation() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pending.map((record) => {
-                    const statusText = record.data.vendor1Name
-                      ? "Awaiting responses..."
-                      : "Awaiting sending details...";
+                  {pending.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={selectedColumns.length + 3} className="h-32 text-center text-gray-500 font-medium">
+                        No pending quotations found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    pending.map((record) => {
+                      const statusText = record.data.vendor1Name
+                        ? "Awaiting responses..."
+                        : "Awaiting sending details...";
 
-                    return (
-                      <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
-                        <TableCell className="px-4 py-3 w-[50px]">
-                          <Checkbox
-                            checked={selectedRecordIds.includes(record.id)}
-                            onCheckedChange={() => handleToggleRecord(record.id)}
-                          />
-                        </TableCell>
-                        <TableCell className="px-4 py-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleOpenForm(record.id)}
-                            className="h-8 text-xs font-semibold px-3 border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-                          >
-                            Quotation
-                          </Button>
-                        </TableCell>
-                        {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
-                          <TableCell key={col.key} className="text-sm text-slate-700 px-4">
-                            {col.key === "planned3"
-                              ? formatDateDash(record.data[col.key])
-                              : String(record.data[col.key] ?? "-")}
+                      return (
+                        <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
+                          <TableCell className="px-4 py-3 w-[50px]">
+                            <Checkbox
+                              checked={selectedRecordIds.includes(record.id)}
+                              onCheckedChange={() => handleToggleRecord(record.id)}
+                            />
                           </TableCell>
-                        ))}
-                        <TableCell className="px-4 text-xs font-medium text-slate-500">
-                          {statusText}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                          <TableCell className="px-4 py-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleOpenForm(record.id)}
+                              className="h-8 text-xs font-semibold px-3 border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+                            >
+                              Quotation
+                            </Button>
+                          </TableCell>
+                          {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
+                            <TableCell key={col.key} className="text-sm text-slate-700 px-4">
+                              {col.key === "planned3"
+                                ? formatDateDash(record.data[col.key])
+                                : String(record.data[col.key] ?? "-")}
+                            </TableCell>
+                          ))}
+                          <TableCell className="px-4 text-xs font-medium text-slate-500">
+                            {statusText}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
                 </TableBody>
               </table>
             </div>
@@ -712,10 +715,6 @@ export default function Quotation() {
             <div className="flex flex-col items-center justify-center py-24 bg-white border rounded-lg shadow-sm">
               <Loader2 className="w-12 h-12 animate-spin text-black mb-4" />
               <p className="text-lg font-medium text-gray-900">Loading History...</p>
-            </div>
-          ) : completed.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 border rounded-lg bg-gray-50">
-              <p className="text-lg">No completed quotations</p>
             </div>
           ) : (
             <div className="flex-1 overflow-auto border rounded-xl bg-white shadow-sm scrollbar-thin scrollbar-thumb-slate-200">
@@ -736,7 +735,14 @@ export default function Quotation() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {completed.map((record) => {
+                  {completed.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={selectedColumns.length + 2} className="h-32 text-center text-gray-500 font-medium">
+                        No completed quotations found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    completed.map((record) => {
                     const approvedName = record.data.selectedVendorName || "Decision pending";
 
                     return (

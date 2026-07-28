@@ -839,142 +839,147 @@ export default function Stage9() {
 
         {/* Pending Tab */}
         <TabsContent value="pending" className="mt-0 outline-none">
-          {(pending.length === 0 && !isLoading) ? (
-            <div className="text-center py-12 text-gray-500 bg-white border rounded-lg shadow-sm">
-              <FileText className="w-12 h-12 mx-auto mb-3 text-slate-200" />
-              <p className="text-lg text-slate-600 font-medium">No pending Billing entries</p>
-            </div>
-          ) : (
-            <div className="border rounded-lg overflow-x-auto h-[70vh] relative shadow-sm overflow-y-auto">
-              <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
-                <thead className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
-                  <tr className="hover:bg-transparent border-none">
-                    <th className="sticky left-0 z-40 bg-slate-200 w-12 border-b text-center px-4 py-3">
-                      <Checkbox
-                        checked={
-                          selectedRows.size === pending.length &&
-                          pending.length > 0
-                        }
-                        onCheckedChange={toggleAll}
-                        className="translate-y-[2px]"
-                      />
-                    </th>
-                    {pendingColumns
-                      .filter((c) => selectedPendingColumns.includes(c.key))
-                      .map((col) => (
-                        <th
-                          key={col.key}
-                          className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap"
-                        >
-                          {col.label}
-                        </th>
-                      ))}
+          <div className="border rounded-lg overflow-x-auto h-[70vh] relative shadow-sm overflow-y-auto">
+            <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
+              <thead className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
+                <tr className="hover:bg-transparent border-none">
+                  <th className="sticky left-0 z-40 bg-slate-200 w-12 border-b text-center px-4 py-3">
+                    <Checkbox
+                      checked={
+                        selectedRows.size === pending.length &&
+                        pending.length > 0
+                      }
+                      onCheckedChange={toggleAll}
+                      className="translate-y-[2px]"
+                    />
+                  </th>
+                  {pendingColumns
+                    .filter((c) => selectedPendingColumns.includes(c.key))
+                    .map((col) => (
+                      <th
+                        key={col.key}
+                        className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap"
+                      >
+                        {col.label}
+                      </th>
+                    ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white">
+                {isLoading ? (
+                  <tr>
+                    <td
+                      colSpan={pendingColumns.filter((c) => selectedPendingColumns.includes(c.key)).length + 1}
+                      className="h-48 text-center"
+                    >
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+                        <span className="text-slate-500 font-medium">Loading records...</span>
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="bg-white">
-                  {isLoading ? (
-                    <tr>
-                      <td
-                        colSpan={pendingColumns.filter((c) => selectedPendingColumns.includes(c.key)).length + 1}
-                        className="h-48 text-center"
-                      >
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-                          <span className="text-slate-500 font-medium">Loading records...</span>
-                        </div>
+                ) : pending.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={pendingColumns.filter((c) => selectedPendingColumns.includes(c.key)).length + 1}
+                      className="h-32 text-center text-slate-400 font-medium"
+                    >
+                      No pending billing entries found.
+                    </td>
+                  </tr>
+                ) : (
+                  pending.map((record: any) => (
+                    <tr
+                      key={record.id}
+                      className="hover:bg-gray-50 transition-colors group"
+                    >
+                      <td className="sticky left-0 z-20 bg-white group-hover:bg-gray-50 border-b text-center px-4 py-2">
+                        <Checkbox
+                          checked={selectedRows.has(record.id)}
+                          onCheckedChange={() => toggleRow(record.id)}
+                          className="translate-y-[2px]"
+                        />
                       </td>
+                      {pendingColumns
+                        .filter((c) => selectedPendingColumns.includes(c.key))
+                        .map((col) => (
+                          <td
+                            key={col.key}
+                            className="border-b px-4 py-2 text-center text-slate-700"
+                          >
+                            {safeValue(record, col.key)}
+                          </td>
+                        ))}
                     </tr>
-                  ) : (
-                    pending.map((record: any) => (
-                      <tr
-                        key={record.id}
-                        className="hover:bg-gray-50 transition-colors group"
-                      >
-                        <td className="sticky left-0 z-20 bg-white group-hover:bg-gray-50 border-b text-center px-4 py-2">
-                          <Checkbox
-                            checked={selectedRows.has(record.id)}
-                            onCheckedChange={() => toggleRow(record.id)}
-                            className="translate-y-[2px]"
-                          />
-                        </td>
-                        {pendingColumns
-                          .filter((c) => selectedPendingColumns.includes(c.key))
-                          .map((col) => (
-                            <td
-                              key={col.key}
-                              className="border-b px-4 py-2 text-center text-slate-700"
-                            >
-                              {safeValue(record, col.key)}
-                            </td>
-                          ))}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </TabsContent>
 
         {/* History Tab */}
         <TabsContent value="history" className="mt-6">
-          {(completed.length === 0 && !isLoading) ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="text-lg">No Billing history</p>
-            </div>
-          ) : (
-            <div className="border rounded-lg overflow-x-auto h-[70vh] relative shadow-sm overflow-y-auto">
-              <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
-                <thead className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
-                  <tr className="hover:bg-transparent border-none">
-                    {historyColumns
-                      .filter((c) => selectedHistoryColumns.includes(c.key))
-                      .map((col) => (
-                        <th
-                          key={col.key}
-                          className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap"
-                        >
-                          {col.label}
-                        </th>
-                      ))}
+          <div className="border rounded-lg overflow-x-auto h-[70vh] relative shadow-sm overflow-y-auto">
+            <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
+              <thead className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
+                <tr className="hover:bg-transparent border-none">
+                  {historyColumns
+                    .filter((c) => selectedHistoryColumns.includes(c.key))
+                    .map((col) => (
+                      <th
+                        key={col.key}
+                        className="bg-slate-200 border-b text-center px-4 py-3 font-semibold text-slate-900 whitespace-nowrap"
+                      >
+                        {col.label}
+                      </th>
+                    ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white">
+                {isLoading ? (
+                  <tr>
+                    <td
+                      colSpan={historyColumns.filter((c) => selectedHistoryColumns.includes(c.key)).length}
+                      className="h-48 text-center"
+                    >
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+                        <span className="text-slate-500 font-medium">Loading history...</span>
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="bg-white">
-                  {isLoading ? (
-                    <tr>
-                      <td
-                        colSpan={historyColumns.filter((c) => selectedHistoryColumns.includes(c.key)).length}
-                        className="h-48 text-center"
-                      >
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-                          <span className="text-slate-500 font-medium">Loading history...</span>
-                        </div>
-                      </td>
+                ) : completed.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={historyColumns.filter((c) => selectedHistoryColumns.includes(c.key)).length}
+                      className="h-32 text-center text-slate-400 font-medium"
+                    >
+                      No billing history found.
+                    </td>
+                  </tr>
+                ) : (
+                  completed.map((record: any) => (
+                    <tr
+                      key={record.id}
+                      className="hover:bg-indigo-50/50 transition-colors"
+                    >
+                      {historyColumns
+                        .filter((c) => selectedHistoryColumns.includes(c.key))
+                        .map((col) => (
+                          <td
+                            key={col.key}
+                            className="border-b px-4 py-2 text-center text-slate-700"
+                          >
+                            {safeValue(record, col.key)}
+                          </td>
+                        ))}
                     </tr>
-                  ) : (
-                    completed.map((record: any) => (
-                      <tr
-                        key={record.id}
-                        className="hover:bg-indigo-50/50 transition-colors"
-                      >
-                        {historyColumns
-                          .filter((c) => selectedHistoryColumns.includes(c.key))
-                          .map((col) => (
-                            <td
-                              key={col.key}
-                              className="border-b px-4 py-2 text-center text-slate-700"
-                            >
-                              {safeValue(record, col.key)}
-                            </td>
-                          ))}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

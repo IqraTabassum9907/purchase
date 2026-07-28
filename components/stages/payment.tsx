@@ -1102,25 +1102,29 @@ export default function UnifiedPaymentHub() {
           {/* Workflow 1: Advance Payments Pending Table */}
           {workflow === "advance" && activeTab === "pending" && (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {filteredAdvPending.length === 0 ? (
-                <div className="py-24 text-center text-slate-400">No pending advance payments found.</div>
-              ) : (
-                <Table className="text-xs">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <Table className="text-xs">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead className="font-bold p-3">Action</TableHead>
+                    <TableHead className="font-bold p-3">Indent #</TableHead>
+                    <TableHead className="font-bold p-3">Item Details</TableHead>
+                    <TableHead className="font-bold p-3">Vendor</TableHead>
+                    <TableHead className="font-bold p-3">PO Number</TableHead>
+                    <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
+                    <TableHead className="font-bold p-3">Payment Terms</TableHead>
+                    <TableHead className="font-bold p-3">Planned Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredAdvPending.length === 0 ? (
                     <TableRow>
-                      <TableHead className="font-bold p-3">Action</TableHead>
-                      <TableHead className="font-bold p-3">Indent #</TableHead>
-                      <TableHead className="font-bold p-3">Item Details</TableHead>
-                      <TableHead className="font-bold p-3">Vendor</TableHead>
-                      <TableHead className="font-bold p-3">PO Number</TableHead>
-                      <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
-                      <TableHead className="font-bold p-3">Payment Terms</TableHead>
-                      <TableHead className="font-bold p-3">Planned Date</TableHead>
+                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
+                        No pending advance payments found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredAdvPending.map((r) => (
+                  ) : (
+                    filteredAdvPending.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3">
                           <Button
@@ -1141,34 +1145,38 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-slate-500">{r.data.paymentTerms}</TableCell>
                         <TableCell className="p-3 text-slate-600 font-medium">{formatDate(r.data.plannedPayment)}</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             </div>
           )}
 
           {/* Workflow 1: Advance Payments History Table */}
           {workflow === "advance" && activeTab === "history" && (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {filteredAdvHistory.length === 0 ? (
-                <div className="py-24 text-center text-slate-400">No advance payment history found.</div>
-              ) : (
-                <Table className="text-xs">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <Table className="text-xs">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead className="font-bold p-3">Indent #</TableHead>
+                    <TableHead className="font-bold p-3">Item Details</TableHead>
+                    <TableHead className="font-bold p-3">Vendor</TableHead>
+                    <TableHead className="font-bold p-3">PO Number</TableHead>
+                    <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
+                    <TableHead className="font-bold p-3">Actual Payment Date</TableHead>
+                    <TableHead className="font-bold p-3">Payment Reference</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredAdvHistory.length === 0 ? (
                     <TableRow>
-                      <TableHead className="font-bold p-3">Indent #</TableHead>
-                      <TableHead className="font-bold p-3">Item Details</TableHead>
-                      <TableHead className="font-bold p-3">Vendor</TableHead>
-                      <TableHead className="font-bold p-3">PO Number</TableHead>
-                      <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
-                      <TableHead className="font-bold p-3">Actual Payment Date</TableHead>
-                      <TableHead className="font-bold p-3">Payment Reference</TableHead>
+                      <TableCell colSpan={8} className="h-32 text-center text-slate-400 font-medium">
+                        No advance payment history found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredAdvHistory.map((r) => (
+                  ) : (
+                    filteredAdvHistory.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName} (Qty: {r.data.quantity})</TableCell>
@@ -1179,37 +1187,41 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-slate-600 font-medium">{formatDate(r.data.actualPayment)}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.data.paymentRef}</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             </div>
           )}
 
           {/* Workflow 2: Vendor Payments Table */}
           {workflow === "vendor" && activeTab === "pending" && (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {filteredVendorPending.length === 0 ? (
-                <div className="py-24 text-center text-slate-400">No pending vendor invoices found.</div>
-              ) : (
-                <Table className="text-xs min-w-[1400px]">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <Table className="text-xs min-w-[1400px]">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead className="font-bold p-3">Invoice No</TableHead>
+                    <TableHead className="font-bold p-3">Vendor</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Total Bill Value</TableHead>
+                    <TableHead className="font-bold p-3 text-right text-indigo-700">Advance Paid</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
+                    <TableHead className="font-bold p-3">Due Date</TableHead>
+                    <TableHead className="font-bold p-3">Planned Date</TableHead>
+                    <TableHead className="font-bold p-3">PO Number</TableHead>
+                    <TableHead className="font-bold p-3">Invoice Copy</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Rec. Qty</TableHead>
+                    <TableHead className="font-bold p-3">Rec. Items</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredVendorPending.length === 0 ? (
                     <TableRow>
-                      <TableHead className="font-bold p-3">Invoice No</TableHead>
-                      <TableHead className="font-bold p-3">Vendor</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Total Bill Value</TableHead>
-                      <TableHead className="font-bold p-3 text-right text-indigo-700">Advance Paid</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
-                      <TableHead className="font-bold p-3">Due Date</TableHead>
-                      <TableHead className="font-bold p-3">Planned Date</TableHead>
-                      <TableHead className="font-bold p-3">PO Number</TableHead>
-                      <TableHead className="font-bold p-3">Invoice Copy</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Rec. Qty</TableHead>
-                      <TableHead className="font-bold p-3">Rec. Items</TableHead>
+                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                        No pending vendor invoices found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredVendorPending.map((r) => {
+                  ) : (
+                    filteredVendorPending.map((r) => {
                       const overdue = isDueDateOverdueOrToday(r.data.dueDate);
                       return (
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
@@ -1230,33 +1242,37 @@ export default function UnifiedPaymentHub() {
                           <TableCell className="p-3 text-slate-500 max-w-[200px] truncate">{r.data.receivedItems}</TableCell>
                         </TableRow>
                       );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
+                    })
+                  )}
+                </TableBody>
+              </Table>
             </div>
           )}
 
           {/* Workflow 2: Vendor Payments History Table */}
           {workflow === "vendor" && activeTab === "history" && (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {filteredVendorHistory.length === 0 ? (
-                <div className="py-24 text-center text-slate-400">No vendor payment history found.</div>
-              ) : (
-                <Table className="text-xs">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <Table className="text-xs">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead className="font-bold p-3">Payment Date</TableHead>
+                    <TableHead className="font-bold p-3">Invoice No</TableHead>
+                    <TableHead className="font-bold p-3">Vendor</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
+                    <TableHead className="font-bold p-3">Payment Mode</TableHead>
+                    <TableHead className="font-bold p-3">Status</TableHead>
+                    <TableHead className="font-bold p-3">Proof</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredVendorHistory.length === 0 ? (
                     <TableRow>
-                      <TableHead className="font-bold p-3">Payment Date</TableHead>
-                      <TableHead className="font-bold p-3">Invoice No</TableHead>
-                      <TableHead className="font-bold p-3">Vendor</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
-                      <TableHead className="font-bold p-3">Payment Mode</TableHead>
-                      <TableHead className="font-bold p-3">Status</TableHead>
-                      <TableHead className="font-bold p-3">Proof</TableHead>
+                      <TableCell colSpan={7} className="h-32 text-center text-slate-400 font-medium">
+                        No vendor payment history found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredVendorHistory.map((r) => (
+                  ) : (
+                    filteredVendorHistory.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.invoiceNo}</TableCell>
