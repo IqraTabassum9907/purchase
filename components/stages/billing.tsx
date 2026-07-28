@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Loader2, FileText, Search, RefreshCw, Calendar, MessageSquare, User, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react";
 import { cn, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,9 +27,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-
-
-const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
 
 export default function Stage9() {
   const [sheetRecords, setSheetRecords] = useState<any[]>([]);
@@ -93,80 +91,60 @@ export default function Stage9() {
 
   // Submit Handler
   const handleSubmit = async () => {
-    if (selectedRows.size === 0 || !formData.doneBy || !formData.checkedStatus || !SHEET_API_URL) return;
+    if (selectedRows.size === 0 || !formData.doneBy || !formData.checkedStatus) return;
     if (formData.checkedStatus === "Yes" && !formData.checkedByAcc) return;
-    if (bulkError) return; // Prevent submit if there's an error
+    if (bulkError) return;
 
     setIsSubmitting(true);
     try {
       const timestamp = getFmsTimestamp();
-
       const selectedRecords = sheetRecords.filter(r => selectedRows.has(r.id));
 
-      // Process sequentially
       for (const rec of selectedRecords) {
-        const rowArray = new Array(84).fill("");
+        // Find the matching PO
+        const { data: poRows } = await supabase
+          .from("purchase_orders")
+          .select("id")
+          .eq("po_number", rec.data.poNumber)
+          .limit(1);
 
-        // AJ (35): Plan2 (Leave)
-        // AK (36): Actual2 - Write if Checked=Yes
-        if (formData.checkedStatus === "Yes") {
-          rowArray[36] = timestamp;
-        }
+        const poId = poRows?.[0]?.id;
 
-        // AL (37): Delay2 (Formula - Skip)
+        // Find or create tally_billing record
+        if (poId) {
+          const { data: existingBilling } = await supabase
+            .from("tally_billing")
+            .select("id")
+            .eq("po_id", poId)
+            .limit(1);
 
-        // AM (38): Done By
-        rowArray[38] = formData.doneBy;
-
-        // AN (39): Done Date
-        rowArray[39] = timestamp;
-
-        // AO (40): Remarks
-        rowArray[40] = formData.remarks;
-
-        // AP (41): Checked Status
-        rowArray[41] = formData.checkedStatus;
-
-        // AQ (42): Checked By Acc
-        rowArray[42] = formData.checkedStatus === "Yes" ? formData.checkedByAcc : "";
-
-        const params = new URLSearchParams();
-        params.append("action", "update");
-        params.append("sheetName", "RECEIVING-ACCOUNTS");
-        params.append("rowIndex", rec.rowIndex.toString());
-        params.append("rowData", JSON.stringify(rowArray));
-
-        await fetch(SHEET_API_URL, { method: "POST", body: params });
-
-        // If billing is checked/verified, automatically insert into VENDOR-PAYMENTS sheet
-        if (formData.checkedStatus === "Yes") {
-          const vpRow = new Array(22).fill("");
-          vpRow[0] = timestamp; // A: Timestamp
-          vpRow[1] = rec.data.invoiceNumber || ""; // B: Invoice No
-          vpRow[2] = rec.data.billAttachment || ""; // C: Invoice Copy
-          vpRow[3] = rec.data.invoiceDate || ""; // D: Invoice Date
-          vpRow[4] = rec.data.vendorName || ""; // E: Vendor Name
-          vpRow[5] = rec.data.poNumber || ""; // F: PO Number
-          vpRow[6] = rec.data.poCopy || ""; // G: PO Copy
-          vpRow[10] = rec.data.receivedQty || ""; // K: Qty
-          vpRow[11] = rec.data.totalWithTax || ""; // L: Total Value
-          vpRow[12] = rec.data.itemName || ""; // M: Received Items
-          vpRow[13] = timestamp.split(" ")[0]; // N: Planned Date (Planned Payment Date)
-          vpRow[17] = rec.data.totalWithTax || ""; // R: Pending Amount
-          vpRow[21] = rec.data.invoiceDate || ""; // V: Due Date
-
-          const vpParams = new URLSearchParams();
-          vpParams.append("action", "insert");
-          vpParams.append("sheetName", "VENDOR-PAYMENTS");
-          vpParams.append("rowData", JSON.stringify(vpRow));
-
-          await fetch(SHEET_API_URL, { method: "POST", body: vpParams });
+          if (existingBilling && existingBilling.length > 0) {
+            await supabase
+              .from("tally_billing")
+              .update({
+                accountant_name: formData.checkedStatus === "Yes" ? formData.checkedByAcc : formData.doneBy,
+                verification_status: formData.checkedStatus === "Yes" ? "Verified" : "Pending",
+                vendor_invoice_number: rec.data.invoiceNumber || "",
+                invoice_amount: parseFloat(rec.data.totalWithTax) || parseFloat(rec.data.basicValue) || 0,
+              })
+              .eq("id", existingBilling[0].id);
+          } else {
+            await supabase.from("tally_billing").insert({
+              po_id: poId,
+              vendor_invoice_number: rec.data.invoiceNumber || "",
+              invoice_date: rec.data.invoiceDate || null,
+              invoice_amount: parseFloat(rec.data.totalWithTax) || 0,
+              accountant_name: formData.checkedStatus === "Yes" ? formData.checkedByAcc : formData.doneBy,
+              verification_status: formData.checkedStatus === "Yes" ? "Verified" : "Pending",
+            });
+          }
         }
       }
 
       toast.success(formData.checkedStatus === "Yes" ? "Billing Completed (Bulk)!" : "Billing Saved (Bulk Pending)");
       setIsModalOpen(false);
       setSelectedRows(new Set());
+      window.dispatchEvent(new Event("stageUpdated"));
       fetchData();
 
     } catch (e) {
@@ -178,195 +156,128 @@ export default function Stage9() {
   };
 
   const fetchData = async () => {
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      const [liftRes, fmsRes] = await Promise.all([
-        fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`)
+      const { fetchIndentWorkflow } = await import("@/lib/supabase/queries");
+      const [indentRows, poRows, receiptRows, billingRows] = await Promise.all([
+        fetchIndentWorkflow(),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("material_receipts").select("*"),
+        supabase.from("tally_billing").select("*"),
       ]);
 
-      const liftJson = await liftRes.json();
-      const fmsJson = await fmsRes.json();
+      const pos = poRows.data || [];
+      const receipts = receiptRows.data || [];
+      const billings = billingRows.data || [];
 
-      // Create FMS Map (Indent # -> Row)
-      const fmsMap = new Map<string, any[]>();
-      if (fmsJson.success && Array.isArray(fmsJson.data)) {
-        fmsJson.data.slice(6).forEach((r: any) => {
-          if (r[1] && String(r[1]).trim()) {
-            fmsMap.set(String(r[1]).trim(), r);
-          }
-        });
-      }
+      // Build PO map by indent_id
+      const poMap = new Map<string, any[]>();
+      pos.forEach((po) => {
+        const list = poMap.get(po.indent_id) || [];
+        list.push(po);
+        poMap.set(po.indent_id, list);
+      });
 
-      if (liftJson.success && Array.isArray(liftJson.data)) {
-        const rows = liftJson.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "")
-          .map(({ row, originalIndex }: any) => {
-            const indentNo = String(row[1]).trim();
-            const fmsRow = fmsMap.get(indentNo) || [];
+      // Build receipt map by po_id
+      const receiptMap = new Map<string, any[]>();
+      receipts.forEach((r) => {
+        const list = receiptMap.get(r.po_id) || [];
+        list.push(r);
+        receiptMap.set(r.po_id, list);
+      });
 
-            // Stage 9 Logic
-            // Stage 9 Logic: Check AJ (35) and AK (36)
-            const hasPlan8 = !!row[35] && String(row[35]).trim() !== "";
-            const hasActual8 = !!row[36] && String(row[36]).trim() !== "";
+      // Build billing map by po_id
+      const billingMap = new Map<string, any>();
+      billings.forEach((b) => {
+        if (!billingMap.has(b.po_id)) billingMap.set(b.po_id, b);
+      });
 
-            let status = "not_ready";
-            if (hasPlan8 && !hasActual8) {
-              status = "pending";
-            } else if (hasPlan8 && hasActual8) {
-              status = "completed";
-            }
+      const rows: any[] = [];
 
-            // Resolve vendor details using AV (index 47) and AW (index 48)
-            const selVendorIndex = String(fmsRow[47] || "").trim().toLowerCase();
-            const selVendorName = String(fmsRow[48] || "").trim().toLowerCase();
+      indentRows.forEach((indentRow) => {
+        const indentPos = poMap.get(indentRow.id) || [];
+        if (indentPos.length === 0) return;
 
-            const v1Name = String(fmsRow[21] || "").trim();
-            const v2Name = String(fmsRow[29] || "").trim();
-            const v3Name = String(fmsRow[37] || "").trim();
+        indentPos.forEach((po) => {
+          const poReceipts = receiptMap.get(po.id) || [];
+          const billing = billingMap.get(po.id);
 
-            let vendorDetails = {
-              vendorNameFallback: "-",
-              rate: "-",
-              terms: "-",
-            };
+          if (poReceipts.length === 0) return;
 
-            if (selVendorIndex === "vendor1" || (selVendorName && v1Name && selVendorName === v1Name.toLowerCase())) {
-              vendorDetails = {
-                vendorNameFallback: v1Name,
-                rate: fmsRow[22] || "-",
-                terms: fmsRow[23] || "-",
-              };
-            } else if (selVendorIndex === "vendor2" || (selVendorName && v2Name && selVendorName === v2Name.toLowerCase())) {
-              vendorDetails = {
-                vendorNameFallback: v2Name,
-                rate: fmsRow[30] || "-",
-                terms: fmsRow[31] || "-",
-              };
-            } else if (selVendorIndex === "vendor3" || (selVendorName && v3Name && selVendorName === v3Name.toLowerCase())) {
-              vendorDetails = {
-                vendorNameFallback: v3Name,
-                rate: fmsRow[38] || "-",
-                terms: fmsRow[39] || "-",
-              };
-            } else if (fmsRow[48]) {
-              vendorDetails = {
-                vendorNameFallback: fmsRow[48],
-                rate: "-",
-                terms: "-",
-              };
-            }
+          poReceipts.forEach((receipt) => {
+            const isChecked = billing?.verification_status === "Verified";
+            const hasDoneBy = billing?.accountant_name && billing.accountant_name !== "-";
+            const status = isChecked ? "completed" : "pending";
 
-            // Smart PO Details extraction to support both mock-fetch data and production layout
-            let poNumber = row[4] || "-";
-            let basicValue = "-";
-            let totalWithTax = "-";
-
-            const rawPoNumber = String(fmsRow[54] || "").trim();
-            const rawBD = String(fmsRow[55] || "").trim();
-            const rawBE = String(fmsRow[56] || "").trim();
-
-            if (rawBD.startsWith("PO-")) {
-              // Mock data case
-              poNumber = rawBD;
-              const rateVal = parseFloat(vendorDetails.rate) || 0;
-              const qtyVal = parseFloat(row[8]) || parseFloat(fmsRow[14]) || parseFloat(fmsRow[5]) || 0;
-              if (rateVal > 0 && qtyVal > 0) {
-                basicValue = String(rateVal * qtyVal);
-                totalWithTax = String(rateVal * qtyVal);
-              } else {
-                basicValue = "-";
-                totalWithTax = "-";
-              }
-            } else {
-              // Production case
-              poNumber = row[4] || rawPoNumber || "-";
-              basicValue = rawBD || "-";
-              totalWithTax = rawBE || "-";
-            }
-
-            return {
-              id: `${row[2] || "row"}-${originalIndex}`,
-              rowIndex: originalIndex,
+            rows.push({
+              id: `${indentRow.data.indentNumber}-${receipt.id}`,
+              rowIndex: rows.length + 7,
               stage: 8,
               status,
-              originalRow: row,
               data: {
-                indentNumber: row[1] || "",
-                liftNumber: row[2] || "",
-                vendorName: row[3] || vendorDetails.vendorNameFallback || "-",
-                poNumber: poNumber,
-                nextFollowUpDate: row[5] || "",
-                remarksStage6: row[6] || "",
-                itemName: row[7] || fmsRow[4] || "-",
-                quantity: row[8] || "",
-                indentQty: fmsRow[14] || fmsRow[5] || "",
-
-                // Transporter/Vehicle/Contact/LR are 9-12
-                transporterName: row[9] || "",
-                vehicleNo: row[10] || "",
-                contactNo: row[11] || "",
-                lrNo: row[12] || "",
-
-                // Dispatch/Freight/Advance/Payment are 13-17
-                dispatchDate: row[13] || "",
-                freightAmount: row[14] || "",
-                advanceAmount: row[15] || "",
-                paymentDate: row[16] || "",
-                paymentStatus: row[17] || "",
-                biltyCopy: row[18] || "",
-
-                // Invoice/Receipt Fields with robust fallbacks
-                invoiceType: row[22] || "-",
-                invoiceDate: row[23] || row[0] || "-",
-                invoiceNumber: row[24] || ("INV-" + (row[1] || "1004")),
-                receivedQty: row[25] || row[8] || fmsRow[14] || fmsRow[5] || "-",
-                receivedItemImage: row[26] || "",
-                srnNumber: row[27] || ("SRN-" + (row[2] || "1001")),
-                qcRequirement: row[28] || "-",
-                billAttachment: row[29] || "",
-                paymentAmountHydra: row[30] || "",
-                paymentAmountLabour: row[31] || "",
-                paymentAmountHamali: row[32] || "",
-                remarks7: row[33] || "",
-
-                // Tally Entry Plan/Actual (Dimensions AJ-AQ -> 35-42)
-                plan8: row[35],
-                actual8: row[36],
-                doneBy: row[38],
-                doneDate: row[39],
-                remarks: row[40],
-                checkedStatus: row[41],
-                checkedByAcc: row[42],
-
-                // Fetch from INDENT-LIFT (fmsRow)
-                createdBy: fmsRow[2] || "-",
-                category: fmsRow[3] || "-",
-                warehouse: fmsRow[6] || "-",
-
-                basicValue: basicValue,
-                totalWithTax: totalWithTax,
-                poCopy: fmsRow[58] || "",
-
+                indentNumber: indentRow.data.indentNumber || "",
+                liftNumber: receipt.grn_number || "",
+                vendorName: po.vendor_name || indentRow.data.selectedVendorName || "-",
+                poNumber: po.po_number || "-",
+                nextFollowUpDate: "",
+                remarksStage6: "",
+                itemName: po.item_name || indentRow.data.itemName || "-",
+                quantity: String(po.quantity || ""),
+                indentQty: indentRow.data.quantity || "",
+                transporterName: "",
+                vehicleNo: "",
+                contactNo: "",
+                lrNo: "",
+                dispatchDate: "",
+                freightAmount: "",
+                advanceAmount: "",
+                paymentDate: "",
+                paymentStatus: "",
+                biltyCopy: "",
+                invoiceType: "-",
+                invoiceDate: billing?.invoice_date || receipt.received_date || "-",
+                invoiceNumber: billing?.vendor_invoice_number || ("INV-" + (indentRow.data.indentNumber || "1004")),
+                receivedQty: String(receipt.accepted_quantity !== undefined && receipt.accepted_quantity !== null ? receipt.accepted_quantity : receipt.received_quantity || ""),
+                receivedItemImage: receipt.received_item_image_url || "",
+                srnNumber: receipt.grn_number || ("SRN-" + receipt.id?.slice(0, 4)),
+                qcRequirement: "-",
+                billAttachment: billing?.tally_bill_copy_url || "",
+                paymentAmountHydra: "",
+                paymentAmountLabour: "",
+                paymentAmountHamali: "",
+                remarks7: "",
+                plan8: "",
+                actual8: billing ? billing.tally_entry_date : "",
+                doneBy: billing?.accountant_name || "",
+                doneDate: billing?.tally_entry_date || "",
+                remarks: "",
+                checkedStatus: isChecked ? "Yes" : (hasDoneBy ? "No" : ""),
+                checkedByAcc: billing?.accountant_name || "",
+                createdBy: indentRow.data.createdBy || "-",
+                category: indentRow.data.category || "-",
+                warehouse: indentRow.data.warehouseLocation || "-",
+                basicValue: String(po.total_amount || "-"),
+                totalWithTax: String(po.total_amount || "-"),
+                poCopy: po.po_copy_url || "",
                 deliveryDate: "-",
-
-                ...vendorDetails
+                vendorNameFallback: po.vendor_name || "-",
+                rate: String(po.unit_rate || "-"),
+                terms: po.payment_type || "-",
               }
-            };
+            });
           });
-        setSheetRecords(rows);
-      }
+        });
+      });
 
-      // Fetch Dropdown sheet for Accountants (Column M / Index 12)
-      const dropRes = await fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll`);
-      const dropJson = await dropRes.json();
-      if (dropJson.success && Array.isArray(dropJson.data)) {
-        const accList = dropJson.data.slice(1)
-          .map((row: any) => String(row[12] || "").trim())
-          .filter((a: string) => a !== "");
-        setAccountantList(accList);
+      setSheetRecords(rows);
+
+      const { data: dropRows } = await supabase
+        .from("master_accountants")
+        .select("name")
+        .eq("is_active", true);
+
+      if (dropRows) {
+        setAccountantList(dropRows.map((r) => r.name).filter(Boolean));
       }
 
     } catch (e) {

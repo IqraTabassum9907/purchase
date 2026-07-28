@@ -63,7 +63,9 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Check, ChevronsUpDown } from "lucide-react";
-import { cn, parseSheetDate, formatDate, getFmsTimestamp } from "@/lib/utils";
+import { cn, parseSheetDate, formatDate } from "@/lib/utils";
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
 interface LiftingEntry {
   liftNumber: string;
@@ -271,164 +273,133 @@ export default function FollowUpLifting() {
   const [searchTerm, setSearchTerm] = useState("");
 
   const fetchData = async () => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      // Parallelize fetches for FMS, RECEIVING-ACCOUNTS, and Dropdown
-      const [resFMS, resReceiving, dropRes] = await Promise.all([
-        fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll`),
+      const [workflow, poResult, liftingResult, transResult, whResult] = await Promise.all([
+        fetchIndentWorkflow(),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("vendor_liftings").select("*"),
+        supabase.from("master_transporters").select("transporter_name").eq("is_active", true),
+        supabase.from("master_warehouses").select("name").eq("is_active", true),
       ]);
 
-      const [jsonFMS, jsonReceiving, dropJson] = await Promise.all([
-        resFMS.json(),
-        resReceiving.json(),
-        dropRes.json(),
-      ]);
+      const poData = poResult.data || [];
+      const liftingData = liftingResult.data || [];
 
-      // Process RECEIVING-ACCOUNTS data for history
-      if (jsonReceiving.success && Array.isArray(jsonReceiving.data)) {
-        const historyRows = jsonReceiving.data.slice(6)
-          .filter((row: any) => row && row[1] && String(row[1]).trim() !== "")
-          .map((row: any, i: number) => ({
-            id: `receiving-${i}`,
-            indentNumber: row[1] || "",     // B: Indent Number
-            liftNo: row[2] || "",            // C: Unit Tracking No.
-            vendorName: row[3] || "",        // D: Vendor Name
-            poNumber: row[4] || "",          // E: PO Number
-            nextFollowUpDate: row[5] || "", // F: Next Follow-Up Date
-            remarks: row[6] || "",           // G: Remarks
-            itemName: row[7] || "",          // H: Item Name
-            liftingQty: row[8] || "",        // I: Lifting Qty
-            transporterName: row[9] || "",  // J: Transporter Name
-            vehicleNo: row[10] || "",        // K: Vehicle No
-            contactNo: row[11] || "",        // L: Contact No
-            lrNo: row[12] || "",             // M: LR No
-            dispatchDate: row[13] || "",     // N: Dispatch Date
-            freightAmount: row[14] || "",    // O: Freight Amount
-            advanceAmount: row[15] || "",    // P: Advance Amount
-            paymentDate: row[16] || "",      // Q: Payment Date
-            paymentStatus: row[17] || "",    // R: Payment Status
-            biltyCopy: row[18] || "",        // S: Bilty Copy
-          }));
-        setReceivingAccountsData(historyRows);
+      if (transResult.data) {
+        setTransporterList(transResult.data.map((r: any) => r.transporter_name).filter(Boolean));
+      }
+      if (whResult.data) {
+        setAreaList(whResult.data.map((r: any) => r.name).filter(Boolean));
       }
 
-      if (dropJson.success && Array.isArray(dropJson.data)) {
-        const tList = dropJson.data.slice(1)
-          .map((row: any) => {
-            const val = String(row[10] || "").trim();
-            if (val.startsWith("{")) {
-              try {
-                return JSON.parse(val).transporterName || "";
-              } catch (e) {
-                return val;
-              }
+      const poByIndentId = new Map<string, any>();
+      poData.forEach((po) => {
+        if (po.indent_id) poByIndentId.set(po.indent_id, po);
+      });
+
+      const liftingsByPoId = new Map<string, any[]>();
+      liftingData.forEach((lift) => {
+        if (lift.po_id) {
+          const list = liftingsByPoId.get(lift.po_id) || [];
+          list.push(lift);
+          liftingsByPoId.set(lift.po_id, list);
+        }
+      });
+
+      const historyRows = liftingData.map((lift, i) => {
+        const po = poData.find((p) => p.id === lift.po_id);
+        const indent = workflow.find((w) => w.id === po?.indent_id);
+        return {
+          id: lift.id,
+          indentNumber: indent?.data.indentNumber || "",
+          liftNo: `LIFT-${String(i + 1).padStart(3, "0")}`,
+          vendorName: po?.vendor_name || "",
+          poNumber: po?.po_number || "",
+          nextFollowUpDate: lift.followup_date || "",
+          remarks: lift.remarks || "",
+          itemName: indent?.data.itemName || "",
+          liftingQty: "",
+          transporterName: "",
+          vehicleNo: lift.vehicle_number || "",
+          contactNo: lift.driver_contact || "",
+          lrNo: "",
+          dispatchDate: lift.actual_lifting_date || "",
+          freightAmount: "",
+          advanceAmount: "",
+          paymentDate: "",
+          paymentStatus: "",
+          biltyCopy: "",
+        };
+      });
+      setReceivingAccountsData(historyRows);
+
+      const rows = workflow
+        .filter((row) => row.data.indentNumber && row.data.indentNumber.trim() !== "")
+        .map((row) => {
+          const po = poByIndentId.get(row.id);
+          const poLiftings = po ? (liftingsByPoId.get(po.id) || []) : [];
+
+          const totalQty = parseFloat(String(row.data.quantity || "0").replace(/,/g, "")) || 0;
+          const totalLiftedSoFar = poLiftings.reduce((sum, l) => sum + (parseFloat(String(l.lifting_qty || "0").replace(/,/g, "")) || 0), 0);
+          const pendingLiftQty = Math.max(0, totalQty - totalLiftedSoFar);
+
+          let status = "not_ready";
+          if (po) {
+            if (totalLiftedSoFar >= totalQty && totalQty > 0) {
+              status = "completed";
+            } else {
+              status = "pending";
             }
-            return val;
-          })
-          .filter((t: string) => t !== "");
-        setTransporterList(tList);
-
-        const aList = dropJson.data.slice(1)
-          .map((row: any) => String(row[1] || "").trim())
-          .filter((a: string) => a !== "");
-        setAreaList(Array.from(new Set(aList)));
-      }
-      const completedIndentIds = new Set<string>();
-
-      // Build a map of total lifted quantity per indent from receiving accounts history
-      const liftingQtyMap = new Map<string, number>();
-      if (jsonReceiving.success && Array.isArray(jsonReceiving.data)) {
-        jsonReceiving.data.slice(6).forEach((row: any) => {
-          if (row && row[1]) {
-            const indentNum = String(row[1]).trim();
-            const liftQty = parseFloat(String(row[8] || "0").replace(/,/g, "")) || 0;
-            liftingQtyMap.set(indentNum, (liftingQtyMap.get(indentNum) || 0) + liftQty);
           }
+
+          const latestLifting = poLiftings.length > 0 ? poLiftings[poLiftings.length - 1] : null;
+
+          return {
+            id: row.id,
+            rowIndex: row.originalIndex,
+            stage: 5,
+            status,
+            createdAt: row.data.createdAt,
+            history: status === "completed"
+              ? [{ stage: 5, date: latestLifting?.actual_lifting_date || row.data.createdAt, data: {} }]
+              : [],
+            data: {
+              indentNumber: row.data.indentNumber,
+              itemName: row.data.itemName,
+              quantity: row.data.quantity,
+              selectedVendor: row.data.selectedVendor,
+              vendor1Name: row.data.vendor1Name,
+              vendor1PoNumber: po?.po_number || "",
+              vendor2Name: row.data.vendor2Name,
+              vendor2PoNumber: po?.po_number || "",
+              vendor3Name: row.data.vendor3Name,
+              vendor3PoNumber: po?.po_number || "",
+              finalVendorName: row.data.selectedVendorName,
+              estimatedDate: latestLifting?.expected_lifting_date || "",
+              remarksFollowUp: latestLifting?.remarks || "",
+              lastFollowUpDate: latestLifting?.followup_date || "",
+              totalLifted: String(totalLiftedSoFar),
+              pendingLifted: String(pendingLiftQty),
+              liftingData: latestLifting && latestLifting.lifting_status === "Complete"
+                ? {
+                    liftNumber: latestLifting.id?.slice(0, 8) || "",
+                    liftingQty: String(pendingLiftQty),
+                    transporterName: "",
+                    vehicleNumber: latestLifting.vehicle_number || "",
+                    contactNumber: latestLifting.driver_contact || "",
+                    dispatchDate: latestLifting.actual_lifting_date || "",
+                  }
+                : {
+                    liftingQty: String(pendingLiftQty),
+                  },
+            },
+            basicValue: po?.total_amount || 0,
+            _poId: po?.id,
+          };
         });
-      }
 
-      if (jsonFMS.success && Array.isArray(jsonFMS.data)) {
-        const rows = jsonFMS.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "")
-          .map(({ row, originalIndex }: any) => {
-            const hasPlan5 = !!row[60] && String(row[60]).trim() !== "" && String(row[60]).trim() !== "-";
-            const indentId = row[1] || `row-${originalIndex}`;
-
-            let status = "not_ready";
-            if (hasPlan5) {
-              const colBPValue = String(row[67] || "").trim();
-              if (colBPValue === "Pending") {
-                status = "pending";
-              } else if (colBPValue === "Complete") {
-                status = "completed";
-              }
-            }
-
-            return {
-              id: indentId,
-              rowIndex: originalIndex,
-              row: row,
-              stage: 5,
-              status: status,
-              createdAt: parseSheetDate(row[0]),
-              history: (status === "completed") ? [{ stage: 5, date: parseSheetDate(row[61] || row[60] || row[0]), data: {} }] : [],
-              data: {
-                timestamp: row[0],
-                indentNumber: row[1],
-                createdBy: row[2],
-                category: row[3],
-                itemName: row[4],
-                quantity: row[14],
-                warehouseLocation: row[6],
-                deliveryDate: row[7] ? formatDate(row[7]) : "",
-                leadTime: row[8],
-                planned1: row[9] ? formatDate(row[9]) : "",
-                actual1: row[10] ? formatDate(row[10]) : "",
-                delay1: row[11],
-                approvedBy: row[12],
-                indentStatus: row[13],
-                approvedQty: row[14],
-                vendorType: row[15],
-                indentRemarks: row[16],
-                img: row[17],
-                selectedVendor: row[47],
-                vendor1Name: row[21],
-                vendor1PoNumber: row[54],
-                vendor2Name: row[29],
-                vendor2PoNumber: row[54],
-                vendor3Name: row[37],
-                vendor3PoNumber: row[54],
-                finalVendorName: row[48],
-                estimatedDate: row[76],
-                remarksFollowUp: row[77],
-                lastFollowUpDate: row[78],
-                totalLifted: (liftingQtyMap.get(String(indentId).trim()) || 0).toString(),
-                pendingLifted: Math.max(0, (parseFloat(String(row[14] || "0").replace(/,/g, "")) || 0) - (liftingQtyMap.get(String(indentId).trim()) || 0)).toString(),
-                liftingData: {
-                  liftNumber: `LIFT-${originalIndex}`,
-                  liftingQty: row[64],
-                  transporterName: row[65],
-                  vehicleNumber: row[66],
-                  contactNumber: row[67],
-                  lrNumber: row[68],
-                  dispatchDate: row[69],
-                  freightAmount: row[70],
-                  advanceAmount: row[71],
-                  paymentDate: row[72],
-                  biltyCopy: row[73],
-                },
-              },
-            };
-          })
-          .filter((item: any) => item.status !== "not_ready");
-
-        setSheetRecords(rows);
-      }
+      setSheetRecords(rows);
     } catch (error) {
       console.error("Fetch error:", error);
     }
@@ -621,119 +592,23 @@ export default function FollowUpLifting() {
     e.preventDefault();
     try {
       setIsSubmitting(true);
-      const timestamp = getFmsTimestamp();
 
-      const API_URL = process.env.NEXT_PUBLIC_API_URI;
-      if (!API_URL) {
-        toast.error("API URL not configured");
-        return;
-      }
-
-      // Fetch latest RECEIVING-ACCOUNTS to count existing liftings and avoid duplicates
-      let existingRows: any[] = [];
-      try {
-        const checkRes = await fetch(`${API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`);
-        const checkJson = await checkRes.json();
-        if (checkJson.success && Array.isArray(checkJson.data)) {
-          existingRows = checkJson.data.slice(6);
-        }
-      } catch (err) {
-        console.error("Error fetching RECEIVING-ACCOUNTS rows:", err);
-      }
+      const { data: existingLiftings } = await supabase
+        .from("vendor_liftings")
+        .select("id, po_id");
 
       const tempCountMap = new Map<string, number>();
-      const getUniqueLiftNumber = (indentNo: string, baseLiftNo: string) => {
+      const getUniqueLiftNumber = (indentNo: string) => {
         const cleanIndent = String(indentNo).trim();
-        const sheetCount = existingRows.filter((r: any) => r && String(r[1]).trim() === cleanIndent && r[2] && String(r[2]).trim().startsWith("LIFT-")).length;
+        const count = existingLiftings?.filter((l) => {
+          const po = sheetRecords.find((r) => r._poId === l.po_id);
+          return po && String(po.data.indentNumber).trim() === cleanIndent;
+        }).length || 0;
         const batchCount = tempCountMap.get(cleanIndent) || 0;
-        const totalCount = sheetCount + batchCount;
+        const totalCount = count + batchCount;
         tempCountMap.set(cleanIndent, batchCount + 1);
-        
-        const base = baseLiftNo || "LIFT";
-        return `${base}-${totalCount + 1}`;
+        return `LIFT-${totalCount + 1}`;
       };
-
-      const rowsToInsert: any[] = [];
-      const updatesToFMS: { rowIndex: number, rowData: any[] }[] = [];
-
-      let commonFileUrl = "";
-      let fileToUpload: File | null = null;
-
-      if (isUnifiedMode && unifiedFormData?.status === "lift-material" && unifiedFormData.liftingData.biltyCopy instanceof File) {
-        fileToUpload = unifiedFormData.liftingData.biltyCopy;
-      } else if (!isUnifiedMode && bulkFormData.length === 1 && bulkFormData[0].status === "lift-material" && bulkFormData[0].liftingData.biltyCopy instanceof File) {
-        fileToUpload = bulkFormData[0].liftingData.biltyCopy;
-      }
-
-      let commonBillFileUrl = "";
-      let billToUpload: File | null = null;
-      if (commonBillCopy instanceof File) {
-        billToUpload = commonBillCopy;
-      }
-
-      if (billToUpload) {
-        try {
-          const fileBase64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve((reader.result as string).split(",")[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(billToUpload!);
-          });
-
-          const uploadParams = new URLSearchParams();
-          uploadParams.append("action", "uploadFile");
-          uploadParams.append("base64Data", fileBase64);
-          uploadParams.append("fileName", billToUpload!.name);
-          uploadParams.append("mimeType", billToUpload!.type);
-          const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
-          uploadParams.append("folderId", folderId);
-
-          const uploadRes = await fetch(API_URL, {
-            method: "POST",
-            body: uploadParams,
-          });
-          const uploadResult = await uploadRes.json();
-          if (uploadResult.success) {
-            commonBillFileUrl = uploadResult.fileUrl;
-          } else {
-            toast.warning(`Bill image upload failed, proceeding without it.`);
-          }
-        } catch (e) {
-          console.error("Bill upload error", e);
-        }
-      }
-
-      if (fileToUpload) {
-        try {
-          const fileBase64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve((reader.result as string).split(",")[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(fileToUpload!);
-          });
-
-          const uploadParams = new URLSearchParams();
-          uploadParams.append("action", "uploadFile");
-          uploadParams.append("base64Data", fileBase64);
-          uploadParams.append("fileName", fileToUpload!.name);
-          uploadParams.append("mimeType", fileToUpload!.type);
-          const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
-          uploadParams.append("folderId", folderId);
-
-          const uploadRes = await fetch(API_URL, {
-            method: "POST",
-            body: uploadParams,
-          });
-          const uploadResult = await uploadRes.json();
-          if (uploadResult.success) {
-            commonFileUrl = uploadResult.fileUrl;
-          } else {
-            toast.warning(`File upload failed, proceeding without it.`);
-          }
-        } catch (e) {
-          console.error("Upload error", e);
-        }
-      }
 
       for (let i = 0; i < bulkFormData.length; i++) {
         let record = bulkFormData[i];
@@ -749,22 +624,27 @@ export default function FollowUpLifting() {
               ...unifiedFormData.liftingData,
               liftingQty: unifiedLiftingQtys[record.recordId] || "",
               liftNumber: record.liftingData.liftNumber || "",
-              biltyCopy: unifiedFormData.liftingData.biltyCopy
-            }
+              biltyCopy: unifiedFormData.liftingData.biltyCopy,
+            },
           };
         }
 
         const sheetRecord = sheetRecords.find((r) => r.id === record.recordId)!;
-        const v = getVendorData(sheetRecord);
         const lift = record.liftingData;
 
-        // Generate unique lift number for this lifting record
-        const uniqueLiftNo = getUniqueLiftNumber(sheetRecord.data.indentNumber, lift.liftNumber);
-        lift.liftNumber = uniqueLiftNo;
-        let biltyLink = typeof lift.biltyCopy === 'string' ? lift.biltyCopy : "";
-        if (record.status === "lift-material" && lift.biltyCopy instanceof File) {
-          biltyLink = commonFileUrl;
+        const enteredQty = parseFloat(String(lift.liftingQty || "0").replace(/,/g, "")) || 0;
+        const allowedQty = parseFloat(String(sheetRecord.data.quantity || "0").replace(/,/g, "")) || 0;
+
+        if (record.status === "lift-material" && enteredQty > allowedQty && allowedQty > 0) {
+          toast.error(`Lifting quantity (${enteredQty}) cannot be greater than approved quantity (${allowedQty}) for Indent ${sheetRecord.data.indentNumber}!`, {
+            style: { background: "red", color: "white", border: "none" }
+          });
+          setIsSubmitting(false);
+          return;
         }
+
+        const uniqueLiftNo = getUniqueLiftNumber(sheetRecord.data.indentNumber);
+        lift.liftNumber = uniqueLiftNo;
 
         const toYMD = (dateStr: string) => {
           if (!dateStr) return "";
@@ -776,122 +656,47 @@ export default function FollowUpLifting() {
           return `${yyyy}-${mm}-${dd}`;
         };
 
-        const currentTimestamp = timestamp;
         const followUpDateFormatted = toYMD(record.followUpDate || "");
-        const paymentDateFormatted = toYMD(lift.paymentDate || "");
         const expectedDeliveryDateFormatted = toYMD(lift.expectedDeliveryDate || "");
 
-        const totalQty = parseFloat(String(sheetRecord.data.quantity || 0).replace(/,/g, "")) || 0;
-        const totalLiftedQtyBefore = parseFloat(String(sheetRecord.data.totalLifted || 0).replace(/,/g, "")) || 0;
-        const currentLiftQty = parseFloat(String(lift.liftingQty || 0)) || 0;
-        const totalLiftedQtyAfter = totalLiftedQtyBefore + currentLiftQty;
-        const pendingQtyAfter = Math.max(0, totalQty - totalLiftedQtyAfter);
+        const liftingRecord: any = {
+          po_id: sheetRecord._poId || null,
+          contact_person: lift.contactNumber || "",
+          followup_date: followUpDateFormatted || null,
+          expected_lifting_date: expectedDeliveryDateFormatted || null,
+          vehicle_number: lift.vehicleNumber || "",
+          driver_contact: lift.contactNumber || "",
+          lifting_status: "Pending",
+          lifting_qty: parseFloat(lift.liftingQty || unifiedLiftingQtys[record.recordId] || "0") || null,
+          freight_amount: parseFloat(lift.freightAmount) || null,
+          transport_rate: lift.transportRateType || null,
+          remarks: record.remarks || "",
+        };
 
         if (record.status === "lift-material") {
-          const receivingAccountRow = new Array(92).fill("");
-
-          receivingAccountRow[0] = currentTimestamp;                            // 0/A: Timestamp
-          receivingAccountRow[1] = sheetRecord.data.indentNumber || "";         // 1/B: Indent Number
-          receivingAccountRow[2] = lift.liftNumber || "";                       // 2/C: Unit Tracking No.
-          receivingAccountRow[3] = v.name || "";                                // 3/D: Vendor Name
-          receivingAccountRow[4] = v.poNumber || "";                            // 4/E: PO Number
-          receivingAccountRow[5] = followUpDateFormatted;                       // 5/F: Next Flw-Up Date (YYYY-MM-DD)
-          receivingAccountRow[6] = record.remarks || "";                        // 6/G: Remarks
-          receivingAccountRow[7] = sheetRecord.data.itemName || "";             // 7/H: Item Name
-          receivingAccountRow[8] = lift.liftingQty || "";                       // 8/I: Lifting Qty
-          receivingAccountRow[9] = lift.transporterName || "";                  // 9/J: Transporter Name
-          receivingAccountRow[10] = lift.vehicleNumber || "";                   // 10/K: Vehicle No.
-          receivingAccountRow[11] = lift.contactNumber || "";                   // 11/L: Contact No.
-
-          // Bilty Details
-          receivingAccountRow[12] = lift.hasBilty === "Yes" ? (lift.biltyNumber || "") : ""; // 12/M: Bilty Number (LR No)
-          receivingAccountRow[18] = lift.hasBilty === "Yes" ? biltyLink : "";  // 18/S: Bilty Image (Bilty Copy)
-
-          receivingAccountRow[13] = currentTimestamp.split(" ")[0];             // 13/N: Dispatch Date (Default to current date)
-          receivingAccountRow[14] = lift.freightAmount || "";                   // 14/O: Total Transporting Amount
-          receivingAccountRow[15] = lift.advanceAmount || "";                   // 15/P: Advance Amount
-          receivingAccountRow[16] = paymentDateFormatted;                       // 16/Q: Payment Date (YYYY-MM-DD)
-          receivingAccountRow[17] = lift.paymentStatus || "";                   // 17/R: Payment Status
-          receivingAccountRow[21] = lift.areaLifting || "";                     // 21/V: Area Lifting
-          receivingAccountRow[22] = lift.transportRateType || "";               // 22/W: Type of Transporting Rate
-          receivingAccountRow[23] = lift.billDate ? toYMD(lift.billDate) : "";  // 23/X: Bill Date
-          receivingAccountRow[24] = lift.billNo || "";                          // 24/Y: Bill No
-          receivingAccountRow[29] = commonBillFileUrl || (typeof commonBillCopy === "string" ? commonBillCopy : ""); // AD: Bill Image
-          receivingAccountRow[30] = lift.hasBilty || "No";                      // 30/AE: Has Bilty (Yes/No)
-          receivingAccountRow[34] = expectedDeliveryDateFormatted;              // 34/AI: Expected Delivery Date
-
-          receivingAccountRow[88] = expectedDeliveryDateFormatted;              // 88/CK: Transporter Follow-Up Planned Date
-
-          rowsToInsert.push(receivingAccountRow);
-        } else if (record.status === "follow-up") {
-          const receivingAccountRow = new Array(92).fill("");
-
-          receivingAccountRow[0] = currentTimestamp;                            // 0/A: Timestamp
-          receivingAccountRow[1] = sheetRecord.data.indentNumber || "";         // 1/B: Indent Number
-          receivingAccountRow[2] = "FOLLOW-UP";                                 // 2/C: Unit Tracking No.
-          receivingAccountRow[3] = v.name || "";                                // 3/D: Vendor Name
-          receivingAccountRow[4] = v.poNumber || "";                            // 4/E: PO Number
-          receivingAccountRow[5] = followUpDateFormatted;                       // 5/F: Next Flw-Up Date (YYYY-MM-DD)
-          receivingAccountRow[6] = record.remarks || "";                        // 6/G: Remarks
-          receivingAccountRow[7] = sheetRecord.data.itemName || "";             // 7/H: Item Name
-          receivingAccountRow[8] = "";                                          // 8/I: Lifting Qty
-          receivingAccountRow[30] = "No";                                       // 30/AE: Has Bilty (No)
-
-          rowsToInsert.push(receivingAccountRow);
+          liftingRecord.actual_lifting_date = toYMD(new Date().toISOString()) || null;
         }
 
-        if (!sheetRecord.row || !Array.isArray(sheetRecord.row)) {
-          console.error("Missing row data for", record.recordId);
-          continue;
+        const { error: insertError } = await supabase
+          .from("vendor_liftings")
+          .insert(liftingRecord);
+
+        if (insertError) {
+          console.error("Failed to insert lifting record:", insertError);
+          toast.error("Failed to save lifting record");
         }
 
-        const fmsRow = new Array(80).fill("");
-
-        if (record.status === "lift-material") {
-          fmsRow[61] = timestamp; // BJ: Actual Date
-          if (pendingQtyAfter === 0) {
-            fmsRow[67] = "Complete"; // BP: Status becomes Complete
-          } else {
-            fmsRow[67] = "Pending";  // BP: Status remains Pending
-          }
-        } else if (record.status === "follow-up") {
-          fmsRow[76] = followUpDateFormatted; // BY
-          fmsRow[77] = record.remarks || "";  // BZ
-          fmsRow[78] = timestamp.split(" ")[0]; // CA: Last Follow Up Date
-          fmsRow[67] = "Pending";  // BP: Status remains Pending
-        } else {
-          fmsRow[61] = timestamp;
-          fmsRow[67] = "Pending";
+        if (sheetRecord._poId && (lift.transporterName || lift.freightAmount || lift.biltyNumber)) {
+          await supabase.from("transporter_followups").insert({
+            po_id: sheetRecord._poId,
+            transporter_name: lift.transporterName || "",
+            vehicle_number: lift.vehicleNumber || "",
+            bilty_number: lift.biltyNumber || null,
+            freight_amount: parseFloat(lift.freightAmount) || null,
+            status: "In Transit",
+            dispatch_date: toYMD(new Date().toISOString()),
+          });
         }
-
-        updatesToFMS.push({
-          rowIndex: sheetRecord.rowIndex,
-          rowData: fmsRow
-        });
-      }
-
-      if (rowsToInsert.length > 0) {
-        const uParams = new URLSearchParams();
-        uParams.append("action", "insertLift");
-        uParams.append("rowsData", JSON.stringify(rowsToInsert));
-        const insertRes = await fetch(API_URL, { method: "POST", body: uParams });
-        const insertJson = await insertRes.json();
-        if (!insertJson.success) {
-          console.error("insertLift failed:", insertJson.error);
-          toast.error("Failed to insert lift rows: " + (insertJson.error || "Unknown error"));
-        }
-      }
-
-      if (updatesToFMS.length > 0) {
-        const updatePromises = updatesToFMS.map(update => {
-          const fmsParams = new URLSearchParams();
-          fmsParams.append("action", "update");
-          fmsParams.append("sheetName", "INDENT-LIFT");
-          fmsParams.append("rowIndex", update.rowIndex.toString());
-          fmsParams.append("rowData", JSON.stringify(update.rowData));
-          return fetch(API_URL, { method: "POST", body: fmsParams });
-        });
-        await Promise.all(updatePromises);
       }
 
       setOpen(false);
@@ -1018,7 +823,7 @@ export default function FollowUpLifting() {
             ...baseData,
             v.name || "-",
             v.poNumber || "-",
-            record.row[56] || "-"
+            record.basicValue || "-"
           ];
         });
 
@@ -1316,7 +1121,7 @@ export default function FollowUpLifting() {
                           <TableCell className="font-semibold text-slate-800">{v.name}</TableCell>
                           <TableCell className="font-mono text-slate-600">{v.poNumber}</TableCell>
                           <TableCell className="text-right font-medium text-slate-800">
-                            {record.row[56] ? `₹ ${parseFloat(String(record.row[56]).replace(/,/g, '')).toLocaleString()}` : "-"}
+                            {record.basicValue ? `₹ ${parseFloat(String(record.basicValue).replace(/,/g, '')).toLocaleString()}` : "-"}
                           </TableCell>
                         </TableRow>
                       );

@@ -15,6 +15,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { RefreshCw, Search, Plus, Loader2, AlertCircle, XCircle, Check, ChevronsUpDown } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { supabase } from "@/lib/supabase/client"
+import { fetchIndentWorkflow } from "@/lib/supabase/queries"
 
 const ItemCombobox = ({
   value,
@@ -104,8 +106,6 @@ export default function OrderCancelPage() {
   const [searchLoading, setSearchLoading] = useState(false)
   const [dropdownItemsList, setDropdownItemsList] = useState<string[]>([])
 
-  const SHEET_NAME = "Order-Cancel"
-
   const [searchTerm, setSearchTerm] = useState("")
 
   // Helper function to parse Google Sheets date format and display as YYYY-MM-DD HH:MM:SS
@@ -151,99 +151,70 @@ export default function OrderCancelPage() {
     setError(null)
 
     try {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI || ""
-
-      // Fetch Order-Cancel, INDENT-LIFT, and RECEIVING-ACCOUNTS in parallel
-      const [cancelRes, fmsRes, receivingRes] = await Promise.all([
-        fetch(`${SHEET_API_URL}?sheet=${SHEET_NAME}`),
-        fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`)
+      const [
+        { data: cancelData, error: cancelErr },
+        { data: poData },
+        { data: receiptData },
+        indentRows,
+      ] = await Promise.all([
+        supabase.from("order_cancellations").select("*").order("cancellation_date", { ascending: false }),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("material_receipts").select("*"),
+        fetchIndentWorkflow(),
       ])
 
-      if (!cancelRes.ok) throw new Error(`HTTP error fetching cancellations! status: ${cancelRes.status}`)
-      if (!fmsRes.ok) throw new Error(`HTTP error fetching FMS! status: ${fmsRes.status}`)
-      if (!receivingRes.ok) throw new Error(`HTTP error fetching receiving accounts! status: ${receivingRes.status}`)
+      if (cancelErr) throw cancelErr
 
-      const cancelJson = await cancelRes.json()
-      const fmsJson = await fmsRes.json()
-      const receivingJson = await receivingRes.json()
+      const poById = new Map<string, any>();
+      (poData || []).forEach((po: any) => poById.set(po.id, po));
 
-      // Process FMS (INDENT-LIFT) data to map Indent-No -> PO Qty
-      const fmsMap = new Map<string, { poQty: number }>()
-      if (fmsJson.success && Array.isArray(fmsJson.data)) {
-        // Data starts from index 6 (Row 7) or index 7 (Row 8) based on sheet structure
-        fmsJson.data.slice(6).forEach((row: any) => {
-          if (row && row[1]) {
-            const indentNo = String(row[1]).trim()
-            // approvedQty is index 14. Fallback to indent qty index 5 if empty or not a number.
-            const approvedQtyVal = parseFloat(String(row[14]).trim().replace(/,/g, ""))
-            const indentQtyVal = parseFloat(String(row[5]).trim().replace(/,/g, ""))
-            const poQty = !isNaN(approvedQtyVal) ? approvedQtyVal : (!isNaN(indentQtyVal) ? indentQtyVal : 0)
-            fmsMap.set(indentNo, { poQty })
-          }
-        })
-      }
+      const indentById = new Map<string, any>();
+      indentRows.forEach((row: any) => indentById.set(row.id, row));
 
-      // Process RECEIVING-ACCOUNTS data to map Indent-No -> { totalLiftedQty, totalReceivedQty }
-      const receivingMap = new Map<string, { totalLiftedQty: number, totalReceivedQty: number }>()
-      if (receivingJson.success && Array.isArray(receivingJson.data)) {
-        receivingJson.data.slice(6).forEach((row: any) => {
-          if (row && row[1]) {
-            const indentNo = String(row[1]).trim()
-            const liftingQty = parseFloat(String(row[8]).trim().replace(/,/g, "")) || 0
-            const receivedQty = parseFloat(String(row[25]).trim().replace(/,/g, "")) || 0
+      const receiptMap = new Map<string, { totalLiftedQty: number; totalReceivedQty: number }>();
+      (receiptData || []).forEach((r: any) => {
+        const po = r.po_id ? poById.get(r.po_id) : null;
+        const indentId = po?.indent_id;
+        if (indentId) {
+          const existing = receiptMap.get(indentId) || { totalLiftedQty: 0, totalReceivedQty: 0 };
+          receiptMap.set(indentId, {
+            totalLiftedQty: existing.totalLiftedQty + (r.accepted_quantity || 0),
+            totalReceivedQty: existing.totalReceivedQty + (r.received_quantity || 0),
+          });
+        }
+      });
 
-            const existing = receivingMap.get(indentNo) || { totalLiftedQty: 0, totalReceivedQty: 0 }
-            receivingMap.set(indentNo, {
-              totalLiftedQty: existing.totalLiftedQty + liftingQty,
-              totalReceivedQty: existing.totalReceivedQty + receivedQty
-            })
-          }
-        })
-      }
+      const orders: any[] = [];
 
-      if (cancelJson.success && Array.isArray(cancelJson.data)) {
-        const orders: any[] = []
+      (cancelData || []).forEach((cancel: any, index: number) => {
+        const indent = cancel.indent_id ? indentById.get(cancel.indent_id) : null;
+        const po = cancel.po_id ? poById.get(cancel.po_id) : null;
+        const recData = cancel.indent_id ? receiptMap.get(cancel.indent_id) : null;
 
-        cancelJson.data.slice(1).forEach((row: any, index: number) => { // Skip header row
-          if (row && row.length > 0) {
-            const actualRowIndex = index + 2
-            const indentNo = row[1] || ""
-            const cancelQty = parseFloat(String(row[6]).trim().replace(/,/g, "")) || 0
+        const poQty = po?.quantity || 0;
+        const cancelQty = cancel.financial_impact || 0;
+        const totalLiftedQty = recData?.totalLiftedQty || 0;
+        const receivedQty = recData?.totalReceivedQty || 0;
+        const pendingQty = poQty - cancelQty - receivedQty;
 
-            // Get FMS and Receiving values
-            const fmsData = fmsMap.get(String(indentNo).trim()) || { poQty: 0 }
-            const recData = receivingMap.get(String(indentNo).trim()) || { totalLiftedQty: 0, totalReceivedQty: 0 }
+        orders.push({
+          id: cancel.id,
+          rowIndex: index + 2,
+          timestamp: cancel.cancellation_date || "",
+          indentNo: indent?.data?.indentNumber || "",
+          poNumber: po?.po_number || "",
+          itemName: indent?.data?.itemName || "",
+          cancelStage: cancel.cancelled_by || "",
+          cancelReason: cancel.cancellation_reason || "",
+          qty: cancelQty,
+          poQty,
+          totalLiftedQty,
+          receivedQty,
+          pendingQty,
+        });
+      });
 
-            const poQty = fmsData.poQty
-            const totalLiftedQty = recData.totalLiftedQty
-            const receivedQty = recData.totalReceivedQty
-            const pendingQty = poQty - cancelQty - receivedQty
-
-            const order = {
-              id: `CANCEL-${actualRowIndex}`,
-              rowIndex: actualRowIndex,
-              timestamp: row[0] || "", // Column A - Cancelled At
-              indentNo: indentNo, // Column B - Indent-No.
-              poNumber: row[2] || "", // Column C - PO Number
-              itemName: row[3] || "", // Column D - Item-Name
-              cancelStage: row[4] || "", // Column E - Cancel Stage
-              cancelReason: row[5] || "", // Column F - Cancel Reason
-              qty: cancelQty, // Column G - Qty (Canceled Qty)
-              poQty,
-              totalLiftedQty,
-              receivedQty,
-              pendingQty,
-              fullRowData: row,
-            }
-            orders.push(order)
-          }
-        })
-
-        setCancelledOrders(orders)
-      } else {
-        throw new Error(cancelJson.error || "Failed to fetch cancellation logs")
-      }
+      setCancelledOrders(orders);
     } catch (err: any) {
       console.error("Error fetching cancelled orders data:", err)
       setError(err.message)
@@ -255,60 +226,50 @@ export default function OrderCancelPage() {
 
   const fetchCancelStages = async () => {
     try {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI || ""
+      const { data: rows, error } = await supabase
+        .from("master_cancel_stages")
+        .select("name")
+        .eq("is_active", true);
 
-      const response = await fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll`)
-      if (!response.ok) return
+      if (error) throw error;
 
-      const json = await response.json()
-      if (json.success && Array.isArray(json.data)) {
-        const options: string[] = []
-        json.data.slice(1).forEach((row: any) => { // Row 2 onwards
-          if (row && row[17]) {
-            options.push(String(row[17]).trim())
-          }
-        })
-        let uniqueOptions = [...new Set(options)].filter(Boolean)
-        if (uniqueOptions.length === 0) {
-          uniqueOptions = [
-            "Create Indent",
-            "Indent Approval",
-            "Quotation",
-            "Approved Vendor",
-            "Make PO",
-            "Payment",
-            "Follow UP / Lifting",
-            "Transporter Follow-Up",
-            "Material Received",
-            "Billing",
-            "Purchase Return",
-            "Order Cancel"
-          ]
-        }
-        setStageOptions(uniqueOptions)
+      let uniqueOptions = (rows || []).map((r: any) => r.name).filter(Boolean);
+      if (uniqueOptions.length === 0) {
+        uniqueOptions = [
+          "Create Indent",
+          "Indent Approval",
+          "Quotation",
+          "Approved Vendor",
+          "Make PO",
+          "Payment",
+          "Follow UP / Lifting",
+          "Transporter Follow-Up",
+          "Material Received",
+          "Billing",
+          "Purchase Return",
+          "Order Cancel"
+        ]
       }
+      setStageOptions(uniqueOptions)
     } catch (err) {
-      console.error("Error fetching cancel stages from Dropdown:", err)
+      console.error("Error fetching cancel stages:", err)
     }
   }
 
   const fetchDropdownItems = async () => {
     try {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI || ""
+      const { data: rows, error } = await supabase
+        .from("master_items")
+        .select("item_name")
+        .eq("is_active", true);
 
-      const response = await fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll`)
-      if (!response.ok) return
+      if (error) throw error;
 
-      const json = await response.json()
-      if (json.success && Array.isArray(json.data)) {
-        const items = json.data.slice(1)
-          .map((row: any) => String(row[4] || "").trim())
-          .filter(Boolean)
-        const uniqueItems = Array.from(new Set(items)) as string[]
-        setDropdownItemsList(uniqueItems)
-      }
+      const items = (rows || []).map((r: any) => r.item_name).filter(Boolean);
+      const uniqueItems = Array.from(new Set(items)) as string[]
+      setDropdownItemsList(uniqueItems)
     } catch (err) {
-      console.error("Error fetching items from Dropdown sheet:", err)
+      console.error("Error fetching items from master_items:", err)
     }
   }
 
@@ -345,102 +306,88 @@ export default function OrderCancelPage() {
     setSelectedSearchRowIds([])
 
     try {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI || ""
-
-      // Fetch INDENT-LIFT and RECEIVING-ACCOUNTS in parallel
-      const [fmsRes, receivingRes] = await Promise.all([
-        fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`)
+      const [indentRows, { data: poData }, { data: receiptData }] = await Promise.all([
+        fetchIndentWorkflow(),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("material_receipts").select("*"),
       ])
 
-      if (!fmsRes.ok) throw new Error(`HTTP error! status: ${fmsRes.status}`)
-      if (!receivingRes.ok) throw new Error(`HTTP error! status: ${receivingRes.status}`)
-
-      const fmsJson = await fmsRes.json()
-      const receivingJson = await receivingRes.json()
-
-      // Process RECEIVING-ACCOUNTS to group by Indent Number
-      // We want to map Indent-No -> { receivedQty: sum(Column Z/index 25), invoiceNos: string[] }
-      const recMap = new Map<string, { receivedQty: number; invoiceNos: string[] }>()
-      if (receivingJson.success && Array.isArray(receivingJson.data)) {
-        receivingJson.data.slice(6).forEach((row: any) => {
-          if (row && row[1]) {
-            const indentNo = String(row[1]).trim()
-            const recQty = parseFloat(String(row[25]).trim().replace(/,/g, "")) || 0
-            const invNo = String(row[24] || "").trim()
-
-            const existing = recMap.get(indentNo) || { receivedQty: 0, invoiceNos: [] }
-            const newInvNos = [...existing.invoiceNos]
-            if (invNo && invNo !== "—" && invNo !== "-" && !newInvNos.includes(invNo)) {
-              newInvNos.push(invNo)
-            }
-            recMap.set(indentNo, {
-              receivedQty: existing.receivedQty + recQty,
-              invoiceNos: newInvNos
-            })
-          }
-        })
-      }
-
-      if (fmsJson.success && Array.isArray(fmsJson.data)) {
-        const query = searchQuery.toLowerCase().trim()
-        const results: any[] = []
-
-        // Skip headers and first 6 indices
-        fmsJson.data.slice(6).forEach((row: any, index: number) => {
-          if (row && row.length > 0) {
-            const indentNumber = String(row[1] || "").trim()
-            const poNumber = String(row[54] || "").trim()
-            const itemName = String(row[4] || "").trim()
-
-            if (!indentNumber) return
-
-            let isMatch = false
-            if (searchType === "indent-no") {
-              isMatch = indentNumber.toLowerCase().includes(query)
-            } else if (searchType === "po-number") {
-              isMatch = poNumber.toLowerCase().includes(query)
-            } else if (searchType === "item-name") {
-              isMatch = itemName.toLowerCase().includes(query)
-            }
-
-            if (isMatch) {
-              // approvedQty is index 14. Fallback to indent qty index 5 if empty or not a number.
-              const approvedQtyVal = parseFloat(String(row[14]).trim().replace(/,/g, ""))
-              const indentQtyVal = parseFloat(String(row[5]).trim().replace(/,/g, ""))
-              const poQty = !isNaN(approvedQtyVal) ? approvedQtyVal : (!isNaN(indentQtyVal) ? indentQtyVal : 0)
-
-              // Get Received Qty & Invoice Numbers from RECEIVING-ACCOUNTS
-              const recData = recMap.get(indentNumber) || { receivedQty: 0, invoiceNos: [] }
-              const receivedQty = recData.receivedQty
-              const invoiceNo = recData.invoiceNos.length > 0 ? recData.invoiceNos.join(", ") : "—"
-
-              // Calculate Remaining Qty = PO Qty - Received Qty
-              const remainingQty = poQty - receivedQty
-
-              results.push({
-                id: `lift-${index}`,
-                indentNumber,
-                poNumber: poNumber || "—",
-                itemName,
-                invoiceNo,
-                poQty,
-                receivedQty,
-                remainingQty: remainingQty >= 0 ? remainingQty : 0
-              })
-            }
-          }
-        })
-
-        setSearchResults(results)
-        if (results.length === 0) {
-          toast.info("No matching records found")
+      const poByIndentId = new Map<string, any>();
+      (poData || []).forEach((po: any) => {
+        if (po.indent_id && !poByIndentId.has(po.indent_id)) {
+          poByIndentId.set(po.indent_id, po);
         }
-      } else {
-        throw new Error(fmsJson.error || "Failed to fetch search results")
+      });
+
+      const poById = new Map<string, any>();
+      (poData || []).forEach((po: any) => poById.set(po.id, po));
+
+      const recMap = new Map<string, { receivedQty: number; invoiceNos: string[] }>();
+      (receiptData || []).forEach((r: any) => {
+        const po = r.po_id ? poById.get(r.po_id) : null;
+        const indentId = po?.indent_id;
+        if (indentId) {
+          const existing = recMap.get(indentId) || { receivedQty: 0, invoiceNos: [] };
+          const newInvNos = [...existing.invoiceNos];
+          const invNo = r.grn_number || "";
+          if (invNo && invNo !== "—" && invNo !== "-" && !newInvNos.includes(invNo)) {
+            newInvNos.push(invNo);
+          }
+          recMap.set(indentId, {
+            receivedQty: existing.receivedQty + (r.received_quantity || 0),
+            invoiceNos: newInvNos
+          });
+        }
+      });
+
+      const query = searchQuery.toLowerCase().trim()
+      const results: any[] = []
+
+      indentRows.forEach((row: any) => {
+        const indentNumber = row.data.indentNumber;
+        const poNumber = row.data.poNumber;
+        const itemName = row.data.itemName;
+
+        if (!indentNumber) return;
+
+        let isMatch = false;
+        if (searchType === "indent-no") {
+          isMatch = indentNumber.toLowerCase().includes(query);
+        } else if (searchType === "po-number") {
+          isMatch = poNumber.toLowerCase().includes(query);
+        } else if (searchType === "item-name") {
+          isMatch = itemName.toLowerCase().includes(query);
+        }
+
+        if (isMatch) {
+          const po = poByIndentId.get(row.id);
+          const poQty = po?.quantity || 0;
+
+          const recData = recMap.get(row.id) || { receivedQty: 0, invoiceNos: [] };
+          const receivedQty = recData.receivedQty;
+          const invoiceNo = recData.invoiceNos.length > 0 ? recData.invoiceNos.join(", ") : "—";
+          const remainingQty = poQty - receivedQty;
+
+          results.push({
+            id: row.id,
+            poId: po?.id || null,
+            indentNumber,
+            poNumber: poNumber || "—",
+            itemName,
+            invoiceNo,
+            poQty,
+            receivedQty,
+            remainingQty: remainingQty >= 0 ? remainingQty : 0
+          });
+        }
+      });
+
+      setSearchResults(results);
+      if (results.length === 0) {
+        toast.info("No matching records found")
       }
     } catch (err: any) {
-      console.error("Error during FMS search:", err)
+      console.error("Error during search:", err)
       toast.error(`Search error: ${err.message}`)
     } finally {
       setSearchLoading(false)
@@ -459,7 +406,6 @@ export default function OrderCancelPage() {
 
     const selectedRows = searchResults.filter(row => selectedSearchRowIds.includes(row.id))
 
-    // Validate that each selected row has a valid cancel quantity
     for (const row of selectedRows) {
       const q = cancelQuantities[row.id] ?? row.remainingQty
       const cancelNum = Number(q)
@@ -476,57 +422,22 @@ export default function OrderCancelPage() {
     setSubmitting(true)
 
     try {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI || ""
-
-      const today = new Date()
-      const timestamp = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')} ${today.getHours().toString().padStart(2, '0')}:${today.getMinutes().toString().padStart(2, '0')}:${today.getSeconds().toString().padStart(2, '0')}`
-
-      const promises = selectedRows.map(async (row) => {
-        const formData = new FormData()
-        formData.append("sheetName", SHEET_NAME)
-        formData.append("action", "insert")
-
+      const insertRows = selectedRows.map((row) => {
         const rowQty = cancelQuantities[row.id] ?? row.remainingQty
 
-        const rowData = [
-          timestamp,                // A - Cancelled At
-          row.indentNumber,         // B - Indent-No.
-          row.poNumber || "—",      // C - PO Number
-          row.itemName,             // D - Item-Name
-          cancelStage,              // E - Cancel Stage
-          cancelReason,             // F - Cancel Reason
-          rowQty,                   // G - Qty
-        ]
-
-        formData.append("rowData", JSON.stringify(rowData))
-
-        const response = await fetch(SHEET_API_URL, {
-          method: "POST",
-          mode: "cors",
-          body: formData,
-        })
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
+        return {
+          indent_id: row.id,
+          po_id: row.poId || null,
+          cancelled_by: cancelStage,
+          cancellation_reason: cancelReason,
+          financial_impact: Number(rowQty),
+          status: "Cancelled",
         }
-
-        let result
-        try {
-          const responseText = await response.text()
-          result = JSON.parse(responseText)
-        } catch (parseError) {
-          result = { success: true }
-        }
-
-        if (result.success === false) {
-          throw new Error(result.error || "Cancellation failed")
-        }
-        return result
       })
 
-      await Promise.all(promises)
+      const { error } = await supabase.from("order_cancellations").insert(insertRows)
+      if (error) throw error
 
-      // Reset form
       setSearchQuery("")
       setSearchResults([])
       setSelectedSearchRowIds([])
@@ -535,7 +446,6 @@ export default function OrderCancelPage() {
       setCancelQuantities({})
       setIsDialogOpen(false)
 
-      // Refresh the list
       await fetchCancelledOrders()
 
       toast.success(`Successfully cancelled ${selectedRows.length} record(s)`)

@@ -23,17 +23,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-const FOLDER_ID = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
-// Static columns definition
 const PENDING_COLUMNS = [
   { key: "indentNumber", label: "Indent No" },
   { key: "unitTrackingNo", label: "Unit Tracking No" },
   { key: "itemName", label: "Item" },
   { key: "rejectedQty", label: "Rejected Qty" },
   { key: "vendor", label: "Vendor" },
-  { key: "invoiceNumber", label: "Invoice No" },
+  { key: "poNumber", label: "PO No" },
   { key: "remark", label: "Remark" },
   { key: "partName", label: "Part Name" },
   { key: "serialNoWithPhoto", label: "S-No. with Photo" },
@@ -45,21 +44,19 @@ const HISTORY_COLUMNS = [
   { key: "unitTrackingNo", label: "Unit Tracking No" },
   { key: "itemName", label: "Item" },
   { key: "vendor", label: "Vendor" },
-  { key: "invoiceNumber", label: "Invoice No" },
+  { key: "poNumber", label: "PO No" },
   { key: "remark", label: "Remark" },
   { key: "partName", label: "Part Name" },
   { key: "serialNoWithPhoto", label: "S-No. with Photo" },
   { key: "plan6", label: "Planned" },
   { key: "actual6", label: "Actual" },
   { key: "returnedQty", label: "Return Qty" },
-  { key: "returnAmount", label: "Return Amount" },
   { key: "returnReason", label: "Reason" },
   { key: "returnStatus", label: "Status" },
   { key: "returnItemImage", label: "Item Img" },
   { key: "creditNoteImage", label: "Credit Note" },
 ];
 
-// Helper functions
 const formatDateDash = (date: any) => {
   if (!date || date === "-" || date === "—") return "-";
   const d = new Date(date);
@@ -70,16 +67,9 @@ const formatDateDash = (date: any) => {
   return `${dd}-${mm}-${yyyy}`;
 };
 
-const toBase64 = (file: File) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.readAsDataURL(file);
-  reader.onload = () => resolve(reader.result as string);
-  reader.onerror = error => reject(error);
-});
-
 export default function Stage12() {
-  const [sheetRecords, setSheetRecords] = useState<any[]>([]); // Used for Pending tab
-  const [partialReturnRecords, setPartialReturnRecords] = useState<any[]>([]); // Used for History tab
+  const [sheetRecords, setSheetRecords] = useState<any[]>([]);
+  const [partialReturnRecords, setPartialReturnRecords] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [open, setOpen] = useState(false);
@@ -150,121 +140,105 @@ export default function Stage12() {
 
   const [originalQty, setOriginalQty] = useState(0);
 
-  // -----------------------------------------------------------------
-  // FETCH DATA
-  // -----------------------------------------------------------------
   const fetchData = useCallback(async () => {
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      // Parallel fetch for speed
-      const [accRes, fmsRes, partialRes] = await Promise.all([
-        fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`, { cache: "no-store" }),
-        fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`, { cache: "no-store" }),
-        fetch(`${SHEET_API_URL}?sheet=${encodeURIComponent("Material-Testing")}&action=getAll`, { cache: "no-store" }),
+      const indentRows = await fetchIndentWorkflow();
+      const indentIds = indentRows.map((r) => r.id);
+
+      const indentMapById = new Map(indentRows.map((r) => [r.id, r]));
+
+      const { data: poData } = await supabase
+        .from("purchase_orders")
+        .select("*")
+        .in("indent_id", indentIds);
+
+      const poIds = (poData || []).map((po: any) => po.id);
+
+      const [receiptRes, returnRes] = await Promise.all([
+        poIds.length > 0
+          ? supabase.from("material_receipts").select("*").in("po_id", poIds)
+          : Promise.resolve({ data: [], error: null }),
+        poIds.length > 0
+          ? supabase.from("purchase_returns").select("*").in("po_id", poIds)
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
-      const [accJson, fmsJson, partialJson] = await Promise.all([
-        accRes.json(),
-        fmsRes.json(),
-        partialRes.json(),
-      ]);
+      const receiptData = (receiptRes.data || []) as any[];
+      const returnData = (returnRes.data || []) as any[];
 
-      if (!accJson.success) console.error("Receiving Accounts fetch failed:", accJson);
-      if (!fmsJson.success) console.error("Indent Lift fetch failed:", fmsJson);
-      if (!partialJson.success) console.error("Material Testing fetch failed:", partialJson);
+      const receiptIds = receiptData.map((r: any) => r.id);
+      const qcRes = receiptIds.length > 0
+        ? await supabase.from("qc_inspections").select("*").in("material_receipt_id", receiptIds)
+        : { data: [], error: null };
 
-      if (!accJson.success || !fmsJson.success || !partialJson.success) {
-        throw new Error("Failed to load sheet data. Check console for details.");
-      }
+      const qcData = (qcRes.data || []) as any[];
 
-      // Build lookup maps
+      const receiptById = new Map(receiptData.map((r: any) => [r.id, r]));
+      const returnByReceiptId = new Map(
+        returnData.filter((r: any) => r.material_receipt_id).map((r: any) => [r.material_receipt_id, r])
+      );
 
-      // Process RECEIVING-ACCOUNTS to build a lookup map for Indent Details
-      const indentMap = new Map<string, any>();
-      if (Array.isArray(accJson.data)) {
-        accJson.data.slice(6).forEach((row: any, i: number) => {
-          const indentNo = String(row[1] || "").trim();
-          const liftNo = String(row[2] || "").trim();
-          if (!liftNo) return;
+      const newPending: any[] = [];
+      const newHistory: any[] = [];
 
-          indentMap.set(liftNo, {
-            indentNumber: indentNo,
-            unitTrackingNo: liftNo,
-            itemName: row[7],
-            vendor: row[3],
-            invoiceNumber: row[24],
-            poNumber: row[4],
-            damageQty: row[116] || "0",
-            damageReason: row[117] || "-",
-            damageImage: row[118] || "",
-            receivingAccountRowIndex: i + 7,
-          });
-        });
-      }
+      const qcMapByReceiptId = new Map(qcData.map((qc: any) => [qc.material_receipt_id, qc]));
 
-      // 2. Process Material Testing rows to determine Pending & History
-      let newPending: any[] = [];
-      let newHistory: any[] = [];
+      for (const receipt of receiptData) {
+        const po = (poData || []).find((p: any) => p.id === receipt.po_id);
+        if (!po) continue;
 
-      if (Array.isArray(partialJson.data)) {
-        partialJson.data.slice(6).forEach((r: any, idx: number) => {
-          const rowIndex = idx + 7; // Data starts at row 7
-          const timestamp = String(r[0] || "").trim();
-          const indentNo = String(r[1] || "").trim();
-          const liftNo = String(r[2] || "").trim();
+        const indent = indentMapById.get(po.indent_id);
+        const parentData: any = indent?.data || {};
 
-          // Basic Criteria: Col-A, B, C must not be empty
-          if (!timestamp || !indentNo || !liftNo) return;
+        const qc = qcMapByReceiptId.get(receipt.id);
+        const ret = returnByReceiptId.get(receipt.id) || null;
+        const rejectedQty = qc?.failed_quantity ?? receipt.rejected_quantity ?? 0;
 
-          const plan7 = String(r[14] || "").trim(); // O: Planned7
-          const actual7 = String(r[15] || "").trim(); // P: Actual7
-          const rejectQty = parseFloat(r[12] || "0"); // M: Reject Qty
+        // Damaged quantity wala material hi Purchase Return stage me jayega
+        if (rejectedQty <= 0) continue;
 
-          const parent = indentMap.get(liftNo) || {};
+        const recordData: any = {
+          indentNumber: parentData.indentNumber || "",
+          unitTrackingNo: receipt.grn_number || "",
+          itemName: parentData.itemName || "",
+          rejectedQty: qc?.failed_quantity ?? receipt.rejected_quantity ?? 0,
+          rejectQty: qc?.failed_quantity ?? receipt.rejected_quantity ?? 0,
+          receivedQty: receipt.received_quantity || 0,
+          acceptedQty: receipt.accepted_quantity || receipt.received_quantity || 0,
+          vendor: po.vendor_name || "",
+          poNumber: po.po_number || "",
+          remark: qc?.rejection_reason || "-",
+          partName: parentData.itemName || "-",
+          serialNo: "",
+          serialPhoto: "",
+          plan6: receipt.received_date || qc?.inspection_date || "",
+          actual6: ret?.return_date || "",
+          returnedQty: ret?.returned_quantity ?? "",
+          returnReason: ret?.return_reason || "",
+          returnStatus: ret?.status || "",
+          returnItemImage: ret?.return_item_image_url || "",
+          creditNoteImage: ret?.credit_note_image_url || "",
+        };
 
-          const record = {
-            id: `partial-${rowIndex}`,
-            rowIndex,
-            data: {
-              ...parent,
-              indentNumber: indentNo,
-              rejectedQty: rejectQty,
-              rejectQty: rejectQty,
-              plan6: plan7,
-              actual6: actual7,
+        const record = {
+          id: receipt.id,
+          data: recordData,
+          _qcInspectionId: qc?.id || null,
+          _materialReceiptId: receipt.id,
+          _poId: po.id,
+          _purchaseReturnId: ret?.id || null,
+        };
 
-              remark: r[13] || "-",     // N: Remarks
-              partName: r[11] || "-",   // L: Part Name
-              serialNo: r[8] || "",     // I: Serial-No
-              serialPhoto: r[9] || "",  // J: Image
-
-              // Return Details (Cols R-X / 17-23 in 0-based array)
-              returnedQty: r[17], // R
-              returnRate: r[18],  // S
-              returnAmount: r[19],// T
-              returnReason: r[20],// U
-              returnStatus: r[21],// V
-              returnItemImage: r[22], // W
-              creditNoteImage: r[23], // X
-              originalRow: r,
-            }
-          };
-
-          const hasPlan = plan7 && plan7 !== "-" && plan7 !== "#VALUE!";
-          const hasActual = actual7 && actual7 !== "-" && actual7 !== "#VALUE!";
-
-          if (hasActual) {
-            newHistory.push(record);
-          } else if (hasPlan) {
-            newPending.push(record);
-          }
-        });
+        if (ret) {
+          newHistory.push(record);
+        } else {
+          newPending.push(record);
+        }
       }
 
       setSheetRecords(newPending);
       setPartialReturnRecords(newHistory);
-
     } catch (e) {
       console.error("Fetch error:", e);
       toast.error("Failed to fetch data");
@@ -276,9 +250,6 @@ export default function Stage12() {
     fetchData();
   }, [fetchData]);
 
-  // -----------------------------------------------------------------
-  // MEMOIZED FILTER RECORDS
-  // -----------------------------------------------------------------
   const pending = useMemo(() => {
     return sheetRecords.filter((r) => {
       const searchLower = searchTerm.toLowerCase();
@@ -287,8 +258,7 @@ export default function Stage12() {
         r.data.indentNumber?.toLowerCase().includes(searchLower) ||
         r.data.itemName?.toLowerCase().includes(searchLower) ||
         r.data.vendor?.toLowerCase().includes(searchLower) ||
-        String(r.data.poNumber || "").toLowerCase().includes(searchLower) ||
-        String(r.data.invoiceNumber || "").toLowerCase().includes(searchLower)
+        String(r.data.poNumber || "").toLowerCase().includes(searchLower)
       );
     });
   }, [sheetRecords, searchTerm]);
@@ -301,19 +271,15 @@ export default function Stage12() {
         r.data.indentNumber?.toLowerCase().includes(searchLower) ||
         r.data.itemName?.toLowerCase().includes(searchLower) ||
         r.data.vendor?.toLowerCase().includes(searchLower) ||
-        String(r.data.invoiceNumber || "").toLowerCase().includes(searchLower)
+        String(r.data.poNumber || "").toLowerCase().includes(searchLower)
       );
     });
   }, [partialReturnRecords, searchTerm]);
 
-  // -----------------------------------------------------------------
-  // HANDLERS
-  // -----------------------------------------------------------------
   const handleOpenForm = useCallback((recordId: string) => {
     const rec = sheetRecords.find((r) => r.id === recordId);
     if (!rec) return;
 
-    // Use Reject Qty as max
     const rejectQty = parseFloat(rec.data.rejectQty || "0") || 0;
     setOriginalQty(rejectQty);
 
@@ -331,7 +297,6 @@ export default function Stage12() {
     setOpen(true);
   }, [sheetRecords]);
 
-  // Calculate amount effect safely
   useEffect(() => {
     const qty = parseFloat(formData.returnedQty) || 0;
     const rate = parseFloat(formData.returnRate) || 0;
@@ -342,19 +307,24 @@ export default function Stage12() {
     });
   }, [formData.returnedQty, formData.returnRate]);
 
-
   const uploadFile = useCallback(async (file: File) => {
-    const upParams = new URLSearchParams();
-    upParams.append("action", "uploadFile");
-    upParams.append("base64Data", await toBase64(file));
-    upParams.append("fileName", file.name);
-    upParams.append("mimeType", file.type);
-    upParams.append("folderId", FOLDER_ID);
-
-    const upRes = await fetch(`${SHEET_API_URL}`, { method: "POST", body: upParams });
-    const upJson = await upRes.json();
-    if (upJson.success) return upJson.fileUrl;
-    throw new Error("Upload failed");
+    try {
+      const path = `return-documents/${Date.now()}_${file.name}`;
+      const { error: upErr } = await supabase.storage
+        .from("return-documents")
+        .upload(path, file);
+      if (upErr) {
+        console.warn("Storage upload error (bucket missing):", upErr.message);
+        return typeof window !== "undefined" ? URL.createObjectURL(file) : "";
+      }
+      const { data } = supabase.storage
+        .from("return-documents")
+        .getPublicUrl(path);
+      return data?.publicUrl || "";
+    } catch (err) {
+      console.warn("Upload exception:", err);
+      return typeof window !== "undefined" ? URL.createObjectURL(file) : "";
+    }
   }, []);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
@@ -371,55 +341,64 @@ export default function Stage12() {
       let itemImgUrl = "";
       let creditImgUrl = "";
 
-      // Parallel uploads
       const uploadPromises = [];
       if (formData.returnItemImage) uploadPromises.push(uploadFile(formData.returnItemImage).then(url => { itemImgUrl = url; }));
       if (formData.creditNoteImage) uploadPromises.push(uploadFile(formData.creditNoteImage).then(url => { creditImgUrl = url; }));
-
       if (uploadPromises.length > 0) await Promise.all(uploadPromises);
 
-      const pad = (n: number) => String(n).padStart(2, "0");
+      const { data: existingReturns } = await supabase
+        .from("purchase_returns")
+        .select("return_number")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      let nextNum = 1;
+      if (existingReturns && existingReturns.length > 0) {
+        const match = existingReturns[0].return_number?.match(/PR-(\d+)/);
+        if (match) nextNum = parseInt(match[1], 10) + 1;
+      }
+      const returnNumber = `PR-${String(nextNum).padStart(3, "0")}`;
+
       const d = formData.actual6Date || new Date();
-      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(new Date().getHours())}:${pad(new Date().getMinutes())}:${pad(new Date().getSeconds())}`;
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const returnDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+      const payload = {
+        return_number: returnNumber,
+        po_id: rec._poId,
+        material_receipt_id: rec._materialReceiptId,
+        vendor_name: rec.data.vendor || "",
+        return_date: returnDate,
+        returned_quantity: parseFloat(formData.returnedQty) || 0,
+        return_reason: formData.returnReason,
+        return_item_image_url: itemImgUrl || null,
+        credit_note_image_url: creditImgUrl || null,
+        status: formData.returnStatus || "Initiated",
+      };
 
-      const updates = [
-        { col: 16, val: dateStr },              // P: Actual7
-        { col: 18, val: formData.returnedQty },   // R: Return Qty
-        { col: 19, val: formData.returnRate },    // S: Return Rate
-        { col: 20, val: formData.returnAmount },  // T: Total Return Amount
-        { col: 21, val: formData.returnReason },  // U: Return Reason
-        { col: 22, val: formData.returnStatus },  // V: Return Status
-        { col: 23, val: itemImgUrl },             // W: Return Item Image
-        { col: 24, val: creditImgUrl },           // X: Credit Note Image
-      ];
-
-      // Parallel updates for speed
-      await Promise.all(updates.map(async (u) => {
-        const params = new URLSearchParams();
-        params.append("action", "updateCell");
-        params.append("sheetName", "Material-Testing");
-        params.append("rowIndex", rec.rowIndex.toString());
-        params.append("columnIndex", u.col.toString());
-        params.append("value", String(u.val || ""));
-
-        const res = await fetch(`${SHEET_API_URL}`, { method: "POST", body: params });
-        const json = await res.json();
-        if (!json.success) {
-          throw new Error(json.error || `Failed to update column ${u.col}`);
-        }
-      }));
+      if (rec._purchaseReturnId) {
+        const { error } = await supabase
+          .from("purchase_returns")
+          .update(payload)
+          .eq("id", rec._purchaseReturnId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("purchase_returns")
+          .insert(payload);
+        if (error) throw error;
+      }
 
       toast.success("Return processed successfully!", { id: toastId });
       setOpen(false);
-      fetchData(); // Refresh data
+      window.dispatchEvent(new Event("stageUpdated"));
+      fetchData();
     } catch (err: any) {
       toast.error(err.message || "Failed to submit", { id: toastId });
     } finally {
       setIsSubmitting(false);
     }
   }, [selectedRecordId, sheetRecords, formData, uploadFile, fetchData]);
-
 
   const isFormValid = useMemo(() =>
     !!formData.returnedQty &&

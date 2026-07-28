@@ -42,6 +42,7 @@ import {
   Edit3
 } from "lucide-react";
 import { STAGES } from "@/lib/constants";
+import { supabase } from "@/lib/supabase/client";
 
 interface ItemOption {
   itemCode: string;
@@ -86,9 +87,6 @@ export default function MasterPage() {
     completionTime: 1
   });
   const [editingTatIndex, setEditingTatIndex] = useState<number | null>(null);
-  
-  // RAW sheet data to preserve headers/size
-  const [rawSheetData, setRawSheetData] = useState<any[][]>([]);
 
   // Managed Dropdown Lists
   const [createdBy, setCreatedBy] = useState<string[]>([]);
@@ -117,237 +115,98 @@ export default function MasterPage() {
   const [newItem, setNewItem] = useState<ItemOption>({ itemCode: "", category: "", itemName: "", uom: "" });
   const [itemSearch, setItemSearch] = useState<string>("");
 
-  const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-
   const fetchDropdowns = async () => {
-    if (!SHEET_API_URL) {
-      toast.error("API URI is missing in environment");
-      return;
-    }
     setIsLoading(true);
     try {
-      const res = await fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll&_t=${Date.now()}`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        setRawSheetData(json.data);
+      const [
+        cbRes, whRes, apRes, qcRes, acRes, uomRes, chRes, rjRes,
+        csRes, tsRes, tuRes, transRes, venRes, itemRes
+      ] = await Promise.all([
+        supabase.from("master_created_by").select("name").eq("is_active", true),
+        supabase.from("master_warehouses").select("name").eq("is_active", true),
+        supabase.from("master_approvers").select("name").eq("is_active", true),
+        supabase.from("master_qc_engineers").select("name").eq("is_active", true),
+        supabase.from("master_accountants").select("name").eq("is_active", true),
+        supabase.from("master_uoms").select("name").eq("is_active", true),
+        supabase.from("master_checklists").select("name").eq("is_active", true),
+        supabase.from("master_reject_reasons").select("name").eq("is_active", true),
+        supabase.from("master_cancel_stages").select("name").eq("is_active", true),
+        supabase.from("master_tat_systems").select("name").eq("is_active", true),
+        supabase.from("master_tat_units").select("name").eq("is_active", true),
+        supabase.from("master_transporters").select("*").eq("is_active", true),
+        supabase.from("master_vendors").select("*").eq("is_active", true),
+        supabase.from("master_items").select("*").eq("is_active", true),
+      ]);
 
-        const dataRows = json.data.slice(1); // skip header row
+      const mapNames = (res: any, defaults: string[]) => {
+        const list = (res.data || []).map((r: any) => r.name).filter(Boolean);
+        return list.length > 0 ? list : defaults;
+      };
 
-        // Helper to extract non-empty trimmed values
-        const extractCol = (colIdx: number) => {
-          return dataRows
-            .map((row: any) => String(row[colIdx] || "").trim())
-            .filter((val: string) => val !== "");
-        };
+      let cbList = mapNames(cbRes, ["Amit Sahu", "Admin", "Purchase Team"]);
+      let whList = mapNames(whRes, ["Divison A", "Division B", "Depot Main"]);
+      let apList = mapNames(apRes, ["Approver User", "Fin Director", "QA Manager"]);
+      let qcList = mapNames(qcRes, ["QC Eng 1", "QC Eng 2"]);
+      let acList = mapNames(acRes, ["Acc 1", "Acc 2"]);
+      let uomList = mapNames(uomRes, ["Nos", "Sets", "Kgs", "Bags", "Mtrs"]);
+      let chList = mapNames(chRes, ["Check Packaging", "Check Quality Standards", "Quantity Audit"]);
+      let rjList = mapNames(rjRes, ["Damaged Material", "Specification Mismatch", "Short Supply"]);
+      let csList = mapNames(csRes, ["Create Indent", "Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up", "Material Received", "Billing", "Purchase Return", "Order Cancel"]);
+      let tsList = mapNames(tsRes, ["Purchase FMS", "IMS", "FMS", "FMS Portal"]);
+      let tuList = mapNames(tuRes, ["minute", "hour", "day"]);
 
-        const cancelStagesFromSheet = extractCol(17);
-        const systemsFromSheet = extractCol(18);
-        const unitsFromSheet = extractCol(19);
+      setCreatedBy(cbList);
+      setWarehouse(whList);
+      setApprover(apList);
+      setQcEngineer(qcList);
+      setAccountant(acList);
+      setUom(uomList);
+      setChecklist(chList);
+      setRejectReason(rjList);
+      setCancelStages(csList);
+      setTatSystems(tsList);
+      setTatUnits(tuList);
 
-        let cbList = extractCol(0);
-        let whList = extractCol(1);
-        let apList = extractCol(8);
-        let qcList = extractCol(11);
-        let acList = extractCol(12);
-        let uomList = extractCol(13);
-        let chList = extractCol(15);
-        let rjList = extractCol(16);
-
-        let needSave = false;
-
-        if (cbList.length === 0) {
-          cbList = ["Amit Sahu", "Admin", "Purchase Team"];
-          setCreatedBy(cbList);
-          needSave = true;
-        } else {
-          setCreatedBy(cbList);
-        }
-
-        if (whList.length === 0) {
-          whList = ["Divison A", "Division B", "Depot Main"];
-          setWarehouse(whList);
-          needSave = true;
-        } else {
-          setWarehouse(whList);
-        }
-
-        if (apList.length === 0) {
-          apList = ["Approver User", "Fin Director", "QA Manager"];
-          setApprover(apList);
-          needSave = true;
-        } else {
-          setApprover(apList);
-        }
-
-        if (qcList.length === 0) {
-          qcList = ["QC Eng 1", "QC Eng 2"];
-          setQcEngineer(qcList);
-          needSave = true;
-        } else {
-          setQcEngineer(qcList);
-        }
-
-        if (acList.length === 0) {
-          acList = ["Acc 1", "Acc 2"];
-          setAccountant(acList);
-          needSave = true;
-        } else {
-          setAccountant(acList);
-        }
-
-        if (uomList.length === 0) {
-          uomList = ["Nos", "Sets", "Kgs", "Bags", "Mtrs"];
-          setUom(uomList);
-          needSave = true;
-        } else {
-          setUom(uomList);
-        }
-
-        if (chList.length === 0) {
-          chList = ["Check Packaging", "Check Quality Standards", "Quantity Audit"];
-          setChecklist(chList);
-          needSave = true;
-        } else {
-          setChecklist(chList);
-        }
-
-        if (rjList.length === 0) {
-          rjList = ["Damaged Material", "Specification Mismatch", "Short Supply"];
-          setRejectReason(rjList);
-          needSave = true;
-        } else {
-          setRejectReason(rjList);
-        }
-
-        const rawTransporters = dataRows
-          .map((row: any) => String(row[10] || "").trim())
-          .filter((val: string) => val !== "");
-        
-        let parsedTransporters: TransporterInfo[] = rawTransporters.map((val: string) => {
-          if (val.startsWith("{")) {
-            try {
-              return JSON.parse(val);
-            } catch (e) {
-              // fall through
-            }
-          }
-          return {
-            transporterName: val,
-            contactPerson: "-",
-            phone: "-",
-            vehicleType: "-"
-          };
-        });
-
-        if (parsedTransporters.length === 0) {
-          parsedTransporters = [
+      const parsedTransporters: TransporterInfo[] = (transRes.data && transRes.data.length > 0)
+        ? transRes.data.map((t: any) => ({
+            transporterName: t.transporter_name,
+            contactPerson: t.contact_person || "-",
+            phone: t.phone || "-",
+            vehicleType: t.vehicle_type || "truck",
+          }))
+        : [
             { transporterName: "Fast Logistics", contactPerson: "Jane Smith", phone: "9876543210", vehicleType: "truck" },
             { transporterName: "Swift Movers", contactPerson: "John Doe", phone: "9876501234", vehicleType: "van" }
           ];
-          setTransporter(parsedTransporters);
-          needSave = true;
-        } else {
-          setTransporter(parsedTransporters);
-        }
+      setTransporter(parsedTransporters);
 
-        let parsedItems: ItemOption[] = dataRows
-          .filter((row: any) => row[3] || row[4])
-          .map((row: any) => ({
-            itemCode: String(row[2] || "").trim(),
-            category: String(row[3] || "").trim(),
-            itemName: String(row[4] || "").trim(),
-            uom: String(row[5] || "").trim(),
-          }));
+      const parsedVendors: VendorInfo[] = (venRes.data && venRes.data.length > 0)
+        ? venRes.data.map((v: any) => ({
+            vendorName: v.vendor_name,
+            contactPerson: v.contact_person || "-",
+            phone: v.phone || "-",
+            email: v.email || "-",
+            address: v.address || "-",
+          }))
+        : [
+            { vendorName: "INFOSYS TECH", contactPerson: "Nandan Nilekani", phone: "9876543210", email: "infosys@company.com", address: "Electronic City, Bangalore" },
+            { vendorName: "KOTAK MAHINDRA", contactPerson: "Uday Kotak", phone: "9876501234", email: "kotak@company.com", address: "Bandra Kurla Complex, Mumbai" },
+          ];
+      setVendors(parsedVendors);
 
-        if (parsedItems.length === 0) {
-          parsedItems = [
+      const parsedItems: ItemOption[] = (itemRes.data && itemRes.data.length > 0)
+        ? itemRes.data.map((i: any) => ({
+            itemCode: i.item_code,
+            category: i.category || "General",
+            itemName: i.item_name,
+            uom: i.uom || "Nos",
+          }))
+        : [
             { itemCode: "IT-LAP-101", category: "IT Supplies", itemName: "Dell Latitude Laptop", uom: "pcs" },
             { itemCode: "OFF-CHR-002", category: "Office Furniture", itemName: "Ergonomic Chair", uom: "pcs" }
           ];
-          setItems(parsedItems);
-          needSave = true;
-        } else {
-          setItems(parsedItems);
-        }
+      setItems(parsedItems);
 
-        const rawVendors = dataRows
-          .map((row: any) => String(row[6] || "").trim())
-          .filter((val: string) => val !== "");
-        
-        let parsedVendors: VendorInfo[] = rawVendors.map((val: string) => {
-          if (val.startsWith("{")) {
-            try {
-              return JSON.parse(val);
-            } catch (e) {
-              // fall through
-            }
-          }
-          return {
-            vendorName: val,
-            contactPerson: "-",
-            phone: "-",
-            email: "-",
-            address: "-"
-          };
-        });
-
-        if (parsedVendors.length === 0) {
-          parsedVendors = [
-            { vendorName: "INFOSYS TECH", contactPerson: "Nandan Nilekani", phone: "9876543210", email: "infosys@company.com", address: "Electronic City, Bangalore" },
-            { vendorName: "KOTAK MAHINDRA", contactPerson: "Uday Kotak", phone: "9876501234", email: "kotak@company.com", address: "Bandra Kurla Complex, Mumbai" },
-            { vendorName: "Vendor A", contactPerson: "John Doe", phone: "9876543210", email: "vendorA@company.com", address: "123 Street A, City" },
-            { vendorName: "Vendor B", contactPerson: "Jane Smith", phone: "9876505432", email: "vendorB@company.com", address: "456 Avenue B, City" },
-            { vendorName: "Vendor C", contactPerson: "Alice Brown", phone: "9876509876", email: "vendorC@company.com", address: "789 Lane C, City" }
-          ];
-          setVendors(parsedVendors);
-          needSave = true;
-        } else {
-          setVendors(parsedVendors);
-        }
-
-        let finalCancel = cancelStagesFromSheet;
-        if (cancelStagesFromSheet.length === 0) {
-          finalCancel = [
-            "Create Indent", "Indent Approval", "Quotation", "Approved Vendor",
-            "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up",
-            "Material Received", "Billing", "Purchase Return", "Order Cancel"
-          ];
-          setCancelStages(finalCancel);
-          needSave = true;
-        } else {
-          setCancelStages(cancelStagesFromSheet);
-        }
-
-        let finalSystems = systemsFromSheet;
-        if (systemsFromSheet.length === 0) {
-          finalSystems = ["Purchase FMS", "IMS", "FMS", "FMS Portal"];
-          setTatSystems(finalSystems);
-          needSave = true;
-        } else {
-          setTatSystems(systemsFromSheet);
-        }
-
-        let finalUnits = unitsFromSheet;
-        if (unitsFromSheet.length === 0) {
-          finalUnits = ["minute", "hour", "day"];
-          setTatUnits(finalUnits);
-          needSave = true;
-        } else {
-          setTatUnits(unitsFromSheet);
-        }
-
-        if (needSave) {
-          setTimeout(() => {
-            handleSave(
-              cbList, whList, apList, parsedTransporters, qcList,
-              acList, uomList, chList, rjList, finalCancel,
-              parsedItems, finalSystems, finalUnits, parsedVendors
-            );
-          }, 0);
-        }
-      } else {
-        toast.error("Failed to load options: " + (json.error || "Unknown error"));
-      }
     } catch (e) {
       console.error(e);
       toast.error("Network error fetching options.");
@@ -356,20 +215,21 @@ export default function MasterPage() {
     }
   };
 
-  // Load TAT Rules from the Google Sheet
   const fetchTatRules = async () => {
-    if (!SHEET_API_URL) return;
     try {
-      const res = await fetch(`${SHEET_API_URL}?sheet=TAT-Rules&action=getAll`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        // Skip header row
-        const rules: TatRule[] = json.data.slice(1).map((row: any) => ({
-          systemName: String(row[0] || ""),
-          sectionName: String(row[1] || ""),
-          timeUnit: String(row[2] || ""),
-          completionTime: parseFloat(String(row[3] || "0")) || 0
-        })).filter((r: any) => r.systemName && r.sectionName);
+      const { data: rows, error } = await supabase
+        .from("master_tat_rules")
+        .select("*")
+        .eq("is_active", true);
+
+      if (error) throw error;
+      if (rows) {
+        const rules: TatRule[] = rows.map((r: any) => ({
+          systemName: r.system_name,
+          sectionName: r.section_name,
+          timeUnit: r.time_unit,
+          completionTime: Number(r.completion_time) || 1,
+        }));
         setTatRules(rules);
       }
     } catch (e) {
@@ -377,53 +237,26 @@ export default function MasterPage() {
     }
   };
 
-  // Save TAT Rules to the Google Sheet
   const saveTatRules = async (rulesToSave: TatRule[]) => {
-    if (!SHEET_API_URL) return;
     setIsSubmitting(true);
     try {
-      const headers = ["System Name", "Page / Section", "Time Unit", "Completion Time"];
-      const rowsData = [headers];
-      rulesToSave.forEach(rule => {
-        rowsData.push([
-          rule.systemName,
-          rule.sectionName,
-          rule.timeUnit,
-          String(rule.completionTime)
-        ]);
-      });
+      await supabase.from("master_tat_rules").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-      // Overwrite the entire sheet
-      try {
-        const checkRes = await fetch(`${SHEET_API_URL}?sheet=TAT-Rules&action=getAll`);
-        const checkJson = await checkRes.json();
-        if (checkJson.success && Array.isArray(checkJson.data)) {
-          const prevCount = checkJson.data.length;
-          while (rowsData.length < prevCount) {
-            rowsData.push(["", "", "", ""]);
-          }
-        }
-      } catch {}
-
-      const params = new URLSearchParams();
-      params.append("action", "batchInsert");
-      params.append("sheetName", "TAT-Rules");
-      params.append("startRow", "1");
-      params.append("rowsData", JSON.stringify(rowsData));
-
-      const res = await fetch(SHEET_API_URL, {
-        method: "POST",
-        body: params
-      });
-      const json = await res.json();
-      if (json.success) {
-        toast.success("TAT rules saved successfully!");
-      } else {
-        toast.error("Failed to save TAT rules");
+      if (rulesToSave.length > 0) {
+        const rowsToInsert = rulesToSave.map(rule => ({
+          system_name: rule.systemName,
+          section_name: rule.sectionName,
+          time_unit: rule.timeUnit,
+          completion_time: rule.completionTime,
+          is_active: true,
+        }));
+        await supabase.from("master_tat_rules").insert(rowsToInsert);
       }
+
+      toast.success("TAT rules saved successfully!");
     } catch (e) {
       console.error("Error saving TAT rules:", e);
-      toast.error("Network error saving TAT rules");
+      toast.error("Error saving TAT rules");
     } finally {
       setIsSubmitting(false);
     }
@@ -485,7 +318,7 @@ export default function MasterPage() {
     fetchTatRules();
   }, []);
 
-  // Save the current states back to the google sheet
+  // Save the current states back to Supabase separate master tables
   const handleSave = async (
     updatedCreatedBy = createdBy,
     updatedWarehouse = warehouse,
@@ -502,252 +335,163 @@ export default function MasterPage() {
     updatedTatUnits = tatUnits,
     updatedVendors = vendors
   ) => {
-    if (!SHEET_API_URL) return;
     setIsSubmitting(true);
 
-    const headers = [...(rawSheetData[0] || [])];
-    while (headers.length < 20) {
-      headers.push("");
-    }
-    headers[0] = headers[0] || "Created By";
-    headers[1] = headers[1] || "Warehouse Location";
-    headers[2] = headers[2] || "Item Code";
-    headers[3] = headers[3] || "Category";
-    headers[4] = headers[4] || "Item Name";
-    headers[5] = headers[5] || "Item UOM";
-    headers[6] = headers[6] || "Vendor Info";
-    headers[8] = headers[8] || "Approver";
-    headers[10] = headers[10] || "Transporter";
-    headers[11] = headers[11] || "QC Engineer";
-    headers[12] = headers[12] || "Accountant";
-    headers[13] = headers[13] || "UOM";
-    headers[15] = headers[15] || "Checklist Item";
-    headers[16] = headers[16] || "Reject Reason";
-    headers[17] = headers[17] || "Cancel Stage";
-    headers[18] = headers[18] || "TAT System";
-    headers[19] = headers[19] || "TAT Time Unit";
-
-    const maxRows = Math.max(
-      updatedCreatedBy.length,
-      updatedWarehouse.length,
-      updatedApprover.length,
-      updatedTransporter.length,
-      updatedQcEngineer.length,
-      updatedAccountant.length,
-      updatedUom.length,
-      updatedChecklist.length,
-      updatedRejectReason.length,
-      updatedCancelStages.length,
-      updatedItems.length,
-      updatedTatSystems.length,
-      updatedTatUnits.length,
-      updatedVendors.length
-    );
-
-    const rowsData: any[][] = [];
-    rowsData.push(headers);
-
-    for (let i = 0; i < maxRows; i++) {
-      const row = new Array(20).fill("");
-      row[0] = updatedCreatedBy[i] || "";
-      row[1] = updatedWarehouse[i] || "";
-      row[2] = updatedItems[i]?.itemCode || "";
-      row[3] = updatedItems[i]?.category || "";
-      row[4] = updatedItems[i]?.itemName || "";
-      row[5] = updatedItems[i]?.uom || "";
-      row[6] = updatedVendors[i] ? JSON.stringify(updatedVendors[i]) : "";
-      row[8] = updatedApprover[i] || "";
-      row[10] = updatedTransporter[i] ? JSON.stringify(updatedTransporter[i]) : "";
-      row[11] = updatedQcEngineer[i] || "";
-      row[12] = updatedAccountant[i] || "";
-      row[13] = updatedUom[i] || "";
-      row[15] = updatedChecklist[i] || "";
-      row[16] = updatedRejectReason[i] || "";
-      row[17] = updatedCancelStages[i] || "";
-      row[18] = updatedTatSystems[i] || "";
-      row[19] = updatedTatUnits[i] || "";
-      rowsData.push(row);
-    }
-
-    // Pad remaining rows to overwrite stale rows at the bottom of the sheet
-    const prevRowCount = rawSheetData.length;
-    while (rowsData.length < prevRowCount) {
-      rowsData.push(new Array(20).fill(""));
-    }
-
     try {
-      const params = new URLSearchParams();
-      params.append("action", "batchInsert");
-      params.append("sheetName", "Dropdown");
-      params.append("startRow", "1");
-      params.append("rowsData", JSON.stringify(rowsData));
-
-      const res = await fetch(SHEET_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params,
-      });
-      const json = await res.json();
-      if (json.success) {
-        toast.success("Options synchronized successfully!");
-        // Refresh local data to sync row length
-        setRawSheetData(rowsData);
-      } else {
-        toast.error("Failed to sync: " + (json.error || "Server issue"));
+      if (updatedCreatedBy.length > 0) {
+        await supabase.from("master_created_by").upsert(updatedCreatedBy.map(name => ({ name })), { onConflict: "name" });
       }
+      if (updatedWarehouse.length > 0) {
+        await supabase.from("master_warehouses").upsert(updatedWarehouse.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedApprover.length > 0) {
+        await supabase.from("master_approvers").upsert(updatedApprover.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedQcEngineer.length > 0) {
+        await supabase.from("master_qc_engineers").upsert(updatedQcEngineer.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedAccountant.length > 0) {
+        await supabase.from("master_accountants").upsert(updatedAccountant.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedUom.length > 0) {
+        await supabase.from("master_uoms").upsert(updatedUom.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedChecklist.length > 0) {
+        await supabase.from("master_checklists").upsert(updatedChecklist.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedRejectReason.length > 0) {
+        await supabase.from("master_reject_reasons").upsert(updatedRejectReason.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedCancelStages.length > 0) {
+        await supabase.from("master_cancel_stages").upsert(updatedCancelStages.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedTatSystems.length > 0) {
+        await supabase.from("master_tat_systems").upsert(updatedTatSystems.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedTatUnits.length > 0) {
+        await supabase.from("master_tat_units").upsert(updatedTatUnits.map(name => ({ name })), { onConflict: "name" });
+      }
+      if (updatedTransporter.length > 0) {
+        await supabase.from("master_transporters").upsert(
+          updatedTransporter.map(t => ({
+            transporter_name: t.transporterName,
+            contact_person: t.contactPerson || "-",
+            phone: t.phone || "-",
+            vehicle_type: t.vehicleType || "truck",
+          })),
+          { onConflict: "transporter_name" }
+        );
+      }
+      if (updatedVendors.length > 0) {
+        await supabase.from("master_vendors").upsert(
+          updatedVendors.map(v => ({
+            vendor_name: v.vendorName,
+            contact_person: v.contactPerson || "-",
+            phone: v.phone || "-",
+            email: v.email || "-",
+            address: v.address || "-",
+          })),
+          { onConflict: "vendor_name" }
+        );
+      }
+      if (updatedItems.length > 0) {
+        await supabase.from("master_items").upsert(
+          updatedItems.map(i => ({
+            item_code: i.itemCode,
+            category: i.category,
+            item_name: i.itemName,
+            uom: i.uom,
+          })),
+          { onConflict: "item_code" }
+        );
+      }
+      toast.success("Options synchronized successfully across master tables!");
     } catch (e) {
       console.error(e);
-      toast.error("Error connecting to server.");
+      toast.error("Error saving options to database.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Table map for simple string dropdowns
+  const simpleTableMap: Record<string, string> = {
+    createdBy: "master_created_by",
+    warehouse: "master_warehouses",
+    approver: "master_approvers",
+    qcEngineer: "master_qc_engineers",
+    accountant: "master_accountants",
+    uom: "master_uoms",
+    checklist: "master_checklists",
+    rejectReason: "master_reject_reasons",
+    cancelStage: "master_cancel_stages",
+    tatSystem: "master_tat_systems",
+    tatUnit: "master_tat_units",
+  };
+
   // Add simple value
-  const handleAddSimple = (e: React.FormEvent) => {
+  const handleAddSimple = async (e: React.FormEvent) => {
     e.preventDefault();
     const val = newSimpleVal.trim();
     if (!val) return;
 
-    let updatedList: string[] = [];
-
-    switch (activeTab) {
-      case "createdBy":
-        if (createdBy.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...createdBy, val];
-        setCreatedBy(updatedList);
-        handleSave(updatedList);
-        break;
-      case "warehouse":
-        if (warehouse.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...warehouse, val];
-        setWarehouse(updatedList);
-        handleSave(undefined, updatedList);
-        break;
-      case "approver":
-        if (approver.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...approver, val];
-        setApprover(updatedList);
-        handleSave(undefined, undefined, updatedList);
-        break;
-      case "qcEngineer":
-        if (qcEngineer.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...qcEngineer, val];
-        setQcEngineer(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "accountant":
-        if (accountant.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...accountant, val];
-        setAccountant(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "uom":
-        if (uom.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...uom, val];
-        setUom(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "checklist":
-        if (checklist.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...checklist, val];
-        setChecklist(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "rejectReason":
-        if (rejectReason.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...rejectReason, val];
-        setRejectReason(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "cancelStage":
-        if (cancelStages.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...cancelStages, val];
-        setCancelStages(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "tatSystem":
-        if (tatSystems.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...tatSystems, val];
-        setTatSystems(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "tatUnit":
-        if (tatUnits.includes(val)) { toast.warning("Option already exists!"); return; }
-        updatedList = [...tatUnits, val];
-        setTatUnits(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
+    const tableName = simpleTableMap[activeTab];
+    if (tableName) {
+      const { error } = await supabase.from(tableName).upsert({ name: val, is_active: true }, { onConflict: "name" });
+      if (error) {
+        toast.error("Failed to add option to database");
+        return;
+      }
     }
 
+    switch (activeTab) {
+      case "createdBy": setCreatedBy(prev => Array.from(new Set([...prev, val]))); break;
+      case "warehouse": setWarehouse(prev => Array.from(new Set([...prev, val]))); break;
+      case "approver": setApprover(prev => Array.from(new Set([...prev, val]))); break;
+      case "qcEngineer": setQcEngineer(prev => Array.from(new Set([...prev, val]))); break;
+      case "accountant": setAccountant(prev => Array.from(new Set([...prev, val]))); break;
+      case "uom": setUom(prev => Array.from(new Set([...prev, val]))); break;
+      case "checklist": setChecklist(prev => Array.from(new Set([...prev, val]))); break;
+      case "rejectReason": setRejectReason(prev => Array.from(new Set([...prev, val]))); break;
+      case "cancelStage": setCancelStages(prev => Array.from(new Set([...prev, val]))); break;
+      case "tatSystem": setTatSystems(prev => Array.from(new Set([...prev, val]))); break;
+      case "tatUnit": setTatUnits(prev => Array.from(new Set([...prev, val]))); break;
+    }
+
+    toast.success(`Added '${val}' successfully!`);
     setNewSimpleVal("");
   };
 
   // Remove simple value
-  const handleRemoveSimple = (valToRemove: string) => {
-    let updatedList: string[] = [];
+  const handleRemoveSimple = async (valToRemove: string) => {
+    const tableName = simpleTableMap[activeTab];
+    if (tableName) {
+      const { error } = await supabase.from(tableName).delete().eq("name", valToRemove);
+      if (error) {
+        toast.error(`Failed to remove '${valToRemove}' from database`);
+        return;
+      }
+    }
 
     switch (activeTab) {
-      case "createdBy":
-        updatedList = createdBy.filter(item => item !== valToRemove);
-        setCreatedBy(updatedList);
-        handleSave(updatedList);
-        break;
-      case "warehouse":
-        updatedList = warehouse.filter(item => item !== valToRemove);
-        setWarehouse(updatedList);
-        handleSave(undefined, updatedList);
-        break;
-      case "approver":
-        updatedList = approver.filter(item => item !== valToRemove);
-        setApprover(updatedList);
-        handleSave(undefined, undefined, updatedList);
-        break;
-      case "qcEngineer":
-        updatedList = qcEngineer.filter(item => item !== valToRemove);
-        setQcEngineer(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "accountant":
-        updatedList = accountant.filter(item => item !== valToRemove);
-        setAccountant(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "uom":
-        updatedList = uom.filter(item => item !== valToRemove);
-        setUom(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "checklist":
-        updatedList = checklist.filter(item => item !== valToRemove);
-        setChecklist(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "rejectReason":
-        updatedList = rejectReason.filter(item => item !== valToRemove);
-        setRejectReason(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "cancelStage":
-        updatedList = cancelStages.filter(item => item !== valToRemove);
-        setCancelStages(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "tatSystem":
-        updatedList = tatSystems.filter(item => item !== valToRemove);
-        setTatSystems(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
-      case "tatUnit":
-        updatedList = tatUnits.filter(item => item !== valToRemove);
-        setTatUnits(updatedList);
-        handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
-        break;
+      case "createdBy": setCreatedBy(prev => prev.filter(item => item !== valToRemove)); break;
+      case "warehouse": setWarehouse(prev => prev.filter(item => item !== valToRemove)); break;
+      case "approver": setApprover(prev => prev.filter(item => item !== valToRemove)); break;
+      case "qcEngineer": setQcEngineer(prev => prev.filter(item => item !== valToRemove)); break;
+      case "accountant": setAccountant(prev => prev.filter(item => item !== valToRemove)); break;
+      case "uom": setUom(prev => prev.filter(item => item !== valToRemove)); break;
+      case "checklist": setChecklist(prev => prev.filter(item => item !== valToRemove)); break;
+      case "rejectReason": setRejectReason(prev => prev.filter(item => item !== valToRemove)); break;
+      case "cancelStage": setCancelStages(prev => prev.filter(item => item !== valToRemove)); break;
+      case "tatSystem": setTatSystems(prev => prev.filter(item => item !== valToRemove)); break;
+      case "tatUnit": setTatUnits(prev => prev.filter(item => item !== valToRemove)); break;
     }
+
+    toast.success(`Removed '${valToRemove}' successfully!`);
   };
 
   // Add Item to Catalog
-  const handleAddItem = (e: React.FormEvent) => {
+  const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = newItem.itemCode.trim();
     const cat = newItem.category.trim();
@@ -759,23 +503,33 @@ export default function MasterPage() {
       return;
     }
 
-    if (items.some(i => i.itemName.toLowerCase() === name.toLowerCase())) {
-      toast.warning("An item with this name already exists in catalog!");
+    const { error } = await supabase.from("master_items").upsert({
+      item_code: code,
+      category: cat,
+      item_name: name,
+      uom: unit,
+      is_active: true,
+    }, { onConflict: "item_code" });
+
+    if (error) {
+      toast.error("Error saving item to database.");
       return;
     }
 
-    const updatedCatalog = [...items, { itemCode: code, category: cat, itemName: name, uom: unit }];
-    setItems(updatedCatalog);
-    handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedCatalog);
-
+    setItems(prev => [...prev.filter(i => i.itemCode !== code), { itemCode: code, category: cat, itemName: name, uom: unit }]);
     setNewItem({ itemCode: "", category: "", itemName: "", uom: "" });
+    toast.success("Item added successfully!");
   };
 
   // Remove Item from Catalog
-  const handleRemoveItem = (nameToRemove: string) => {
-    const updatedCatalog = items.filter(item => item.itemName !== nameToRemove);
-    setItems(updatedCatalog);
-    handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedCatalog);
+  const handleRemoveItem = async (codeToRemove: string) => {
+    const { error } = await supabase.from("master_items").delete().eq("item_code", codeToRemove);
+    if (error) {
+      toast.error("Error deleting item from catalog.");
+      return;
+    }
+    setItems(prev => prev.filter(item => item.itemCode !== codeToRemove));
+    toast.success("Item removed successfully!");
   };
 
   // Search filtered catalog items
@@ -791,7 +545,7 @@ export default function MasterPage() {
     });
   }, [items, itemSearch]);
 
-  const handleAddVendor = (e: React.FormEvent) => {
+  const handleAddVendor = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = newVendor.vendorName.trim();
     const contact = newVendor.contactPerson.trim();
@@ -804,21 +558,33 @@ export default function MasterPage() {
       return;
     }
 
-    if (vendors.some(v => v.vendorName.toLowerCase() === name.toLowerCase())) {
-      toast.warning("A vendor with this name already exists!");
+    const { error } = await supabase.from("master_vendors").upsert({
+      vendor_name: name,
+      contact_person: contact,
+      phone: ph,
+      email: mail,
+      address: addr,
+      is_active: true,
+    }, { onConflict: "vendor_name" });
+
+    if (error) {
+      toast.error("Error saving vendor.");
       return;
     }
 
-    const updatedList = [...vendors, { vendorName: name, contactPerson: contact, phone: ph, email: mail, address: addr }];
-    setVendors(updatedList);
-    handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
+    setVendors(prev => [...prev.filter(v => v.vendorName !== name), { vendorName: name, contactPerson: contact, phone: ph, email: mail, address: addr }]);
     setNewVendor({ vendorName: "", contactPerson: "", phone: "", email: "", address: "" });
+    toast.success("Vendor added successfully!");
   };
 
-  const handleRemoveVendor = (nameToRemove: string) => {
-    const updatedList = vendors.filter(v => v.vendorName !== nameToRemove);
-    setVendors(updatedList);
-    handleSave(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, updatedList);
+  const handleRemoveVendor = async (nameToRemove: string) => {
+    const { error } = await supabase.from("master_vendors").delete().eq("vendor_name", nameToRemove);
+    if (error) {
+      toast.error("Error deleting vendor.");
+      return;
+    }
+    setVendors(prev => prev.filter(v => v.vendorName !== nameToRemove));
+    toast.success("Vendor removed successfully!");
   };
 
   const filteredVendors = useMemo(() => {
@@ -834,7 +600,7 @@ export default function MasterPage() {
     });
   }, [vendors, vendorSearch]);
 
-  const handleAddTransporter = (e: React.FormEvent) => {
+  const handleAddTransporter = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = newTransporter.transporterName.trim();
     const contact = newTransporter.contactPerson.trim();
@@ -846,21 +612,32 @@ export default function MasterPage() {
       return;
     }
 
-    if (transporter.some(t => t.transporterName.toLowerCase() === name.toLowerCase())) {
-      toast.warning("A transporter with this name already exists!");
+    const { error } = await supabase.from("master_transporters").upsert({
+      transporter_name: name,
+      contact_person: contact,
+      phone: ph,
+      vehicle_type: vType,
+      is_active: true,
+    }, { onConflict: "transporter_name" });
+
+    if (error) {
+      toast.error("Error saving transporter.");
       return;
     }
 
-    const updatedList = [...transporter, { transporterName: name, contactPerson: contact, phone: ph, vehicleType: vType }];
-    setTransporter(updatedList);
-    handleSave(undefined, undefined, undefined, updatedList);
+    setTransporter(prev => [...prev.filter(t => t.transporterName !== name), { transporterName: name, contactPerson: contact, phone: ph, vehicleType: vType }]);
     setNewTransporter({ transporterName: "", contactPerson: "", phone: "", vehicleType: "" });
+    toast.success("Transporter added successfully!");
   };
 
-  const handleRemoveTransporter = (nameToRemove: string) => {
-    const updatedList = transporter.filter(t => t.transporterName !== nameToRemove);
-    setTransporter(updatedList);
-    handleSave(undefined, undefined, undefined, updatedList);
+  const handleRemoveTransporter = async (nameToRemove: string) => {
+    const { error } = await supabase.from("master_transporters").delete().eq("transporter_name", nameToRemove);
+    if (error) {
+      toast.error("Error deleting transporter.");
+      return;
+    }
+    setTransporter(prev => prev.filter(t => t.transporterName !== nameToRemove));
+    toast.success("Transporter removed successfully!");
   };
 
   const filteredTransporters = useMemo(() => {
@@ -1417,7 +1194,7 @@ export default function MasterPage() {
                                     <TableCell className="text-center">
                                       <Button
                                         type="button"
-                                        onClick={() => handleRemoveItem(item.itemName)}
+                                        onClick={() => handleRemoveItem(item.itemCode || item.itemName)}
                                         disabled={isSubmitting}
                                         variant="ghost"
                                         size="icon"

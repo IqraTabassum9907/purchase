@@ -9,8 +9,8 @@ import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { STAGES } from "@/lib/constants";
-
-const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
 export default function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
@@ -23,244 +23,174 @@ export default function Sidebar() {
     setIsOpen(false);
   };
 
-  // Helper to check if a page is allowed
   const isPageAllowed = useCallback((pageName: string) => {
-    if (!pageAccess || pageAccess.length === 0) return true; // Show all if no restrictions
-    if (pageName === "Order Cancel" || pageName === "Master") return true; // Always show Order Cancel and Master
+    if (!pageAccess || pageAccess.length === 0) return true;
+    if (pageName === "Order Cancel" || pageName === "Master") return true;
     return pageAccess.includes(pageName);
   }, [pageAccess]);
 
   const filteredStages = useMemo(() => STAGES.filter(stage => isPageAllowed(stage.name)), [isPageAllowed]);
   const showDashboard = isPageAllowed("Dashboard");
 
-  // Determine active state helper
   const isActive = (path: string) => {
     if (path === "/") return pathname === "/";
     return pathname === path || pathname.startsWith(`${path}/`);
   };
 
   const fetchCounts = useCallback(async () => {
-    if (!SHEET_API_URL) return;
     try {
       const activeStageNames = filteredStages.map(s => s.name);
-      
-      const needsIndentLift = activeStageNames.some(name => 
-        ["Create Indent", "Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting"].includes(name)
-      );
-      const needsReceivingAccounts = activeStageNames.some(name => 
-        ["Transporter Follow-Up", "Material Received", "Billing"].includes(name)
-      );
-      const needsPartialQc = activeStageNames.some(name => 
-        ["Purchase Return"].includes(name)
-      );
-      const needsVendorPayments = activeStageNames.includes("Payment");
-      const needsFreightPayments = activeStageNames.includes("Payment");
-
-      const fetchPromises: Record<string, Promise<any>> = {};
-      if (needsIndentLift) {
-        fetchPromises["INDENT-LIFT"] = fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`).then(r => r.json());
-      }
-      if (needsReceivingAccounts) {
-        fetchPromises["RECEIVING-ACCOUNTS"] = fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`).then(r => r.json());
-      }
-      if (needsPartialQc) {
-        fetchPromises["Material-Testing"] = fetch(`${SHEET_API_URL}?sheet=${encodeURIComponent("Material-Testing")}&action=getAll`).then(r => r.json());
-      }
-      if (needsVendorPayments) {
-        fetchPromises["VENDOR-PAYMENTS"] = fetch(`${SHEET_API_URL}?sheet=VENDOR-PAYMENTS&action=getAll`).then(r => r.json());
-      }
-      if (needsFreightPayments) {
-        fetchPromises["FREIGHT-PAYMENTS"] = fetch(`${SHEET_API_URL}?sheet=FREIGHT-PAYMENTS&action=getAll`).then(r => r.json());
-      }
-
-      const results = await Promise.all(
-        Object.entries(fetchPromises).map(async ([key, p]) => {
-          try {
-            const res = await p;
-            return { key, data: res.success ? res.data : null };
-          } catch (e) {
-            console.error(`Error fetching sheet ${key}:`, e);
-            return { key, data: null };
-          }
-        })
-      );
-
-      const sheetData: Record<string, any[][] | null> = {};
-      results.forEach(r => {
-        sheetData[r.key] = r.data;
-      });
-
       const newCounts: Record<string, number> = {};
 
-      const has = (row: any[], idx: number) => {
-        if (!row) return false;
-        const val = row[idx];
-        if (val === null || val === undefined) return false;
-        if (typeof val === 'string') return val.trim() !== "" && val.trim() !== "-";
-        return val !== "";
-      };
+      const needsIndentData = activeStageNames.some(name =>
+        ["Indent Approval", "Quotation", "Approved Vendor", "Make PO"].includes(name)
+      );
+      const needsPayment = activeStageNames.includes("Payment");
+      const needsFollowUp = activeStageNames.includes("Follow UP / Lifting");
+      const needsReceivingData = activeStageNames.some(name =>
+        ["Transporter Follow-Up", "Material Received", "Billing", "Payment"].includes(name)
+      );
+      const needsPurchaseReturn = activeStageNames.includes("Purchase Return");
 
-      const missing = (row: any[], idx: number) => !has(row, idx);
+      const queries: PromiseLike<{ k: string; d: any; e: any }>[] = [];
 
-      // 1. INDENT-LIFT dependent counts
-      const indentLiftRows = sheetData["INDENT-LIFT"];
-      if (indentLiftRows && Array.isArray(indentLiftRows)) {
-        const dataRows = indentLiftRows.slice(6);
-        let indentApprovalCount = 0;
-        let quotationCount = 0;
-        let approvedVendorCount = 0;
-        let poEntryCount = 0;
-        let paymentCount = 0;
-        let followUpVendorCount = 0;
-
-        dataRows.forEach((row) => {
-          if (!row || !row[1] || String(row[1]).trim() === "") return;
-
-          if (missing(row, 10)) {
-            indentApprovalCount++;
-          }
-
-          if (has(row, 45) && missing(row, 46)) {
-            quotationCount++;
-          }
-
-          if (has(row, 46) && missing(row, 51)) {
-            approvedVendorCount++;
-          }
-
-          if (has(row, 51) && missing(row, 52)) {
-            poEntryCount++;
-          }
-
-          if (has(row, 72) && missing(row, 73)) {
-            paymentCount++;
-          }
-
-          if (has(row, 60) && String(row[67] || "").trim() === "Pending") {
-            followUpVendorCount++;
-          }
-        });
-
-        newCounts["Indent Approval"] = indentApprovalCount;
-        newCounts["Quotation"] = quotationCount;
-        newCounts["Approved Vendor"] = approvedVendorCount;
-        newCounts["Make PO"] = poEntryCount;
-        newCounts["Payment"] = paymentCount;
-        newCounts["Follow UP / Lifting"] = followUpVendorCount;
+      if (needsIndentData) {
+        queries.push(fetchIndentWorkflow().then(d => ({ k: "indents", d, e: null })));
+      }
+      if (needsPayment || needsReceivingData) {
+        queries.push(supabase.from("purchase_orders").select("id, payment_type").then(r => ({ k: "pos", d: r.data, e: r.error })));
+      }
+      if (needsPayment) {
+        queries.push(supabase.from("vendor_payments").select("po_id, payment_type, status, transaction_utr, payment_mode, paid_by").then(r => ({ k: "vp", d: r.data, e: r.error })));
+      }
+      if (needsFollowUp) {
+        queries.push(supabase.from("vendor_liftings").select("po_id, lifting_status, actual_lifting_date").then(r => ({ k: "vl", d: r.data, e: r.error })));
+      }
+      if (needsReceivingData) {
+        queries.push(supabase.from("transporter_followups").select("po_id, status, freight_amount, bilty_number, transporter_name, vehicle_number").then(r => ({ k: "tf", d: r.data, e: r.error })));
+        queries.push(supabase.from("material_receipts").select("po_id").then(r => ({ k: "mr", d: r.data, e: r.error })));
+        queries.push(supabase.from("tally_billing").select("po_id, verification_status, accountant_name").then(r => ({ k: "tb", d: r.data, e: r.error })));
+      }
+      if (needsPurchaseReturn) {
+        queries.push(supabase.from("material_receipts").select("id, rejected_quantity").then(r => ({ k: "mr_pr", d: r.data, e: r.error })));
+        queries.push(supabase.from("purchase_returns").select("material_receipt_id").then(r => ({ k: "pr", d: r.data, e: r.error })));
       }
 
-      // 2. RECEIVING-ACCOUNTS dependent counts
-      const receivingAccountsRows = sheetData["RECEIVING-ACCOUNTS"];
-      if (receivingAccountsRows && Array.isArray(receivingAccountsRows)) {
-        const dataRows = receivingAccountsRows.slice(6);
-        let transporterFollowUpCount = 0;
-        let materialReceivedCount = 0;
-        let tallyEntryCount = 0;
+      const results = await Promise.all(queries);
+      const g: Record<string, any> = {};
+      results.forEach(r => { g[r.k] = r.e ? null : r.d; });
 
-        dataRows.forEach((row) => {
-          if (!row || !row[1] || String(row[1]).trim() === "") return;
-
-          if (has(row, 88) && missing(row, 89)) {
-            transporterFollowUpCount++;
-          }
-
-          if (has(row, 19) && missing(row, 20)) {
-            materialReceivedCount++;
-          }
-
-          if (has(row, 35) && missing(row, 36)) {
-            tallyEntryCount++;
-          }
-        });
-
-        newCounts["Transporter Follow-Up"] = transporterFollowUpCount;
-        newCounts["Material Received"] = materialReceivedCount;
-        newCounts["Billing"] = tallyEntryCount;
+      if (g.indents) {
+        const rows = g.indents;
+        newCounts["Indent Approval"] = rows.filter((r: any) => !r.data.actual1).length;
+        newCounts["Quotation"] = rows.filter((r: any) =>
+          r.data.actual1 &&
+          r.data.vendorType?.toLowerCase() !== "regular" &&
+          !r.data.actual3 &&
+          !r.data.plan4 &&
+          !r.data.selectedVendor
+        ).length;
+        newCounts["Approved Vendor"] = rows.filter((r: any) =>
+          r.data.actual3 &&
+          r.data.vendorType?.toLowerCase() !== "regular" &&
+          !r.data.plan4 &&
+          !r.data.selectedVendor
+        ).length;
+        newCounts["Make PO"] = rows.filter((r: any) =>
+          ((r.data.vendorType?.toLowerCase() === "regular" && r.data.actual1) || r.data.plan4 || r.data.selectedVendor) &&
+          !r.data.poNumber
+        ).length;
       }
 
-      // 3. Material-Testing dependent counts
-      const materialTestingRows = sheetData["Material-Testing"];
-      if (materialTestingRows && Array.isArray(materialTestingRows)) {
-        const dataRows = materialTestingRows.slice(6);
-        let purchaseReturnCount = 0;
-
-        dataRows.forEach((row) => {
-          const timestamp = String(row[0] || "").trim();
-          const indentNo = String(row[1] || "").trim();
-          const liftNo = String(row[2] || "").trim();
-
-          if (!timestamp || !indentNo || !liftNo) return;
-
-          const plan7 = String(row[14] || "").trim(); // O: Planned7
-          const actual7 = String(row[15] || "").trim(); // P: Actual7
-
-          const hasPlan = plan7 && plan7 !== "-" && plan7 !== "#VALUE#";
-          const hasActual = actual7 && actual7 !== "-" && actual7 !== "#VALUE#";
-
-          if (hasPlan && !hasActual) {
-            purchaseReturnCount++;
-          }
-        });
-
-        newCounts["Purchase Return"] = purchaseReturnCount;
+      if (g.pos && g.vl) {
+        const actualLiftedPoIds = new Set(
+          (g.vl || [])
+            .filter((v: any) => !!v.actual_lifting_date && String(v.actual_lifting_date).trim() !== "" && String(v.actual_lifting_date).trim() !== "-")
+            .map((v: any) => v.po_id)
+            .filter(Boolean)
+        );
+        newCounts["Follow UP / Lifting"] = g.pos.filter((p: any) => !actualLiftedPoIds.has(p.id)).length;
       }
 
-      // 4. VENDOR-PAYMENTS dependent counts
-      const vendorPaymentsRows = sheetData["VENDOR-PAYMENTS"];
-      if (vendorPaymentsRows && Array.isArray(vendorPaymentsRows)) {
-        const dataRows = vendorPaymentsRows.slice(6);
-        let vendorPaymentCount = 0;
-
-        const parseNumVal = (v: any) => parseFloat(String(v || "0").replace(/[^0-9.-]/g, "")) || 0;
-
-        dataRows.forEach((row) => {
-          if (!row || !row[1] || String(row[1]).trim() === "") return;
-
-          const plan1 = row[13];
-          const actual1 = row[14];
-          const totalVal = parseNumVal(row[11]);
-          const pendingRaw = row[17];
-          const currentPending = (pendingRaw !== undefined && pendingRaw !== "" && pendingRaw !== "-")
-              ? parseNumVal(pendingRaw)
-              : totalVal;
-
-          const hasPlan = !!plan1 && String(plan1).trim() !== "" && String(plan1).trim() !== "-";
-          const isPending = !actual1 || String(actual1).trim() === "" || String(actual1).trim() === "-" || currentPending > 1;
-
-          if (hasPlan && isPending) {
-            vendorPaymentCount++;
-          }
-        });
-
-        newCounts["Vendor Payment"] = vendorPaymentCount;
+      if (g.pos && g.vl && g.tf) {
+        const liftedPoIds = new Set(
+          (g.vl || [])
+            .filter((v: any) => !!v.actual_lifting_date && String(v.actual_lifting_date).trim() !== "" && String(v.actual_lifting_date).trim() !== "-")
+            .map((v: any) => v.po_id)
+            .filter(Boolean)
+        );
+        const receivedTfPoIds = new Set((g.tf || []).filter((t: any) => t.status === "Received").map((t: any) => t.po_id).filter(Boolean));
+        newCounts["Transporter Follow-Up"] = g.pos.filter((p: any) => liftedPoIds.has(p.id) && !receivedTfPoIds.has(p.id)).length;
       }
 
-      // 5. FREIGHT-PAYMENTS dependent counts
-      const freightPaymentsRows = sheetData["FREIGHT-PAYMENTS"];
-      if (freightPaymentsRows && Array.isArray(freightPaymentsRows)) {
-        const dataRows = freightPaymentsRows.slice(6);
-        let freightPaymentsCount = 0;
-
-        const parseNumVal = (v: any) => parseFloat(String(v || "0").replace(/[^0-9.-]/g, "")) || 0;
-
-        dataRows.forEach((row) => {
-          if (!row || !row[1] || String(row[1]).trim() === "") return;
-
-          const freightAmt = parseNumVal(row[3]);
-          const pendingRaw = row[13];
-          const currentPending = (pendingRaw !== undefined && pendingRaw !== "" && pendingRaw !== "-")
-              ? parseNumVal(pendingRaw)
-              : freightAmt;
-
-          if (currentPending > 1) {
-            freightPaymentsCount++;
-          }
-        });
-
-        newCounts["Freight Payments"] = freightPaymentsCount;
+      if (g.tf && g.mr) {
+        const mrPoIds = new Set((g.mr || []).map((m: any) => m.po_id).filter(Boolean));
+        const approvedTf = (g.tf || []).filter((t: any) =>
+          t.status === "Received" || t.status === "Completed" || t.status === "Approved" || t.status === "Delivered" || t.status === "Complete"
+        );
+        newCounts["Material Received"] = approvedTf.filter((t: any) => !mrPoIds.has(t.po_id)).length;
       }
 
-      newCounts["Payment"] = (newCounts["Payment"] || 0) + (newCounts["Vendor Payment"] || 0) + (newCounts["Freight Payments"] || 0);
+      if (g.mr && g.tb) {
+        const verifiedTbPoIds = new Set(
+          (g.tb || [])
+            .filter((b: any) => b.verification_status === "Verified" || (b.accountant_name && b.accountant_name !== "-"))
+            .map((b: any) => b.po_id)
+            .filter(Boolean)
+        );
+        newCounts["Billing"] = (g.mr || []).filter((m: any) => !verifiedTbPoIds.has(m.po_id)).length;
+      }
+
+      if (g.mr_pr && g.pr) {
+        const returnedReceiptIds = new Set((g.pr || []).map((p: any) => p.material_receipt_id).filter(Boolean));
+        newCounts["Purchase Return"] = (g.mr_pr || []).filter(
+          (m: any) => (m.rejected_quantity || 0) > 0 && !returnedReceiptIds.has(m.id)
+        ).length;
+      }
+
+      if (g.pos && g.vp && g.tb) {
+        // 1. Pending Advance Payments
+        const advPos = (g.pos || []).filter((p: any) => p.payment_type?.toLowerCase().includes("advance"));
+        const paidAdvPoIds = new Set(
+          (g.vp || [])
+            .filter((v: any) => v.payment_type === "Advance" && (v.status === "Paid" || v.status === "completed"))
+            .map((v: any) => v.po_id)
+            .filter(Boolean)
+        );
+        const pendingAdvCount = advPos.filter((p: any) => !paidAdvPoIds.has(p.id)).length;
+
+        // 2. Pending Verified Vendor Bills
+        const paidVendorPoIds = new Set(
+          (g.vp || [])
+            .filter((v: any) => 
+              v.payment_type === "Vendor Payment" && 
+              (!!v.transaction_utr || !!v.payment_mode || (v.status === "Paid" && !v.paid_by))
+            )
+            .map((v: any) => v.po_id)
+            .filter(Boolean)
+        );
+        const verifiedBills = (g.tb || []).filter(
+          (b: any) => b.verification_status === "Verified" || (b.accountant_name && b.accountant_name !== "-")
+        );
+        const pendingVendorBillCount = verifiedBills.filter((b: any) => !paidVendorPoIds.has(b.po_id)).length;
+
+        // 3. Pending Freight Payments
+        const paidFreightPoIds = new Set(
+          (g.vp || [])
+            .filter((v: any) => (v.payment_type === "Freight Payment" || v.paid_by === "Freight") && (v.status === "Paid" || v.status === "completed" || !!v.transaction_utr))
+            .map((v: any) => v.po_id)
+            .filter(Boolean)
+        );
+        const pendingFreightPoIds = new Set(
+          (g.tf || [])
+            .filter((t: any) => t.po_id && !paidFreightPoIds.has(t.po_id))
+            .map((t: any) => t.po_id)
+            .filter(Boolean)
+        );
+        const pendingFreightCount = pendingFreightPoIds.size;
+
+        newCounts["Payment"] = pendingAdvCount + pendingVendorBillCount + pendingFreightCount;
+      }
 
       setCounts(newCounts);
     } catch (e) {
@@ -273,15 +203,23 @@ export default function Sidebar() {
   }, [pathname, fetchCounts]);
 
   useEffect(() => {
+    const handleUpdate = () => fetchCounts();
+    window.addEventListener("stageUpdated", handleUpdate);
+    window.addEventListener("focus", handleUpdate);
+
     const interval = setInterval(() => {
       fetchCounts();
-    }, 60000);
-    return () => clearInterval(interval);
+    }, 3000);
+
+    return () => {
+      window.removeEventListener("stageUpdated", handleUpdate);
+      window.removeEventListener("focus", handleUpdate);
+      clearInterval(interval);
+    };
   }, [fetchCounts]);
 
   return (
     <>
-      {/* Mobile top bar */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-sidebar border-b border-sidebar-border">
         <h1 className="text-lg font-semibold text-sidebar-foreground">
           Purchase Workflow
@@ -295,7 +233,6 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* Sidebar */}
       <aside
         className={`fixed lg:static top-0 left-0 h-full lg:h-auto w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 ease-in-out z-40 
         ${isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
@@ -307,7 +244,6 @@ export default function Sidebar() {
             </h1>
           </div>
 
-          {/* Dashboard Button */}
           {showDashboard && (
             <Button
               variant={pathname === "/" ? "default" : "ghost"}
@@ -322,7 +258,6 @@ export default function Sidebar() {
             </Button>
           )}
 
-          {/* Stage Buttons */}
           <div className="space-y-1">
             {filteredStages.map((stage) => {
               const stagePath = `/stages/${stage.slug}`;
@@ -354,7 +289,6 @@ export default function Sidebar() {
             })}
           </div>
 
-          {/* User Info & Logout */}
           <div className="mt-auto pt-6 border-t border-sidebar-border">
             <div className="px-3 py-2 mb-3">
               <p className="text-sm text-sidebar-foreground/80">
@@ -375,7 +309,6 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      {/* Mobile backdrop (click to close) */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/40 z-30 lg:hidden"

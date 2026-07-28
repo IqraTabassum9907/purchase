@@ -32,8 +32,10 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Loader2, Search, CheckCircle2, ShieldCheck, Copy, ExternalLink, CheckCircle, RefreshCw } from "lucide-react";
-import { formatDate, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import { toast } from "sonner";
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow, selectApprovedVendor } from "@/lib/supabase/queries";
 
 const formatDateDash = (dateStr: string) => {
   if (!dateStr || dateStr === "-" || dateStr === "—") return "-";
@@ -68,75 +70,34 @@ export default function ApprovedVendor() {
   const [searchTerm, setSearchTerm] = useState("");
 
   const fetchData = async () => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        const rows = json.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "") // Skip empty rows
-          .map(({ row, originalIndex }: any) => {
-            // Stage 4 routing check:
-            // Purchase Enquiry completed (has actual3: row[46]) and PO Entry plan not yet set (missing plan4: row[51])
-            const hasActual3 = !!row[46] && String(row[46]).trim() !== "" && String(row[46]).trim() !== "-";
-            const hasPlan4 = !!row[51] && String(row[51]).trim() !== "" && String(row[51]).trim() !== "-";
+      const workflow = await fetchIndentWorkflow();
+      const rows = workflow
+        .filter((row) => row.data.indentNumber && row.data.indentNumber.trim() !== "")
+        .map((row) => {
+          const hasActual3 = !!row.data.actual3 && row.data.actual3.trim() !== "" && row.data.actual3.trim() !== "-";
+          const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "" && row.data.plan4.trim() !== "-";
 
-            return {
-              id: `${row[1]}_${originalIndex}`,
-              rowIndex: originalIndex,
-              stage: 4,
-              status: (hasActual3 && hasPlan4) ? "completed" : (hasActual3 && !hasPlan4 ? "pending" : "not_ready"),
-              createdAt: parseSheetDate(row[0]),
-              data: {
-                indentNumber: row[1],
-                timestamp: row[0],
-                createdBy: row[2],
-                category: row[3],
-                itemName: row[4],
-                quantity: row[14], // O: Approved Qty
-                planned3: row[45], // Stage 3 Planned
-                actual3: row[46],  // Stage 3 Actual (Stage 4 Planned)
-                planned4: row[51], // Stage 4 Actual
-                selectedVendor: row[47],
-                selectedVendorName: row[48],
-                finalApprovedBy: row[49],
-                negotiationRemarks: row[50],
+          return {
+            id: row.id,
+            rowIndex: row.originalIndex,
+            stage: 4,
+            status: (hasActual3 && hasPlan4) ? "completed" : (hasActual3 && !hasPlan4 ? "pending" : "not_ready"),
+            createdAt: row.data.createdAt,
+            data: row.data,
+            _quotationIds: row._quotationIds,
+          };
+        });
+      setSheetRecords(rows);
 
-                // Vendors details
-                vendor1Name: row[21],
-                vendor1Rate: row[22],
-                vendor1Terms: row[23],
-                vendor1Delivery: row[24],
-                vendor1Remarks: row[28],
+      const { data: dropRows, error: dropErr } = await supabase
+        .from("master_approvers")
+        .select("name")
+        .eq("is_active", true);
 
-                vendor2Name: row[29],
-                vendor2Rate: row[30],
-                vendor2Terms: row[31],
-                vendor2Delivery: row[32],
-                vendor2Remarks: row[36],
-
-                vendor3Name: row[37],
-                vendor3Rate: row[38],
-                vendor3Terms: row[39],
-                vendor3Delivery: row[40],
-                vendor3Remarks: row[44],
-              }
-            };
-          });
-        setSheetRecords(rows);
-      }
-
-      // Fetch approvers
-      const dropRes = await fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll`);
-      const dropJson = await dropRes.json();
-      if (dropJson.success && Array.isArray(dropJson.data)) {
-        const approvers = dropJson.data.slice(1)
-          .map((row: any) => String(row[8] || "").trim())
-          .filter((a: string) => a !== "");
-        setApproverList(approvers);
+      if (!dropErr && dropRows) {
+        setApproverList(dropRows.map((r) => r.name).filter(Boolean));
       }
     } catch (e) {
       console.error("Fetch error Stage 4:", e);
@@ -268,43 +229,27 @@ export default function ApprovedVendor() {
       return;
     }
 
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
-
     setIsSubmitting(true);
     setSubmitError(null);
 
     try {
-      const timestamp = getFmsTimestamp();
       const selIdx = parseInt(approvedVendor.replace("vendor", ""), 10);
 
-      // Loop through all records in the group and update
       const updatePromises = currentGroup.records.map(async (record: any) => {
-        const rowArray = new Array(60).fill("");
         const approvedName = record.data[`vendor${selIdx}Name`] || "";
+        const approvedRate = parseFloat(record.data[`vendor${selIdx}Rate`]) || 0;
+        const quotationId = record._quotationIds?.[approvedVendor];
 
-        rowArray[47] = approvedVendor; // AV: Selected Vendor ID
-        rowArray[48] = approvedName;   // AW: Selected Vendor Name
-        rowArray[49] = ""; // AX: Approved By
-        rowArray[50] = formData.remarks;    // AY: Remarks
-        rowArray[51] = timestamp; // AZ: Actual Approved Vendor (Planned Stage 5 PO Entry)
+        if (!quotationId) throw new Error(`No quotation found for ${approvedVendor} on indent ${record.data.indentNumber}`);
 
-        const params = new URLSearchParams();
-        params.append("action", "update");
-        params.append("sheetName", "INDENT-LIFT");
-        params.append("rowIndex", record.rowIndex.toString());
-        params.append("rowData", JSON.stringify(rowArray));
-
-        const response = await fetch(SHEET_API_URL, {
-          method: "POST",
-          body: params,
+        await selectApprovedVendor(record.id, {
+          selectedQuotationId: quotationId,
+          vendorName: approvedName,
+          vendorType: "regular",
+          finalAgreedRate: approvedRate,
+          approvedBy: "",
+          approvalRemarks: formData.remarks,
         });
-
-        if (!response.ok) throw new Error("Update failed");
-
-        const result = await response.json();
-        if (!result.success) throw new Error(result.error || "Unknown error");
-        return result;
       });
 
       await Promise.all(updatePromises);

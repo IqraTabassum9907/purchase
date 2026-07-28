@@ -16,6 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { fetchIndentWorkflow, submitQuotation } from "@/lib/supabase/queries";
+import { supabase } from "@/lib/supabase/client";
 
 const paymentTermsOptions = [
   { value: "Advance", label: "Advance" },
@@ -37,12 +39,12 @@ export default function PublicQuotationForm() {
 
   const [indentItems, setIndentItems] = useState<Array<{
     id: string;
-    rowIndex: number;
     indentNumber: string;
     itemName: string;
     quantity: string;
     category: string;
     vendorName: string;
+    _quotationIds?: Record<string, string>;
   }>>([]);
 
   const [formRates, setFormRates] = useState<string[]>([]);
@@ -61,45 +63,29 @@ export default function PublicQuotationForm() {
 
     const fetchIndent = async () => {
       try {
-        const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-        if (!SHEET_API_URL) {
-          setErrorMsg("API Configuration error.");
-          setIsLoading(false);
-          return;
+        const workflowData = await fetchIndentWorkflow();
+        const fetchedItems = [];
+        for (const rawId of rawIds) {
+          const row = workflowData.find((r) => r.id === rawId);
+          if (row) {
+            const vendorNameKey = `vendor${vendorSlot}Name` as const;
+            fetchedItems.push({
+              id: rawId,
+              indentNumber: row.data.indentNumber,
+              itemName: row.data.itemName,
+              quantity: row.data.quantity,
+              category: row.data.category,
+              vendorName: (row.data as any)[vendorNameKey] || `Vendor #${vendorSlot}`,
+              _quotationIds: row._quotationIds,
+            });
+          }
         }
 
-        const res = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`);
-        const json = await res.json();
-        if (json.success && Array.isArray(json.data)) {
-          const fetchedItems = [];
-          for (const rawId of rawIds) {
-            const parts = rawId.split("_");
-            const rowIndex = parseInt(parts[1] || "", 10);
-            if (isNaN(rowIndex)) continue;
-
-            const row = json.data[rowIndex - 1];
-            if (row) {
-              const vOffset = 21 + (vendorSlot - 1) * 8; // slot 1: 21, slot 2: 29, slot 3: 37
-              fetchedItems.push({
-                id: rawId,
-                rowIndex,
-                indentNumber: row[1] || "",
-                itemName: row[4] || "",
-                quantity: row[14] || "",
-                category: row[3] || "",
-                vendorName: row[vOffset] || `Vendor #${vendorSlot}`,
-              });
-            }
-          }
-
-          if (fetchedItems.length > 0) {
-            setIndentItems(fetchedItems);
-            setFormRates(fetchedItems.map(() => ""));
-          } else {
-            setErrorMsg("Indent details not found.");
-          }
+        if (fetchedItems.length > 0) {
+          setIndentItems(fetchedItems);
+          setFormRates(fetchedItems.map(() => ""));
         } else {
-          setErrorMsg("Failed to read from server database.");
+          setErrorMsg("Indent details not found.");
         }
       } catch (err: any) {
         console.error("Fetch error on public quotation form:", err);
@@ -115,7 +101,6 @@ export default function PublicQuotationForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validate
     for (let i = 0; i < indentItems.length; i++) {
       if (!formRates[i]?.trim()) {
         toast.error(`Please fill in Rate Per Qty for ${indentItems[i].itemName}.`);
@@ -127,38 +112,30 @@ export default function PublicQuotationForm() {
       return;
     }
 
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL || indentItems.length === 0) return;
+    if (indentItems.length === 0) return;
 
     setIsSubmitting(true);
     try {
       const updatePromises = indentItems.map(async (item, index) => {
-        const rowArray = new Array(60).fill("");
-        const vOffset = 21 + (vendorSlot - 1) * 8; // slot 1: 21, slot 2: 29, slot 3: 37
-
-        // Update the vendor quote details in the spreadsheet
-        rowArray[vOffset + 1] = formRates[index];                          // Rate Per Qty
-        rowArray[vOffset + 2] = commonTerms;                               // Payment Terms
-        rowArray[vOffset + 3] = commonDeliveryDate;                        // Expected Delivery Date
-        rowArray[vOffset + 4] = "No";                                      // Approved status
-
-        const params = new URLSearchParams();
-        params.append("action", "update");
-        params.append("sheetName", "INDENT-LIFT");
-        params.append("rowIndex", item.rowIndex.toString());
-        params.append("rowData", JSON.stringify(rowArray));
-
-        const res = await fetch(SHEET_API_URL, {
-          method: "POST",
-          body: params,
-        });
-
-        if (!res.ok) throw new Error(`Update failed for ${item.indentNumber}`);
-        const result = await res.json();
-        if (!result.success) {
-          throw new Error(result.error || `Update failed for ${item.indentNumber}`);
+        const quotationId = item._quotationIds?.[`vendor${vendorSlot}`];
+        if (quotationId) {
+          const { error } = await supabase
+            .from("quotation_submissions")
+            .update({
+              quoted_rate: parseFloat(formRates[index]),
+              payment_terms: commonTerms,
+              delivery_terms: commonDeliveryDate,
+            })
+            .eq("id", quotationId);
+          if (error) throw error;
+        } else {
+          await submitQuotation(item.id, {
+            vendorName: item.vendorName,
+            quotedRate: parseFloat(formRates[index]),
+            paymentTerms: commonTerms,
+            deliveryTerms: commonDeliveryDate,
+          });
         }
-        return result;
       });
 
       await Promise.all(updatePromises);

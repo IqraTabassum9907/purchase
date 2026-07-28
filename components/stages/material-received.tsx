@@ -33,7 +33,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { FileText, Upload, X, Loader2, Search, Eye, Package, CheckCircle2, AlertCircle, Info, ClipboardList } from "lucide-react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
-import { parseSheetDate, formatDate, getFmsTimestamp } from "@/lib/utils";
+import { parseSheetDate } from "@/lib/utils";
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
 const formatDateDash = (date: any) => {
     if (!date || date === "-" || date === "—") return "-";
@@ -53,37 +55,37 @@ const GST_RATES: Record<string, number> = {
     "28%": 0.28,
 };
 
-const toBase64 = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = (error) => reject(error);
-    });
-
-const convertToDownloadUrl = (url: string) => {
-    if (!url || !url.includes("drive.google.com")) return url;
-    const match = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-    if (match && match[1]) {
-        return `https://drive.google.com/uc?export=download&id=${match[1]}`;
+const uploadToStorage = async (file: File): Promise<string> => {
+    try {
+        const path = `material-images/${Date.now()}_${file.name}`;
+        const { error } = await supabase.storage
+            .from("material-images")
+            .upload(path, file);
+        if (error) {
+            console.warn("Storage upload error (bucket missing or permission issue):", error.message);
+            return typeof window !== "undefined" ? URL.createObjectURL(file) : "";
+        }
+        const { data } = supabase.storage.from("material-images").getPublicUrl(path);
+        return data.publicUrl;
+    } catch (err) {
+        console.warn("Upload exception:", err);
+        return typeof window !== "undefined" ? URL.createObjectURL(file) : "";
     }
-    return url;
 };
 
-const uploadFileToDrive = async (
-    file: File,
-    apiUrl: string,
-    folderId: string
-): Promise<string> => {
-    const uploadParams = new URLSearchParams();
-    uploadParams.append("action", "uploadFile");
-    uploadParams.append("base64Data", await toBase64(file));
-    uploadParams.append("fileName", file.name);
-    uploadParams.append("mimeType", file.type);
-    uploadParams.append("folderId", folderId);
-    const res = await fetch(apiUrl, { method: "POST", body: uploadParams });
-    const json = await res.json();
-    return json.success ? convertToDownloadUrl(json.fileUrl) : "";
+const generateGRN = async (): Promise<string> => {
+    const { data } = await supabase
+        .from("material_receipts")
+        .select("grn_number")
+        .order("grn_number", { ascending: false })
+        .limit(1);
+
+    let nextNum = 1;
+    if (data && data.length > 0) {
+        const match = data[0].grn_number?.match(/GRN-(\d+)/);
+        if (match) nextNum = parseInt(match[1], 10) + 1;
+    }
+    return `GRN-${String(nextNum).padStart(3, "0")}`;
 };
 
 /* --------------------------------------------------------------- */
@@ -96,10 +98,13 @@ const PENDING_COLUMNS = [
     { key: "vendorName", label: "Vendor Name" },
     { key: "itemName", label: "Item Name" },
     { key: "poNumber", label: "PO Number" },
+    { key: "poQty", label: "PO Qty" },
+    { key: "liftingQty", label: "Dispatch Qty" },
+    { key: "totalReceivedSoFar", label: "Rec. So Far" },
+    { key: "remainingPOBalance", label: "Pending Bal." },
     { key: "planned6", label: "Planned" },
     { key: "nextFollowUpDate", label: "Next Follow-Up" },
     { key: "remarks", label: "Remarks" },
-    { key: "liftingQty", label: "Dispatch Qty" },
     { key: "transporterName", label: "Transporter" },
     { key: "vehicleNo", label: "Vehicle No" },
     { key: "contactNo", label: "Contact No" },
@@ -183,111 +188,212 @@ export default function Stage7() {
 
 
     const fetchData = useCallback(async () => {
-        const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-        if (!SHEET_API_URL) return;
         setIsLoading(true);
         try {
-            const [liftRes, fmsRes] = await Promise.all([
-                fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`),
-                fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`)
+            const indentRows = await fetchIndentWorkflow();
+
+            const { data: poRows } = await supabase
+                .from("purchase_orders")
+                .select("*")
+                .order("created_at", { ascending: true });
+
+            const posByIndent = new Map<string, any[]>();
+            (poRows || []).forEach((po: any) => {
+                if (po.indent_id) {
+                    const list = posByIndent.get(po.indent_id) || [];
+                    list.push(po);
+                    posByIndent.set(po.indent_id, list);
+                }
+            });
+
+            const poIds = (poRows || []).map((p: any) => p.id).filter(Boolean);
+
+            const [liftingRes, transporterRes, receiptRes, paymentRes] = await Promise.all([
+                poIds.length > 0
+                    ? supabase.from("vendor_liftings").select("*").in("po_id", poIds)
+                    : Promise.resolve({ data: [] as any[] }),
+                poIds.length > 0
+                    ? supabase.from("transporter_followups").select("*").in("po_id", poIds)
+                    : Promise.resolve({ data: [] as any[] }),
+                poIds.length > 0
+                    ? supabase.from("material_receipts").select("*").in("po_id", poIds)
+                    : Promise.resolve({ data: [] as any[] }),
+                poIds.length > 0
+                    ? supabase.from("vendor_payments").select("*").in("po_id", poIds)
+                    : Promise.resolve({ data: [] as any[] }),
             ]);
 
-            const liftJson = await liftRes.json();
-            const fmsJson = await fmsRes.json();
+            const liftings = liftingRes.data || [];
+            const transporters = transporterRes.data || [];
+            const receipts = receiptRes.data || [];
+            const payments = paymentRes.data || [];
 
-            // Create FMS Map (Indent No. -> Row)
-            const fmsMap = new Map<string, any[]>();
-            if (fmsJson.success && Array.isArray(fmsJson.data)) {
-                // FMS data usually starts after header rows, typically slice(7) based on other stages
-                fmsJson.data.slice(7).forEach((r: any) => {
-                    if (r[1] && String(r[1]).trim()) {
-                        fmsMap.set(String(r[1]).trim(), r);
-                    }
-                });
-            }
+            const liftingByPo = new Map<string, any[]>();
+            liftings.forEach((l: any) => {
+                const list = liftingByPo.get(l.po_id) || [];
+                list.push(l);
+                liftingByPo.set(l.po_id, list);
+            });
 
-            if (liftJson.success && Array.isArray(liftJson.data)) {
-                // Data starts from row 7 (index 6)
-                const rows = liftJson.data.slice(6)
-                    .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-                    .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "")
-                    .map(({ row, originalIndex }: any) => {
-                        // Column T (index 19) = Planned
-                        // Column U (index 20) = Actual
-                        const hasColumnT = !!row[19] && String(row[19]).trim() !== "";
-                        const hasColumnU = !!row[20] && String(row[20]).trim() !== "";
+            const transporterByPo = new Map<string, any>();
+            transporters.forEach((t: any) => {
+                if (!transporterByPo.has(t.po_id)) transporterByPo.set(t.po_id, t);
+            });
 
-                        // Filtering logic:
-                        // - If column T is not null AND column U is null => pending
-                        // - If both columns T and U are not null => completed
+            const receiptsByPo = new Map<string, any[]>();
+            receipts.forEach((r: any) => {
+                const list = receiptsByPo.get(r.po_id) || [];
+                list.push(r);
+                receiptsByPo.set(r.po_id, list);
+            });
+
+            const paymentsByPo = new Map<string, any[]>();
+            payments.forEach((p: any) => {
+                const list = paymentsByPo.get(p.po_id) || [];
+                list.push(p);
+                paymentsByPo.set(p.po_id, list);
+            });
+
+            const rows: any[] = [];
+
+            for (const indentRow of indentRows) {
+                const indentPOs = posByIndent.get(indentRow.id) || [];
+                for (const po of indentPOs) {
+
+                const poLiftings = liftingByPo.get(po.id) || [];
+                const poReceipts = receiptsByPo.get(po.id) || [];
+                const transporter = transporterByPo.get(po.id);
+                const poPayments = paymentsByPo.get(po.id) || [];
+                const freightPayment = poPayments.find((p: any) => p.payment_type === "freight");
+                const advancePayment = poPayments.find((p: any) => p.payment_type === "advance");
+
+                const totalPOQty = parseFloat(String(po.quantity || indentRow.data.quantity || "0").replace(/,/g, "")) || 0;
+                const totalReceivedSoFar = poReceipts.reduce((sum, r) => sum + (parseFloat(String(r.received_quantity || "0").replace(/,/g, "")) || 0), 0);
+                const remainingPOBalance = Math.max(0, totalPOQty - totalReceivedSoFar);
+
+                if (poLiftings.length === 0) {
+                    const compositeId = `${indentRow.data.indentNumber}_${po.po_number}`;
+                    const receipt = poReceipts.find(r => parseFloat(String(r.received_quantity || "0")) > 0);
+                    const status = receipt ? "completed" : (transporter ? "pending" : "not_ready");
+
+                    rows.push({
+                        id: compositeId,
+                        rowIndex: rows.length,
+                        stage: 7,
+                        status,
+                        data: {
+                            indentNumber: indentRow.data.indentNumber,
+                            liftNo: po.po_number,
+                            warehouse: indentRow.data.warehouseLocation,
+                            vendorName: po.vendor_name,
+                            itemName: indentRow.data.itemName,
+                            poNumber: po.po_number,
+                            poQty: String(totalPOQty),
+                            totalReceivedSoFar: String(totalReceivedSoFar),
+                            remainingPOBalance: String(remainingPOBalance),
+                            nextFollowUpDate: "",
+                            remarks: "",
+                            liftingQty: String(totalPOQty),
+                            transporterName: transporter?.transporter_name || "",
+                            vehicleNo: transporter?.vehicle_number || "",
+                            contactNo: "",
+                            lrNo: transporter?.bilty_number || "",
+                            dispatchDate: transporter?.dispatch_date || "",
+                            freightAmount: freightPayment ? String(freightPayment.amount || "") : "",
+                            advanceAmount: advancePayment ? String(advancePayment.amount || "") : "",
+                            paymentDate: poPayments[0]?.payment_date || "",
+                            paymentStatus: poPayments[0]?.status || "",
+                            biltyCopy: transporter?.bilty_copy_url || "",
+                            poCopy: po.po_copy_url || "",
+                            planned6: "",
+                            actual6: receipt ? String(receipt.received_date || "") : "",
+                            invoiceType: "",
+                            receivedQty: receipt ? String(receipt.received_quantity || "") : "",
+                            invoiceDate: "",
+                            invoiceNumber: "",
+                            extraFreight: "",
+                            receivedItemImage: receipt?.received_item_image_url || "",
+                            billAttachment: "",
+                            damagedQty: receipt ? String(receipt.rejected_quantity || "") : "",
+                            damageReason: "",
+                            damageImage: "",
+                            productClaim: "",
+                            receiptLiftNumber: "",
+                            _poId: po.id,
+                        }
+                    });
+                } else {
+                    for (const lifting of poLiftings) {
+                        const liftTrackingNo = String(lifting.id).substring(0, 8);
+                        const compositeId = `${indentRow.data.indentNumber}_${liftTrackingNo}`;
+                        const liftQty = parseFloat(String(lifting.quantity || lifting.lifting_qty || "0").replace(/,/g, "")) || 0;
+                        const receipt = poReceipts.find(r => 
+                            String(r.grn_number || "").includes(liftTrackingNo) || 
+                            (liftQty > 0 && Math.abs((parseFloat(String(r.received_quantity || "0").replace(/,/g, "")) || 0) - liftQty) < 0.01)
+                        ) || null;
+
                         let status = "not_ready";
-                        if (hasColumnT && !hasColumnU) {
-                            status = "pending";
-                        } else if (hasColumnT && hasColumnU) {
+                        const isLiftingDone = !!(lifting.actual_lifting_date && String(lifting.actual_lifting_date).trim() !== "" && String(lifting.actual_lifting_date).trim() !== "-");
+                        const isTransporterDone = !!transporter || (lifting.lifting_status && ["complete", "completed", "received", "approved", "intransit"].includes(String(lifting.lifting_status).toLowerCase()));
+
+                        if (receipt) {
                             status = "completed";
+                        } else if (isTransporterDone || isLiftingDone) {
+                            status = "pending";
                         }
 
-                        const indentNum = String(row[1] || "").trim();
-                        const fmsRow = fmsMap.get(indentNum);
-
-                        // Use composite key (indentNumber + "_" + liftNo) for uniqueness
-                        const liftNoKey = String(row[2] || "").trim();
-                        const indentKey = String(row[1] || "").trim();
-                        const compositeId = indentKey && liftNoKey ? `${indentKey}_${liftNoKey}` : (indentKey || `row-${originalIndex}`);
-                        return {
+                        rows.push({
                             id: compositeId,
-                            rowIndex: originalIndex,
+                            rowIndex: rows.length,
                             stage: 7,
-                            status: status,
+                            status,
                             data: {
-                                // RECEIVING-ACCOUNTS Columns (B-S)
-                                indentNumber: row[1] || "",     // B: Indent Number
-                                liftNo: row[2] || "",            // C: Unit Tracking No.
-                                vendorName: row[3] || "",        // D: Vendor Name
-                                poNumber: row[4] || "",          // E: PO Number
-                                nextFollowUpDate: row[5] || "", // F: Next Follow-Up Date
-                                remarks: row[6] || "",           // G: Remarks
-                                itemName: row[7] || "",          // H: Item Name
-                                liftingQty: row[8] || "",        // I: Dispatch Qty
-                                transporterName: row[9] || "",  // J: Transporter Name
-                                vehicleNo: row[10] || "",        // K: Vehicle No
-                                contactNo: row[11] || "",        // L: Contact No
-                                lrNo: row[12] || "",             // M: LR No
-                                dispatchDate: row[13] || "",     // N: Dispatch Date
-                                freightAmount: row[14] || "",    // O: Freight Amount
-                                advanceAmount: row[15] || "",    // P: Advance Amount
-                                paymentDate: row[16] || "",      // Q: Payment Date
-                                paymentStatus: row[17] || "",    // R: Payment Status
-                                biltyCopy: row[18] || "",        // S: Bilty Copy
-                                poCopy: fmsRow ? (fmsRow[58] || "") : "", // From INDENT-LIFT Column BG (index 58)
-                                warehouse: fmsRow ? (fmsRow[6] || "") : "", // From INDENT-LIFT Column G (index 6)
-                                invoiceNumber: row[24] || "",    // Y: Invoice Number
-                                qcRequirement: row[28] || "",    // AC: QC Required
-
-                                // Columns T and U for status determination & data
-                                planned6: row[19] || "",          // T: Planned
-                                actual6: row[20] || "",           // U: Actual
-
-                                // History fields (not in data but in HISTORY_COLUMNS)
-                                invoiceType: row[22] || "",       // W
-                                receivedQty: row[25] || "",       // Z
-                                invoiceDate: row[23] || "",       // X
-                                extraFreight: row[27] || "",      // AB
-                                receivedItemImage: row[26] || "", // AA
-                                billAttachment: row[29] || "",    // AD
-                                paymentAmountHydra: row[30] || "",// AE
-                                paymentAmountLabour: row[31] || "",// AF
-                                paymentAmountHamali: row[32] || "",// AG
-                                receiptLiftNumber: row[2] || "",  // C: Reuse Lift No
-                                damagedQty: row[116] || "",
-                                damageReason: row[117] || "",
-                                damageImage: row[118] || "",
-                                productClaim: row[120] || "",     // DQ: Product Claim
+                                indentNumber: indentRow.data.indentNumber,
+                                liftNo: liftTrackingNo,
+                                warehouse: indentRow.data.warehouseLocation,
+                                vendorName: po.vendor_name,
+                                itemName: indentRow.data.itemName,
+                                poNumber: po.po_number,
+                                poQty: String(totalPOQty),
+                                totalReceivedSoFar: String(totalReceivedSoFar),
+                                remainingPOBalance: String(remainingPOBalance),
+                                nextFollowUpDate: lifting.followup_date || "",
+                                remarks: lifting.remarks || "",
+                                liftingQty: String(lifting.lifting_qty || totalPOQty),
+                                transporterName: transporter?.transporter_name || "",
+                                vehicleNo: lifting.vehicle_number || transporter?.vehicle_number || "",
+                                contactNo: lifting.driver_contact || "",
+                                lrNo: transporter?.bilty_number || "",
+                                dispatchDate: transporter?.dispatch_date || "",
+                                freightAmount: freightPayment ? String(freightPayment.amount || "") : "",
+                                advanceAmount: advancePayment ? String(advancePayment.amount || "") : "",
+                                paymentDate: poPayments[0]?.payment_date || "",
+                                paymentStatus: poPayments[0]?.status || "",
+                                biltyCopy: transporter?.bilty_copy_url || "",
+                                poCopy: po.po_copy_url || "",
+                                planned6: lifting.expected_lifting_date || "",
+                                actual6: receipt ? String(receipt.received_date || "") : "",
+                                invoiceType: "",
+                                receivedQty: receipt ? String(receipt.received_quantity || "") : "",
+                                invoiceDate: "",
+                                invoiceNumber: "",
+                                extraFreight: "",
+                                receivedItemImage: receipt?.received_item_image_url || "",
+                                billAttachment: "",
+                                damagedQty: receipt ? String(receipt.rejected_quantity || "") : "",
+                                damageReason: "",
+                                damageImage: "",
+                                productClaim: "",
+                                receiptLiftNumber: liftTrackingNo,
+                                _poId: po.id,
                             }
-                        };
-                    });
-                setSheetRecords(rows);
+                        });
+                    }
+                }
             }
+        }
+
+            setSheetRecords(rows);
         } catch (e) {
             console.error("Fetch error:", e);
         }
@@ -296,17 +402,17 @@ export default function Stage7() {
 
     useEffect(() => {
         const fetchDropdown = async () => {
-            const API = process.env.NEXT_PUBLIC_API_URI;
-            if (!API) return;
             try {
-                const res = await fetch(`${API}?sheet=Dropdown&action=getAll`);
-                const json = await res.json();
-                if (json.success && Array.isArray(json.data)) {
+                const { data: rows, error } = await supabase
+                    .from("master_items")
+                    .select("item_code, item_name")
+                    .eq("is_active", true);
+
+                if (error) throw error;
+                if (rows) {
                     const mapping: Record<string, string> = {};
-                    json.data.slice(1).forEach((row: any) => {
-                        const code = String(row[2] || "").trim(); // C
-                        const name = String(row[4] || "").trim(); // E
-                        if (name && code) mapping[name] = code;
+                    rows.forEach((r: any) => {
+                        if (r.item_name && r.item_code) mapping[r.item_name] = r.item_code;
                     });
                     setItemCodeMap(mapping);
                 }
@@ -400,86 +506,81 @@ export default function Stage7() {
 
     const handleBulkSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
-        const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-        if (!SHEET_API_URL) return;
-        const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
         setIsSubmitting(true);
         try {
-            const timestamp = getFmsTimestamp();
-
-            // Parallelize processing of all bulk items
             await Promise.all(bulkItems.map(async (item) => {
                 const rec = recordMap.get(item.recordId);
                 if (!rec) return;
 
-                // For each item, upload its specific image and handle QR concurrently
                 const itemImgUrl = item.receivedItemImage
-                    ? await uploadFileToDrive(item.receivedItemImage, SHEET_API_URL, folderId)
+                    ? await uploadToStorage(item.receivedItemImage)
                     : "";
 
-                // Damage Image
                 let damageImageUrl = "";
                 if (item.damageImage) {
-                    damageImageUrl = await uploadFileToDrive(item.damageImage, SHEET_API_URL, folderId);
+                    damageImageUrl = await uploadToStorage(item.damageImage);
                 }
 
-                const rowArray = new Array(121).fill("");
-                rowArray[20] = timestamp;               // U: Actual6
-                rowArray[22] = "independent";         // W: Invoice Type
-                rowArray[23] = "";                      // X: Invoice Date (removed)
-                rowArray[24] = "";                      // Y: Invoice Number (removed)
-                rowArray[25] = item.receivedQty;        // Z
-                rowArray[26] = itemImgUrl;              // AA
-                rowArray[27] = "";                      // AB: Extra Freight (removed)
-                rowArray[28] = "";                      // AC: QC Required (removed)
-                rowArray[29] = "";                      // AD: Bill Attachment (removed)
-                rowArray[30] = "";                      // AE: Hydra (removed)
-                rowArray[31] = "";                      // AF: Labour (removed)
-                rowArray[32] = "";                      // AG: Hamali (removed)
-                rowArray[33] = commonData.remarks;      // AH
-                rowArray[99] = "";                      // CV: Pkg Amount (removed)
-                rowArray[100] = "";                     // CW: Pkg GST (removed)
-                rowArray[104] = "";                     // DA: Warranty Claim (removed)
-                rowArray[105] = "";                     // DB: Duration (removed)
-                rowArray[106] = "";                     // DC: Warranty Expiry (removed)
-                rowArray[107] = "";                     // DD: Product Expiry (removed)
-
-                // Damage Columns
-                rowArray[116] = item.damagedQty || "";   // DM
-                rowArray[117] = item.damageReason || ""; // DN
-                rowArray[118] = damageImageUrl;          // DO
-
+                const baseGrn = await generateGRN();
+                const liftNo = item.liftNumber || rec.data.liftNo || "";
+                const grnNumber = liftNo ? `${baseGrn}_${liftNo}` : baseGrn;
+                const receivedQty = parseFloat(item.receivedQty) || 0;
+                const damagedQty = parseFloat(item.damagedQty) || 0;
                 const isDamaged = item.damageReceived === "yes";
-                if (isDamaged) {
-                    // Insert a row in Material-Testing
-                    const mtRow = new Array(24).fill("");
-                    mtRow[0] = timestamp;                                               // A: Timestamp
-                    mtRow[1] = rec.data.indentNumber || "";                             // B: Indent Number
-                    mtRow[2] = rec.data.liftNo || "";                                   // C: Unit Tracking No.
-                    mtRow[8] = "-";                                                     // I: Serial-No
-                    mtRow[9] = damageImageUrl;                                          // J: Image (serialPhoto)
-                    mtRow[11] = rec.data.itemName || "";                                // L: Part Name
-                    mtRow[12] = item.damagedQty || "";                                  // M: Reject Qty
-                    mtRow[13] = item.damageReason || "";                                // N: Remarks
-                    mtRow[14] = timestamp;                                              // O: Planned7
+                const availableQty = parseFloat(String(rec.data.liftingQty || rec.data.poQty || rec.data.quantity || "0").replace(/,/g, "")) || 0;
 
-                    const mtParams = new URLSearchParams();
-                    mtParams.append("action", "insert");
-                    mtParams.append("sheetName", "Material-Testing");
-                    mtParams.append("rowData", JSON.stringify(mtRow));
-
-                    await fetch(SHEET_API_URL, { method: "POST", body: mtParams });
-                } else {
-                    rowArray[35] = timestamp; // AJ: Planned8 (Billing)
+                if (receivedQty > availableQty && availableQty > 0) {
+                    toast.error(`Cannot submit quantity (${receivedQty}) greater than Dispatch Quantity (${availableQty})!`, {
+                        style: { background: "red", color: "white", border: "none" }
+                    });
+                    setIsSubmitting(false);
+                    return;
                 }
 
-                const params = new URLSearchParams();
-                params.append("action", "update");
-                params.append("sheetName", "RECEIVING-ACCOUNTS");
-                params.append("rowData", JSON.stringify(rowArray));
-                params.append("rowIndex", item.index.toString());
+                if (damagedQty > receivedQty) {
+                    toast.error(`Damaged quantity (${damagedQty}) cannot exceed received quantity (${receivedQty})!`, {
+                        style: { background: "red", color: "white", border: "none" }
+                    });
+                    setIsSubmitting(false);
+                    return;
+                }
 
-                return fetch(SHEET_API_URL, { method: "POST", body: params });
+                const { error: insertError } = await supabase.from("material_receipts").insert({
+                    grn_number: grnNumber,
+                    po_id: rec.data._poId || null,
+                    received_date: new Date().toISOString().split("T")[0],
+                    received_quantity: receivedQty,
+                    accepted_quantity: isDamaged ? Math.max(0, receivedQty - damagedQty) : receivedQty,
+                    rejected_quantity: isDamaged ? damagedQty : 0,
+                    received_item_image_url: itemImgUrl || null,
+                    bilty_invoice_image_url: null,
+                    received_by: null,
+                    status: isDamaged && damagedQty > 0 ? "QC Failed" : "QC Passed",
+                });
+
+                if (insertError) throw insertError;
+
+                if (isDamaged && damagedQty > 0) {
+                    const { data: receiptData } = await supabase
+                        .from("material_receipts")
+                        .select("id")
+                        .eq("grn_number", grnNumber)
+                        .single();
+
+                    if (receiptData) {
+                        await supabase.from("qc_inspections").insert({
+                            material_receipt_id: receiptData.id,
+                            qc_engineer: "System",
+                            inspection_date: new Date().toISOString().split("T")[0],
+                            passed_quantity: Math.max(0, receivedQty - damagedQty),
+                            failed_quantity: damagedQty,
+                            rejection_reason: item.damageReason || "Damaged on receipt",
+                            checklist_status: {},
+                            damage_image_url: damageImageUrl || null,
+                            overall_status: "Failed",
+                        });
+                    }
+                }
             }));
 
             toast.success("Bulk Receipt recorded successfully!");
@@ -493,7 +594,7 @@ export default function Stage7() {
         } finally {
             setIsSubmitting(false);
         }
-    }, [commonData, bulkItems, fetchData]);
+    }, [commonData, bulkItems, fetchData, recordMap]);
 
 
 
@@ -540,90 +641,85 @@ export default function Stage7() {
     /* --------------------------------------------------------------- */
     const handleSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
-        const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-        if (!selectedRecordId || !SHEET_API_URL) return;
+        if (!selectedRecordId) return;
         const rec = recordMap.get(selectedRecordId);
         if (!rec) return;
-        const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
         setIsSubmitting(true);
         try {
-            // Parallelize file uploads and QR generation/upload
             const imageUrl = form.receivedItemImage instanceof File
-                ? await uploadFileToDrive(form.receivedItemImage, SHEET_API_URL, folderId)
+                ? await uploadToStorage(form.receivedItemImage)
                 : (typeof form.receivedItemImage === "string" ? form.receivedItemImage : "");
 
-            const timestamp = getFmsTimestamp();
-            const rowArray = new Array(121).fill("");
-
-            rowArray[20] = timestamp;               // U: Actual6
-            rowArray[22] = "independent";         // W: Invoice Type
-            rowArray[23] = "";                    // X: Invoice Date (removed)
-            rowArray[24] = "";                    // Y: Invoice No (removed)
-            rowArray[25] = form.receivedQty;      // Z
-            rowArray[26] = imageUrl;              // AA
-            rowArray[27] = "";                    // AB: Extra Freight (removed)
-            rowArray[28] = "";                    // AC: QC Required (removed)
-            rowArray[29] = "";                    // AD: Bill Attachment (removed)
-            rowArray[30] = "";                    // AE: Hydra (removed)
-            rowArray[31] = "";                    // AF: Labour (removed)
-            rowArray[32] = "";                    // AG: Hamali (removed)
-            rowArray[33] = form.remarks;          // AH
-            rowArray[99] = "";                    // CV: Pkg Amount (removed)
-            rowArray[100] = "";                   // CW: Pkg GST (removed)
-            rowArray[104] = "";                   // DA: Warranty Claim (removed)
-            rowArray[105] = "";                   // DB: Duration (removed)
-            rowArray[106] = "";                   // DC: Warranty Expiry (removed)
-            rowArray[107] = "";                   // DD: Product Expiry (removed)
-            rowArray[120] = "";                   // DQ: Product Claim (removed)
-
-            // Damage Data
             let damageImageUrl = "";
             if (form.damageImage) {
-                damageImageUrl = await uploadFileToDrive(form.damageImage, SHEET_API_URL, folderId);
+                damageImageUrl = await uploadToStorage(form.damageImage);
             }
-            rowArray[116] = form.damagedQty || "";  // DM
-            rowArray[117] = form.damageReason || ""; // DN
-            rowArray[118] = damageImageUrl;          // DO
 
+            const baseGrn = await generateGRN();
+            const liftNo = rec.data.liftNo || "";
+            const grnNumber = liftNo ? `${baseGrn}_${liftNo}` : baseGrn;
+            const receivedQty = parseFloat(form.receivedQty) || 0;
+            const damagedQty = parseFloat(form.damagedQty) || 0;
             const isDamaged = form.damageReceived === "yes";
-            if (isDamaged) {
-                // Insert a row in Material-Testing
-                const mtRow = new Array(24).fill("");
-                mtRow[0] = timestamp;                                               // A: Timestamp
-                mtRow[1] = rec.data.indentNumber || "";                             // B: Indent Number
-                mtRow[2] = rec.data.liftNo || "";                                   // C: Unit Tracking No.
-                mtRow[8] = "-";                                                     // I: Serial-No
-                mtRow[9] = damageImageUrl;                                          // J: Image (serialPhoto)
-                mtRow[11] = rec.data.itemName || "";                                // L: Part Name
-                mtRow[12] = form.damagedQty || "";                                  // M: Reject Qty
-                mtRow[13] = form.damageReason || "";                                // N: Remarks
-                mtRow[14] = timestamp;                                              // O: Planned7
+            const availableQty = parseFloat(String(rec.data.liftingQty || rec.data.poQty || rec.data.quantity || "0").replace(/,/g, "")) || 0;
 
-                const mtParams = new URLSearchParams();
-                mtParams.append("action", "insert");
-                mtParams.append("sheetName", "Material-Testing");
-                mtParams.append("rowData", JSON.stringify(mtRow));
-
-                await fetch(SHEET_API_URL, { method: "POST", body: mtParams });
-            } else {
-                rowArray[35] = timestamp; // AJ: Planned8 (Billing)
+            if (receivedQty > availableQty && availableQty > 0) {
+                toast.error(`Cannot submit quantity (${receivedQty}) greater than Dispatch Quantity (${availableQty})!`, {
+                    style: { background: "red", color: "white", border: "none" }
+                });
+                setIsSubmitting(false);
+                return;
             }
 
-            const params = new URLSearchParams();
-            params.append("action", "update");
-            params.append("sheetName", "RECEIVING-ACCOUNTS");
-            params.append("rowData", JSON.stringify(rowArray));
-            params.append("rowIndex", rec.rowIndex.toString());
-
-            const updateRes = await fetch(SHEET_API_URL, { method: "POST", body: params });
-            const updateJson = await updateRes.json();
-            if (updateJson.success) {
-                toast.success("Receipt recorded successfully!");
-                setOpen(false);
-                fetchData();
-            } else {
-                toast.error("Failed to update sheet: " + (updateJson.error || "Unknown error"));
+            if (damagedQty > receivedQty) {
+                toast.error(`Damaged quantity (${damagedQty}) cannot exceed received quantity (${receivedQty})!`, {
+                    style: { background: "red", color: "white", border: "none" }
+                });
+                setIsSubmitting(false);
+                return;
             }
+
+            const { error: insertError } = await supabase.from("material_receipts").insert({
+                grn_number: grnNumber,
+                po_id: rec.data._poId || null,
+                received_date: new Date().toISOString().split("T")[0],
+                received_quantity: receivedQty,
+                accepted_quantity: isDamaged ? Math.max(0, receivedQty - damagedQty) : receivedQty,
+                rejected_quantity: isDamaged ? damagedQty : 0,
+                extra_freight: parseFloat(form.extraFreight || "0") || 0,
+                received_item_image_url: imageUrl || null,
+                bilty_invoice_image_url: null,
+                received_by: null,
+                status: isDamaged && damagedQty > 0 ? "QC Failed" : "QC Passed",
+            });
+
+            if (insertError) throw insertError;
+
+            if (isDamaged && damagedQty > 0) {
+                const { data: receiptData } = await supabase
+                    .from("material_receipts")
+                    .select("id")
+                    .eq("grn_number", grnNumber)
+                    .single();
+
+                if (receiptData) {
+                    await supabase.from("qc_inspections").insert({
+                        material_receipt_id: receiptData.id,
+                        qc_engineer: "System",
+                        inspection_date: new Date().toISOString().split("T")[0],
+                        passed_quantity: Math.max(0, receivedQty - damagedQty),
+                        failed_quantity: damagedQty,
+                        rejection_reason: form.damageReason || "Damaged on receipt",
+                        checklist_status: {},
+                        damage_image_url: damageImageUrl || null,
+                        overall_status: "Failed",
+                    });
+                }
+            }
+
+            toast.success("Receipt recorded successfully!");
+            setOpen(false);
+            fetchData();
         } catch (error: any) {
             console.error(error);
             toast.error("Error submitting form");
@@ -1439,22 +1535,27 @@ export default function Stage7() {
 
                             {/* Card 2: Quantity Reconciliation */}
                             <div className="bg-white border border-slate-200/80 rounded-xl p-5 shadow-sm space-y-4">
-                                <div className="flex items-center gap-2 border-b pb-2">
-                                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                    <h4 className="text-xs font-bold text-slate-805 uppercase tracking-wider">Quantity Reconciliation</h4>
+                                <div className="flex items-center justify-between border-b pb-2">
+                                    <div className="flex items-center gap-2">
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                        <h4 className="text-xs font-bold text-slate-805 uppercase tracking-wider">Quantity Reconciliation</h4>
+                                    </div>
+                                    <div className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                                        PO Balance After Receipt: <span className="font-bold text-slate-800">{Math.max(0, (parseFloat(activeRec?.data?.remainingPOBalance || "0") - (parseFloat(form.receivedQty || "0") || 0))).toFixed(0)}</span>
+                                    </div>
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-4">
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs text-slate-500 font-medium">Lifting Qty (Dispatched)</Label>
-                                        <Input
-                                            value={activeRec?.data?.liftingQty || "0"}
-                                            readOnly
-                                            className="bg-slate-50 border-slate-200 font-semibold text-slate-655 h-10"
-                                        />
+                                <div className="grid grid-cols-4 gap-3">
+                                    <div className="space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                                        <Label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">PO Total Ordered</Label>
+                                        <p className="text-sm font-extrabold text-slate-800">{activeRec?.data?.poQty || activeRec?.data?.liftingQty || "0"}</p>
                                     </div>
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs text-slate-600 font-semibold flex items-center gap-1">
+                                    <div className="space-y-1 bg-blue-50/60 p-2.5 rounded-lg border border-blue-200">
+                                        <Label className="text-[10px] text-blue-700 font-bold uppercase tracking-wider">Dispatch (This Batch)</Label>
+                                        <p className="text-sm font-extrabold text-blue-900">{activeRec?.data?.liftingQty || "0"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-700 font-bold flex items-center gap-1 uppercase tracking-wider">
                                             Received Qty <span className="text-red-500">*</span>
                                         </Label>
                                         <Input
@@ -1465,29 +1566,14 @@ export default function Stage7() {
                                             }
                                             required
                                             placeholder="0"
-                                            className="border-slate-300 focus:border-blue-500 focus:ring-blue-500 font-semibold text-slate-900 h-10 shadow-sm rounded-lg"
+                                            className="border-slate-300 focus:border-blue-500 focus:ring-blue-500 font-bold text-slate-900 h-9 shadow-sm rounded-lg text-sm"
                                         />
                                     </div>
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs text-slate-500 font-medium">Difference Qty</Label>
-                                        <div className="relative">
-                                            <Input
-                                                value={singleDifferentQtyVal.toFixed(2)}
-                                                readOnly
-                                                className={`font-bold h-10 transition-colors rounded-lg ${singleDifferentQtyVal === 0
-                                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                                        : singleDifferentQtyVal > 0
-                                                            ? "bg-amber-50 text-amber-700 border-amber-200"
-                                                            : "bg-rose-50 text-rose-700 border-rose-200"
-                                                    }`}
-                                            />
-                                            {singleDifferentQtyVal !== 0 && (
-                                                <span className="absolute right-2.5 top-3 flex h-2 w-2">
-                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                                                </span>
-                                            )}
-                                        </div>
+                                    <div className="space-y-1 bg-emerald-50/60 p-2.5 rounded-lg border border-emerald-200">
+                                        <Label className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider">Batch Difference</Label>
+                                        <p className={`text-sm font-extrabold ${singleDifferentQtyVal === 0 ? "text-emerald-700" : "text-amber-700"}`}>
+                                            {singleDifferentQtyVal.toFixed(2)}
+                                        </p>
                                     </div>
                                 </div>
                             </div>

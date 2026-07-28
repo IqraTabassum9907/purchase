@@ -37,6 +37,8 @@ import {
 } from "@/components/ui/select";
 import { formatDate, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
 import { useMemo } from "react";
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
 const formatDateDash = (date: any) => {
   if (!date || date === "-" || date === "—") return "-";
@@ -63,6 +65,24 @@ const formatInputDate = (date: any) => {
   const parsed = parseSheetDate(date);
   if (!parsed || isNaN(parsed.getTime())) return "";
   return parsed.toISOString().split("T")[0];
+};
+
+const normalizePaymentTerms = (term?: string): string => {
+  if (!term) return "advance";
+  const lower = String(term).toLowerCase().trim();
+  if (lower.includes("advance")) return "advance";
+  if (lower.includes("pi") || lower.includes("proforma")) return "PI";
+  if (lower.includes("15")) return "15";
+  if (lower.includes("30")) return "30";
+  if (lower.includes("60")) return "60";
+  if (lower.includes("90")) return "90";
+  return "advance";
+};
+
+const extractAdvanceAmount = (term?: string): string => {
+  if (!term) return "";
+  const match = String(term).match(/₹?\s*(\d+(\.\d+)?)/);
+  return match ? match[1] : "";
 };
 
 const VENDOR_EMAILS: Record<string, string> = {
@@ -142,101 +162,113 @@ export default function Stage5() {
   };
 
 
+  const [historyRecords, setHistoryRecords] = useState<any[]>([]);
+
   const fetchData = async () => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        // Skip header and first 6 data rows (indices 0-6) -> Data starts at Row 8
-        const rows = json.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "") // Skip empty rows
-          .map(({ row, originalIndex }: any) => {
-            const hasPlan4 = !!row[51] && String(row[51]).trim() !== "" && String(row[51]).trim() !== "-";
-            const hasActual4 = !!row[52] && String(row[52]).trim() !== "" && String(row[52]).trim() !== "-";
+      const workflow = await fetchIndentWorkflow();
 
-            let status = "not_ready";
-            if (hasActual4) {
-              status = "completed";
-            } else if (hasPlan4) {
-              status = "pending";
-            }
+      const { data: poData } = await supabase
+        .from("purchase_orders")
+        .select("*");
 
-            return {
-              id: row[1] || `row-${originalIndex}`,
-              rowIndex: originalIndex,
-              stage: 4,
-              status: status,
-              createdAt: parseSheetDate(row[0]),
-              history: (status === "completed") ? [{ stage: 4, date: parseSheetDate(row[52] || row[51] || row[0]), data: {} }] : [],
-              data: {
-                timestamp: row[0],
-                indentNumber: row[1],
-                itemName: row[4],
-                quantity: row[14],
-                planned1: row[9] ? formatDate(row[9]) : "",
-                actual1: row[10] ? formatDate(row[10]) : "",
-                approvedBy: row[12],
-
-
-                // Vendor 1
-                vendor1Name: row[21],
-                vendor1Rate: row[22],
-                vendor1Terms: row[23],
-                vendor1DeliveryDate: row[24],
-                vendor1WarrantyType: row[25],
-                vendor1WarrantyFrom: row[26],
-                vendor1WarrantyTo: row[27],
-                vendor1Attachment: row[28],
-
-                // Vendor 2
-                vendor2Name: row[29],
-                vendor2Rate: row[30],
-                vendor2Terms: row[31],
-                vendor2DeliveryDate: row[32],
-                vendor2WarrantyType: row[33],
-                vendor2WarrantyFrom: row[34],
-                vendor2WarrantyTo: row[35],
-                vendor2Attachment: row[36],
-
-                // Vendor 3
-                vendor3Name: row[37],
-                vendor3Rate: row[38],
-                vendor3Terms: row[39],
-                vendor3DeliveryDate: row[40],
-                vendor3WarrantyType: row[41],
-                vendor3WarrantyFrom: row[42],
-                vendor3WarrantyTo: row[43],
-                vendor3Attachment: row[44],
-
-                // Stage 4 Data (Negotiation)
-                planned3: row[45],           // AT
-                actual3: row[46],            // AU
-                delay3: row[47],             // AV
-                selectedVendor: row[48],     // AW
-                finalApprovedBy: row[49],    // AX
-                negotiationRemarks: row[50], // AY
-
-                // Stage 5 Data (PO)
-                planned4: row[51],      // AZ (Index 51)
-                actual4: row[52],       // BA (Index 52)
-                delay4: row[53],        // BB (Index 53)
-                poNumber: row[54],      // BC (Index 54)
-                basicValue: row[55],    // BD (Index 55)
-                totalWithTax: row[56],  // BE (Index 56)
-                hsn: row[57],           // BF (Index 57)
-                poCopy: row[58],        // BG (Index 58)
-                gst: row[59],           // BH (Index 59)
-                pkgAmount: row[70],     // BS (Index 70)
-                pkgGst: row[71],        // BT (Index 71)
-              }
-            };
-          });
-        setSheetRecords(rows);
+      const posByIndentId = new Map<string, any[]>();
+      if (poData) {
+        poData.forEach((po: any) => {
+          if (po.indent_id) {
+            const list = posByIndentId.get(po.indent_id) || [];
+            list.push(po);
+            posByIndentId.set(po.indent_id, list);
+          }
+        });
       }
+
+      const rows = workflow
+        .filter((row) => row.data.indentNumber && row.data.indentNumber.trim() !== "")
+        .map((row) => {
+          const indentPos = posByIndentId.get(row.id) || [];
+          const latestPo = indentPos.length > 0 ? indentPos[indentPos.length - 1] : null;
+          const hasPo = indentPos.length > 0;
+          const isRegularVendor = row.data.vendorType?.toLowerCase() === "regular";
+          const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "" && row.data.plan4.trim() !== "-";
+          const isApprovedStage2 = parseFloat(String((row.data as any).totalApprovedQty || row.data.approvedQty || "0")) > 0 || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-");
+
+          let status = "not_ready";
+          if (hasPo) {
+            status = "completed";
+          } else if (hasPlan4 || (isRegularVendor && isApprovedStage2)) {
+            status = "pending";
+          }
+
+          const displayQty = row.data.approvedQty || row.data.quantity;
+
+          return {
+            id: row.id,
+            rowIndex: row.originalIndex,
+            stage: 4,
+            status: status,
+            createdAt: row.data.createdAt,
+            history: hasPo ? [{ stage: 4, date: latestPo?.created_at || row.data.plan4 || row.data.createdAt, data: {} }] : [],
+            data: {
+              timestamp: row.data.createdAt,
+              indentNumber: row.data.indentNumber,
+              itemName: row.data.itemName,
+              quantity: displayQty,
+              planned1: row.data.plan1 || "",
+              actual1: row.data.actual1 || "",
+              approvedBy: row.data.finalApprovedBy,
+              itemCode: row.data.itemCode,
+
+              vendor1Name: row.data.vendor1Name,
+              vendor1Rate: row.data.vendor1Rate,
+              vendor1Terms: row.data.vendor1Terms,
+              vendor1DeliveryDate: row.data.vendor1Delivery,
+              vendor1WarrantyType: "",
+              vendor1WarrantyFrom: "",
+              vendor1WarrantyTo: "",
+              vendor1Attachment: "",
+
+              vendor2Name: row.data.vendor2Name,
+              vendor2Rate: row.data.vendor2Rate,
+              vendor2Terms: row.data.vendor2Terms,
+              vendor2DeliveryDate: row.data.vendor2Delivery,
+              vendor2WarrantyType: "",
+              vendor2WarrantyFrom: "",
+              vendor2WarrantyTo: "",
+              vendor2Attachment: "",
+
+              vendor3Name: row.data.vendor3Name,
+              vendor3Rate: row.data.vendor3Rate,
+              vendor3Terms: row.data.vendor3Terms,
+              vendor3DeliveryDate: row.data.vendor3Delivery,
+              vendor3WarrantyType: "",
+              vendor3WarrantyFrom: "",
+              vendor3WarrantyTo: "",
+              vendor3Attachment: "",
+
+              planned3: row.data.plan3,
+              actual3: row.data.actual3,
+              delay3: "",
+              selectedVendor: row.data.selectedVendor,
+              finalApprovedBy: row.data.finalApprovedBy,
+              negotiationRemarks: row.data.negotiationRemarks,
+
+              planned4: row.data.plan4,
+              actual4: latestPo ? (latestPo.created_at || "") : "",
+              delay4: "",
+              poNumber: latestPo?.po_number || "",
+              basicValue: latestPo ? String(latestPo.unit_rate || "") : "",
+              totalWithTax: latestPo ? String(latestPo.total_amount || "") : "",
+              hsn: "",
+              poCopy: latestPo?.po_copy_url || "",
+              gst: latestPo?.payment_type || "",
+              pkgAmount: "",
+              pkgGst: "",
+            }
+          };
+        });
+      setSheetRecords(rows);
     } catch (e) {
       console.error("Fetch error Stage 5:", e);
     }
@@ -253,7 +285,6 @@ export default function Stage5() {
     .filter((r) => r.status === "pending")
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
-      // Robust vendor name lookup
       const selectedId = String(r.data.selectedVendor || "1");
       const idx = parseInt(selectedId.toLowerCase().replace("vendor", "").trim(), 10) || 1;
       const vName = r.data[`vendor${idx}Name`] || "";
@@ -271,7 +302,6 @@ export default function Stage5() {
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       if (!searchLower) return true;
-      // Robust vendor name lookup
       const selectedId = String(r.data.selectedVendor || "1");
       const idx = parseInt(selectedId.toLowerCase().replace("vendor", "").trim(), 10) || 1;
       const vName = r.data[`vendor${idx}Name`] || "";
@@ -339,6 +369,9 @@ export default function Stage5() {
     supplierName: "",
     poDate: new Date().toISOString().split("T")[0],
     deliveryDate: "",
+    paymentTerms: "advance",
+    advancePayment: "yes",
+    advanceAmount: "",
     supplierEmail: "",
     supplierAddress: "",
     gstin: "",
@@ -394,6 +427,9 @@ export default function Stage5() {
       supplierAddress: v.name ? (VENDOR_ADDRESSES[v.name] || "") : "",
       poDate: formatInputDate(firstRec.data.actual4),
       deliveryDate: v.delivery ? formatInputDate(v.delivery) : "",
+      paymentTerms: normalizePaymentTerms(v.terms),
+      advancePayment: "yes",
+      advanceAmount: extractAdvanceAmount(v.terms),
       gstin: "",
       quotationNumber: "",
       quotationDate: new Date().toISOString().split("T")[0],
@@ -466,10 +502,12 @@ export default function Stage5() {
     selectedRecordIds.forEach((id) => {
       const record = sheetRecords.find((r) => r.id === id);
       const vendorData = record ? getVendorData(record) : { rate: 0 };
-      const rate = parseFloat(vendorData.rate) || 0;
+      const rate = vendorData.rate || "";
+      const rateNum = parseFloat(rate) || 0;
       const quantity = parseFloat(record?.data?.quantity) || 0;
-      const basicValue = (rate * quantity).toFixed(2);
+      const basicValue = (rateNum * quantity).toFixed(2);
       resetData[id] = {
+        rate,
         basicValue,
         totalWithTax: basicValue,
         hsn: "",
@@ -485,16 +523,19 @@ export default function Stage5() {
     const initialData: Record<string, any> = {};
     selectedRecordIds.forEach((id) => {
       const record = sheetRecords.find((r) => r.id === id);
-      const vendorData = record ? getVendorData(record) : { rate: 0 };
-      const rate = parseFloat(vendorData.rate) || 0;
+      const vendorData = record ? getVendorData(record) : { rate: 0, terms: "" };
+      const rate = vendorData.rate || "";
+      const rateNum = parseFloat(rate) || 0;
       const quantity = parseFloat(record?.data?.quantity) || 0;
-      const basicValue = (rate * quantity).toFixed(2);
+      const basicValue = (rateNum * quantity).toFixed(2);
 
       initialData[id] = {
+        rate: rate,
         basicValue: basicValue,
         totalWithTax: basicValue, // Initially same until tax selected
-        hsn: "",        // renamed from paymentTerms
-        gst: "",        // new dropdown (replaces remarks)
+        hsn: "",        // HSN code
+        gst: "",        // GST% dropdown
+        paymentTerms: vendorData.terms || "advance", // Advance / Credit payment terms
       };
     });
     // Find highest PO number in sheetRecords
@@ -525,6 +566,8 @@ export default function Stage5() {
       supplierEmail: firstVendor?.name ? (VENDOR_EMAILS[firstVendor.name] || "") : "",
       supplierAddress: firstVendor?.name ? (VENDOR_ADDRESSES[firstVendor.name] || "") : "",
       deliveryDate: firstVendor?.delivery ? formatInputDate(firstVendor.delivery) : "",
+      paymentTerms: normalizePaymentTerms(firstVendor?.terms),
+      advanceAmount: extractAdvanceAmount(firstVendor?.terms),
       quotationDate: new Date().toISOString().split("T")[0],
       enquiryDate: new Date().toISOString().split("T")[0],
     });
@@ -533,10 +576,8 @@ export default function Stage5() {
 
   const handleBulkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL || selectedRecordIds.length === 0) return;
+    if (selectedRecordIds.length === 0) return;
 
-    // Validate shared PO Number and PO Copy
     if (!commonPONumber.trim()) {
       toast.error("Please enter the PO Number.");
       return;
@@ -558,7 +599,6 @@ export default function Stage5() {
     setIsSubmitting(true);
     setSubmitError(null);
 
-    // Capture current state for processing
     const recordsToProcess = selectedRecordIds.map((id) => {
       const record = sheetRecords.find((r) => r.id === id);
       const data = bulkFormData[id];
@@ -567,97 +607,121 @@ export default function Stage5() {
 
     const processPromise = (async () => {
       try {
-        const timestamp = getFmsTimestamp();
         let successCount = 0;
         let finalFileUrl = "";
 
-        // Upload shared PO Copy ONCE before processing all records, when provided.
         if (typeof commonPOCopy === "string") {
           finalFileUrl = commonPOCopy;
         } else if (commonPOCopy instanceof File) {
-          const toBase64 = (file: File) => new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = error => reject(error);
-          });
+          try {
+            const fileName = `po-copies/${Date.now()}_${commonPOCopy.name}`;
+            const { error: uploadError } = await supabase.storage
+              .from("po-copies")
+              .upload(fileName, commonPOCopy);
 
-          const base64Data = await toBase64(commonPOCopy);
-
-          const uploadParams = new URLSearchParams();
-          uploadParams.append("action", "uploadFile");
-          uploadParams.append("sheetName", "INDENT-LIFT");
-          uploadParams.append("base64Data", base64Data);
-          uploadParams.append("fileName", commonPOCopy.name);
-          uploadParams.append("mimeType", commonPOCopy.type);
-          const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
-          uploadParams.append("folderId", folderId);
-
-          const uploadRes = await fetch(SHEET_API_URL, {
-            method: "POST",
-            body: uploadParams,
-          });
-
-          const uploadJson = await uploadRes.json();
-          if (uploadJson.success) {
-            finalFileUrl = uploadJson.fileUrl || uploadJson.url;
-          } else {
-            console.error("PO Copy upload failed:", uploadJson.error);
+            if (!uploadError) {
+              const { data: urlData } = supabase.storage
+                .from("po-copies")
+                .getPublicUrl(fileName);
+              finalFileUrl = urlData.publicUrl;
+            } else {
+              console.warn("PO Copy upload error (bucket missing):", uploadError.message);
+              finalFileUrl = typeof window !== "undefined" ? URL.createObjectURL(commonPOCopy) : "";
+            }
+          } catch (uploadErr) {
+            console.error("PO Copy upload failed:", uploadErr);
+            finalFileUrl = typeof window !== "undefined" ? URL.createObjectURL(commonPOCopy) : "";
           }
         }
 
         for (const { record, data } of recordsToProcess) {
           if (!record) continue;
 
-          // Add a small delay between records for network stability
+          const poQty = parseFloat(record.data.quantity || "0") || 0;
+          const maxApprovedQty = parseFloat(record.data.approvedQty || record.data.totalApprovedQty || "0") || poQty;
+
+          if (poQty > maxApprovedQty && maxApprovedQty > 0) {
+            toast.error(`PO Quantity (${poQty}) cannot exceed approved quantity (${maxApprovedQty}) for ${record.data.indentNumber}!`, {
+              style: { background: "red", color: "white", border: "none" }
+            });
+            setIsSubmitting(false);
+            return;
+          }
+
           await new Promise((r) => setTimeout(r, 300));
 
           try {
-            // Prepare Update Data - Only update specific columns
-            const rowArray = new Array(72).fill("");
-
-            // Calculate per-item packaging share
-            const { perItemPkgTotal, perItemPkgBase } = getPkgTotals(
+            const { perItemPkgTotal } = getPkgTotals(
               commonPkgAmount,
               commonPkgGST,
               recordsToProcess.length
             );
 
-            // Recalculate totalWithTax including packaging share
             const basicVal = parseFloat(data.basicValue) || 0;
-            const existingTax = parseFloat(data.totalWithTax) - basicVal; // tax portion from item GST
+            const existingTax = parseFloat(data.totalWithTax) - basicVal;
             const finalTotalWithTax = (basicVal + existingTax + perItemPkgTotal).toFixed(2);
 
-            // Only update the required columns
-            rowArray[52] = poMode === "revise" ? (record.data.actual4 || timestamp) : timestamp;                              // BA: Current Date (Actual 4)
-            // BB (Index 53) - User requested skip
-            rowArray[54] = commonPONumber;                         // BC: PO Number (shared)
-            rowArray[55] = data.basicValue;                        // BD: Basic Value
-            rowArray[56] = finalTotalWithTax;                      // BE: Total with Tax (incl. packaging)
-            rowArray[57] = data.hsn;                               // BF: HSN
-            rowArray[58] = finalFileUrl || record.data.poCopy || ""; // BG: PO Copy URL (shared)
-            rowArray[59] = data.gst || "";                         // BH: GST
-            rowArray[70] = perItemPkgBase > 0 ? perItemPkgBase.toFixed(2) : ""; // BS: Pkg/Fwd Amount per item
-            rowArray[71] = commonPkgGST || "";                     // BT: Pkg/Fwd GST%
+            const vendorData = getVendorData(record);
 
+            const isAdv = (poForm.advancePayment || "yes") === "yes";
+            const pTerm = poForm.paymentTerms || vendorData.terms || "advance";
+            const advAmtStr = isAdv && poForm.advanceAmount ? ` (₹${poForm.advanceAmount})` : "";
+            const finalPaymentType = isAdv ? `Advance Payment${advAmtStr}` : `No Advance - ${pTerm}`;
 
-            const updateParams = new URLSearchParams();
-            updateParams.append("action", "update");
-            updateParams.append("sheetName", "INDENT-LIFT");
-            updateParams.append("rowIndex", record.rowIndex.toString());
-            updateParams.append("rowData", JSON.stringify(rowArray));
+            const poPayload = {
+              po_number: commonPONumber,
+              indent_id: record.id,
+              vendor_name: vendorData.name !== "-" ? vendorData.name : "",
+              po_date: poForm.poDate || new Date().toISOString().split("T")[0],
+              item_code: record.data.itemCode || "",
+              item_name: record.data.itemName || "",
+              quantity: parseFloat(record.data.quantity) || 0,
+              unit_rate: basicVal,
+              total_amount: parseFloat(finalTotalWithTax),
+              payment_type: finalPaymentType,
+              advance_amount: isAdv && poForm.advanceAmount ? parseFloat(poForm.advanceAmount) || 0 : 0,
+              delivery_date: poForm.deliveryDate || null,
+              delivery_address: poForm.supplierAddress || "",
+              po_copy_url: finalFileUrl || record.data.poCopy || "",
+              created_by: "System",
+              status: "PO Issued",
+            };
 
-            const updateRes = await fetch(SHEET_API_URL, {
-              method: "POST",
-              body: updateParams,
-            });
+            if (poMode === "revise") {
+              let { error } = await supabase
+                .from("purchase_orders")
+                .update(poPayload)
+                .eq("indent_id", record.id)
+                .eq("po_number", commonPONumber);
 
-            const updateResult = await updateRes.json();
-            if (updateResult.success) {
-              successCount++;
+              if (error && (error.message.includes("advance_amount") || error.code === "PGRST204" || error.message.includes("column"))) {
+                const fallbackPayload = { ...poPayload };
+                delete (fallbackPayload as any).advance_amount;
+                const retryRes = await supabase
+                  .from("purchase_orders")
+                  .update(fallbackPayload)
+                  .eq("indent_id", record.id)
+                  .eq("po_number", commonPONumber);
+                error = retryRes.error;
+              }
+              if (error) throw error;
             } else {
-              throw new Error(updateResult.error || "Update failed");
+              let { error } = await supabase
+                .from("purchase_orders")
+                .insert(poPayload);
+
+              if (error && (error.message.includes("advance_amount") || error.code === "PGRST204" || error.message.includes("column"))) {
+                const fallbackPayload = { ...poPayload };
+                delete (fallbackPayload as any).advance_amount;
+                const retryRes = await supabase
+                  .from("purchase_orders")
+                  .insert(fallbackPayload);
+                error = retryRes.error;
+              }
+              if (error) throw error;
             }
+
+            successCount++;
           } catch (err: any) {
             console.error(`Error processing record ${record.id}:`, err);
             throw new Error(`Record ${record.id}: ${err.message}`);
@@ -682,7 +746,7 @@ export default function Stage5() {
 
     toast.promise(processPromise, {
       loading: `Processing ${recordsToProcess.length} POs...`,
-      success: (data) => `Successfully processed ${data.successCount} of ${data.total} POs.`,
+      success: (data: any) => `Successfully processed ${data?.successCount || 0} of ${data?.total || 0} POs.`,
       error: (err) => `Error during bulk processing: ${err.message}`,
     });
   };
@@ -1213,28 +1277,60 @@ export default function Stage5() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Delivery Date</Label>
-                    <Input type="date" value={poForm.deliveryDate} onChange={(e) => setPoForm((prev) => ({ ...prev, deliveryDate: e.target.value }))} />
+                    <Input type="date" value={poForm.deliveryDate || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, deliveryDate: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Email</Label>
-                    <Input type="email" value={poForm.supplierEmail} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierEmail: e.target.value }))} placeholder="Email for notification" />
+                    <Input type="email" value={poForm.supplierEmail || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierEmail: e.target.value }))} placeholder="Email for notification" />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Address</Label>
-                    <Input value={poForm.supplierAddress} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierAddress: e.target.value }))} />
+                    <Input value={poForm.supplierAddress || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierAddress: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">GSTIN</Label>
-                    <Input value={poForm.gstin} onChange={(e) => setPoForm((prev) => ({ ...prev, gstin: e.target.value }))} />
+                    <Input value={poForm.gstin || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, gstin: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Quotation Number</Label>
-                    <Input value={poForm.quotationNumber} onChange={(e) => setPoForm((prev) => ({ ...prev, quotationNumber: e.target.value }))} />
+                    <Input value={poForm.quotationNumber || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, quotationNumber: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Quotation Date</Label>
-                    <Input type="date" value={poForm.quotationDate} onChange={(e) => setPoForm((prev) => ({ ...prev, quotationDate: e.target.value }))} />
+                    <Input type="date" value={poForm.quotationDate || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, quotationDate: e.target.value }))} />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700 font-extrabold">Advance Payment *</Label>
+                    <Select
+                      value={poForm.advancePayment || "yes"}
+                      onValueChange={(val) => setPoForm((prev) => ({
+                        ...prev,
+                        advancePayment: val,
+                        advanceAmount: val === "no" ? "" : prev.advanceAmount
+                      }))}
+                    >
+                      <SelectTrigger className="bg-white border-slate-300 font-semibold text-xs h-10">
+                        <SelectValue placeholder="Select Yes / No" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white border text-xs shadow-md z-50">
+                        <SelectItem value="yes">Yes</SelectItem>
+                        <SelectItem value="no">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {(poForm.advancePayment || "yes") === "yes" && (
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700 font-extrabold">Advance Amount (₹) *</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        placeholder="e.g. 5000"
+                        value={poForm.advanceAmount || ""}
+                        onChange={(e) => setPoForm((prev) => ({ ...prev, advanceAmount: e.target.value }))}
+                        className="bg-white border-slate-300 font-semibold text-xs h-10"
+                      />
+                    </div>
+                  )}
                   {/* Enquiry fields removed */}
                   <div className="space-y-1.5 md:col-span-2">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Description / Remarks</Label>
@@ -1274,35 +1370,7 @@ export default function Stage5() {
                     </div>
                   </div>
 
-                  {/* Packaging / Forwarding */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:col-span-2 bg-amber-50/50 p-4 border border-amber-100 rounded-lg">
-                    <div className="space-y-1.5">
-                      <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Pkg/Fwd Amount</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={commonPkgAmount}
-                        onChange={(e) => setCommonPkgAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="bg-white"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Pkg/Fwd GST</Label>
-                      <Select value={commonPkgGST} onValueChange={setCommonPkgGST}>
-                        <SelectTrigger className="bg-white">
-                          <SelectValue placeholder="Select GST" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="0%">0%</SelectItem>
-                          <SelectItem value="5%">5%</SelectItem>
-                          <SelectItem value="12%">12%</SelectItem>
-                          <SelectItem value="18%">18%</SelectItem>
-                          <SelectItem value="28%">28%</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
+
                 </div>
               </section>
 
@@ -1365,9 +1433,39 @@ export default function Stage5() {
                               <div className="font-medium text-slate-900">{record.data.itemName}</div>
                               <div className="text-xs text-slate-500">{record.data.indentNumber}</div>
                             </td>
-                            <td className="px-4 py-3">{paymentTermsList.find((t) => t.value === v.terms)?.label || v.terms || "-"}</td>
+                            <td className="px-4 py-3 font-semibold text-indigo-900">
+                               {paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || v.terms || "-"}
+                             </td>
                             <td className="px-4 py-3 text-right">{record.data.quantity || "-"}</td>
-                            <td className="px-4 py-3 text-right">Rs. {v.rate || "0"}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-xs font-semibold text-slate-500">₹</span>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={data.rate !== undefined ? data.rate : (v.rate || "")}
+                                  onChange={(e) => {
+                                    const newRate = e.target.value;
+                                    const rateNum = parseFloat(newRate) || 0;
+                                    const qtyNum = parseFloat(record.data.quantity || "0") || 0;
+                                    const newBasic = (rateNum * qtyNum).toFixed(2);
+                                    const gstVal = data.gst || "";
+                                    const newTotal = (parseFloat(newBasic) + parseFloat(newBasic) * gstRateFor(gstVal)).toFixed(2);
+                                    setBulkFormData((prev) => ({
+                                      ...prev,
+                                      [record.id]: {
+                                        ...prev[record.id],
+                                        rate: newRate,
+                                        basicValue: newBasic,
+                                        totalWithTax: newTotal,
+                                      },
+                                    }));
+                                  }}
+                                  placeholder="0.00"
+                                  className="h-8 w-28 text-right font-semibold bg-white border-slate-300"
+                                />
+                              </div>
+                            </td>
                             <td className="px-4 py-3">
                               <Input
                                 value={data.hsn || ""}

@@ -2,65 +2,125 @@ import { NextRequest, NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
 import { ReportDocument } from "@/components/report-pdf";
+import { createServerClient } from "@/lib/supabase/server";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-// We can set a secret to protect this endpoint from manual calls
 const CRON_SECRET = process.env.CRON_SECRET;
 
 export async function GET(request: NextRequest) {
-    // Basic security check (Optional but recommended)
     const authHeader = request.headers.get('authorization');
     if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
         return new NextResponse('Unauthorized', { status: 401 });
     }
 
     try {
-        const API_URI = process.env.NEXT_PUBLIC_API_URI;
-        if (!API_URI) throw new Error("API URI not configured");
+        const supabase = createServerClient();
 
-        // 1. Fetch required sheets in parallel
-        const [fmsRes, raRes, masterRes, transportRes] = await Promise.all([
-            fetch(`${API_URI}?sheet=INDENT-LIFT`),
-            fetch(`${API_URI}?sheet=RECEIVING-ACCOUNTS`),
-            fetch(`${API_URI}?sheet=Master`),
-            fetch(`${API_URI}?sheet=${encodeURIComponent("Transport Flw-Up")}`),
+        const [indentRes, poRes, liftingRes, transportRes, receiptRes, masterRes] = await Promise.all([
+            supabase.from("indents").select("*").order("created_at", { ascending: true }),
+            supabase.from("purchase_orders").select("id, indent_id, po_number, vendor_name, item_name, quantity, status"),
+            supabase.from("vendor_liftings").select("*"),
+            supabase.from("transporter_followups").select("*"),
+            supabase.from("material_receipts").select("po_id"),
+            supabase.from("master_items").select("*"),
         ]);
 
-        const [fmsJson, raJson, masterJson, transportJson] = await Promise.all([
-            fmsRes.json(), raRes.json(), masterRes.json(), transportRes.json()
+        if (indentRes.error) throw indentRes.error;
+        if (poRes.error) throw poRes.error;
+        if (liftingRes.error) throw liftingRes.error;
+        if (transportRes.error) throw transportRes.error;
+        if (receiptRes.error) throw receiptRes.error;
+        if (masterRes.error) throw masterRes.error;
+
+        const indents = indentRes.data || [];
+        const purchaseOrders = poRes.data || [];
+        const liftings = liftingRes.data || [];
+        const transports = transportRes.data || [];
+        const receipts = receiptRes.data || [];
+        const masterData = masterRes.data || [];
+
+        const indentIds = indents.map((i) => i.id);
+
+        const [approvalRes, quotationRes, avRes] = await Promise.all([
+            indentIds.length > 0
+                ? supabase.from("indent_approvals").select("*").in("indent_id", indentIds)
+                : Promise.resolve({ data: [] as any[], error: null }),
+            indentIds.length > 0
+                ? supabase.from("quotation_submissions").select("*").in("indent_id", indentIds)
+                : Promise.resolve({ data: [] as any[], error: null }),
+            indentIds.length > 0
+                ? supabase.from("approved_vendors").select("*").in("indent_id", indentIds)
+                : Promise.resolve({ data: [] as any[], error: null }),
         ]);
 
-        if (!fmsJson.success || !raJson.success || !masterJson.success || !transportJson.success) {
-            throw new Error("Failed fetching comprehensive data for report");
-        }
+        if (approvalRes.error) throw approvalRes.error;
+        if (quotationRes.error) throw quotationRes.error;
+        if (avRes.error) throw avRes.error;
 
-        const fmsRows = fmsJson.data;
-        const raRows = raJson.data;
-        const masterRows = masterJson.data;
-        const transportRows = transportJson.data;
+        const approvals = approvalRes.data || [];
+        const quotations = quotationRes.data || [];
+        const approvedVendors = avRes.data || [];
 
-        // 2. Prepare mapping lookups
+        const approvalMap = new Map<string, any>();
+        approvals.forEach((a) => {
+            const existing = approvalMap.get(a.indent_id);
+            if (!existing || new Date(a.approved_at) > new Date(existing.approved_at)) {
+                approvalMap.set(a.indent_id, a);
+            }
+        });
+
+        const avMap = new Map<string, any>();
+        approvedVendors.forEach((av) => {
+            const existing = avMap.get(av.indent_id);
+            if (!existing || new Date(av.approved_at) > new Date(existing.approved_at)) {
+                avMap.set(av.indent_id, av);
+            }
+        });
+
+        const poByIndent = new Map<string, any>();
+        purchaseOrders.forEach((po) => {
+            if (po.indent_id && !poByIndent.has(po.indent_id)) {
+                poByIndent.set(po.indent_id, po);
+            }
+        });
+
+        const liftingByPo = new Map<string, any>();
+        liftings.forEach((l) => {
+            if (l.po_id && !liftingByPo.has(l.po_id)) {
+                liftingByPo.set(l.po_id, l);
+            }
+        });
+
+        const transportByPo = new Map<string, any>();
+        transports.forEach((t) => {
+            if (t.po_id && !transportByPo.has(t.po_id)) {
+                transportByPo.set(t.po_id, t);
+            }
+        });
+
+        const receiptsByPo = new Map<string, any>();
+        receipts.forEach((r) => {
+            if (r.po_id && !receiptsByPo.has(r.po_id)) {
+                receiptsByPo.set(r.po_id, r);
+            }
+        });
+
         const respMap: Record<string, string> = {};
-        if (Array.isArray(masterRows)) {
-            masterRows.slice(1).forEach((row: any) => {
-                const stageName = row[6]; // Col G
-                const respPerson = row[7]; // Col H
-                if (stageName && respPerson) respMap[String(stageName).trim()] = String(respPerson).trim();
-            });
-        }
+        masterData.forEach((item: any) => {
+            if (item.category_type && item.item_value) {
+                respMap[String(item.category_type).trim()] = String(item.item_value).trim();
+            }
+        });
 
         const transportMap = new Map<string, string>();
-        if (Array.isArray(transportRows)) {
-            transportRows.slice(1).forEach((row: any) => {
-                const liftNo = row[1]; // Column B
-                const exDate = row[4]; // Column E
-                if (liftNo) transportMap.set(String(liftNo).trim(), String(exDate || ""));
-            });
-        }
+        transports.forEach((t: any) => {
+            const liftNo = t.po_id;
+            const exDate = t.expected_date || t.dispatch_date || "";
+            if (liftNo) transportMap.set(String(liftNo).trim(), String(exDate));
+        });
 
-        // 3. Transformation Logic (Mirroring dashboard.tsx)
         const allowedStages = ["Indent Approval", "Make PO", "Follow UP / Lifting", "Transporter Follow-Up"];
         const totalCounts: Record<string, number> = {};
         const overdueCounts: Record<string, number> = {};
@@ -70,128 +130,85 @@ export async function GET(request: NextRequest) {
         });
 
         const detailed: any[] = [];
-        const has = (r: any, idx: number) => r[idx] !== null && r[idx] !== undefined && String(r[idx]).trim() !== "" && String(r[idx]).trim() !== "-";
-        const missing = (r: any, idx: number) => !has(r, idx);
-
         const followUpVendorPOs = new Set<string>();
 
-        // FMS Loop
-        for (let i = 6; i < fmsRows.length; i++) {
-            const r = fmsRows[i];
-            if (!r || !r[1]) continue;
+        for (const indent of indents) {
+            const approval = approvalMap.get(indent.id);
+            const av = avMap.get(indent.id);
+            const po = poByIndent.get(indent.id);
+            const lifting = liftingByPo.get(po?.id);
 
-            const checkStage = (name: string, start: number, actual: number, plan: number, delayIdx: number, mode: 'category' | 'vendor' | 'default' = 'default') => {
-                // "Lifting" has unique logic: Planned (60) NOT NULL, Actual (61) NULL, Delay (62) NOT NULL, PO (54) NOT NULL + UNIQUE
-                if (name === "Follow UP / Lifting") {
-                    const isOverdue = has(r, 60) && missing(r, 61) && has(r, 62);
-                    const rawPo = String(r[54] || "").trim();
+            if (!approval) {
+                totalCounts["Indent Approval"]++;
+                overdueCounts["Indent Approval"]++;
+                detailed.push({
+                    indent: indent.indent_number || "-",
+                    party: indent.created_by || "-",
+                    item: indent.item_name || "-",
+                    qty: indent.quantity || "-",
+                    stage: "Indent Approval",
+                    delay: "0",
+                    poNumber: "-",
+                });
+            }
 
-                    if (isOverdue && rawPo && rawPo !== "-") {
-                        const poNumKey = rawPo.toUpperCase().replace(/\s+/g, '');
-                        const isUnique = !followUpVendorPOs.has(poNumKey);
-                        
-                        totalCounts[name]++;
-                        overdueCounts[name]++;
+            if (approval && approval.approval_status === "approved" && !po) {
+                totalCounts["Make PO"]++;
+                overdueCounts["Make PO"]++;
+                detailed.push({
+                    indent: indent.indent_number || "-",
+                    party: av?.vendor_name || indent.category || "-",
+                    item: indent.item_name || "-",
+                    qty: indent.quantity || "-",
+                    stage: "Make PO",
+                    delay: "0",
+                    poNumber: "-",
+                });
+            }
 
-                        if (isUnique) {
-                            followUpVendorPOs.add(poNumKey);
-
-                            let party = "-";
-                            const awName = String(r[48] || "").trim();
-                            const axName = String(r[49] || "").trim();
-                            const avName = String(r[47] || "").trim();
-                            const selectedId = avName.toLowerCase();
-                            if (awName && awName !== "-") party = awName;
-                            else if (selectedId.includes("vendor1") || selectedId === "1" || selectedId === "vendor 1") party = r[21] || "-";
-                            else if (selectedId.includes("vendor2") || selectedId === "2" || selectedId === "vendor 2") party = r[29] || "-";
-                            else if (selectedId.includes("vendor3") || selectedId === "3" || selectedId === "vendor 3") party = r[37] || "-";
-                            else if (axName && axName !== "-" && isNaN(Date.parse(axName)) && isNaN(Number(axName))) party = axName;
-                            else if (avName && avName !== "-" && isNaN(Date.parse(avName)) && isNaN(Number(avName))) party = avName;
-                            else party = r[3] || "-";
-
-                            detailed.push({
-                                indent: r[1] || "-",
-                                party,
-                                item: r[4] || "-",
-                                qty: r[14] || r[5] || "-",
-                                stage: name,
-                                delay: r[62] || "0",
-                                poNumber: rawPo, // Keep original formatting for display
-                                plannedDate: r[60] || "-" // Column BI
-                            });
-                        }
-                    }
-                    return;
-                }
-
-                if (has(r, start) && missing(r, actual)) {
-                    totalCounts[name]++;
-                    if (has(r, delayIdx)) {
-                        overdueCounts[name]++;
-                        let party = "-";
-                        if (name === "Indent Approval") {
-                            party = r[2] || "-"; // Created By
-                        } else if (mode === 'vendor') {
-                            const awName = String(r[48] || "").trim();
-                            const axName = String(r[49] || "").trim();
-                            const avName = String(r[47] || "").trim();
-                            const selectedId = avName.toLowerCase();
-                            if (awName && awName !== "-") party = awName;
-                            else if (selectedId.includes("vendor1") || selectedId === "1" || selectedId === "vendor 1") party = r[21] || "-";
-                            else if (selectedId.includes("vendor2") || selectedId === "2" || selectedId === "vendor 2") party = r[29] || "-";
-                            else if (selectedId.includes("vendor3") || selectedId === "3" || selectedId === "vendor 3") party = r[37] || "-";
-                            else if (axName && axName !== "-" && isNaN(Date.parse(axName)) && isNaN(Number(axName))) party = axName;
-                            else if (avName && avName !== "-" && isNaN(Date.parse(avName)) && isNaN(Number(avName))) party = avName;
-                            else party = r[3] || "-";
-                        } else {
-                            party = r[3] || "-";
-                        }
-
-                        detailed.push({
-                            indent: r[1] || "-",
-                            party,
-                            item: r[4] || "-",
-                            qty: (name === "Make PO") ? (r[14] || r[5] || "-") : (r[5] || "-"),
-                            stage: name,
-                            delay: r[delayIdx] || "0",
-                            poNumber: r[54] || "-"
-                        });
-                    }
-                }
-            };
-
-            checkStage("Indent Approval", 9, 10, 11, 11, 'category');
-            checkStage("Make PO", 51, 52, 51, 53, 'vendor');
-            checkStage("Follow UP / Lifting", 60, 61, 60, 62, 'vendor');
-        }
-
-        // RA Loop
-        for (let i = 6; i < raRows.length; i++) {
-            const r = raRows[i];
-            if (!r || !r[1]) continue;
-
-            if (has(r, 88) && missing(r, 89)) {
-                totalCounts["Transporter Follow-Up"]++;
-                if (has(r, 90)) {
-                    overdueCounts["Transporter Follow-Up"]++;
-                    const liftNo = String(r[2] || "").trim();
-                    const expectedFromCP = r[93]; // Column CP
-                    const hasCP = expectedFromCP && String(expectedFromCP).trim() !== "" && String(expectedFromCP).trim() !== "-";
-                    const expectedFromTransport = transportMap.get(liftNo);
-                    const plannedDate = r[88]; // Column CK
-
+            if (po && !lifting) {
+                totalCounts["Follow UP / Lifting"]++;
+                overdueCounts["Follow UP / Lifting"]++;
+                const poNumKey = String(po.po_number || "").toUpperCase().replace(/\s+/g, '');
+                if (poNumKey && poNumKey !== "-" && !followUpVendorPOs.has(poNumKey)) {
+                    followUpVendorPOs.add(poNumKey);
                     detailed.push({
-                        indent: r[1] || "-",
-                        party: r[3] || "-",
-                        item: r[7] || "-",
-                        qty: r[8] || "-",
-                        stage: "Transporter Follow-Up",
-                        delay: r[90] || "0",
-                        expectedDate: hasCP ? expectedFromCP : (expectedFromTransport || plannedDate || "-"),
-                        transporterName: r[9] || "-",
-                        poNumber: r[54] || "-"
+                        indent: indent.indent_number || "-",
+                        party: po.vendor_name || av?.vendor_name || "-",
+                        item: po.item_name || indent.item_name || "-",
+                        qty: po.quantity || indent.quantity || "-",
+                        stage: "Follow UP / Lifting",
+                        delay: "0",
+                        poNumber: po.po_number || "-",
+                        plannedDate: lifting?.planned_date || "-",
                     });
                 }
+            }
+        }
+
+        for (const lifting of liftings) {
+            const po = purchaseOrders.find((p) => p.id === lifting.po_id);
+            if (!po) continue;
+
+            const transport = transportByPo.get(po.id);
+            if (!transport) {
+                totalCounts["Transporter Follow-Up"]++;
+                overdueCounts["Transporter Follow-Up"]++;
+                const liftNo = String(lifting.id || "").trim();
+                const expectedFromTransport = transportMap.get(liftNo);
+                const plannedDate = lifting.planned_date || expectedFromTransport || "-";
+
+                detailed.push({
+                    indent: po.indent_id || "-",
+                    party: po.vendor_name || "-",
+                    item: po.item_name || "-",
+                    qty: po.quantity || "-",
+                    stage: "Transporter Follow-Up",
+                    delay: "0",
+                    expectedDate: plannedDate,
+                    transporterName: "-",
+                    poNumber: po.po_number || "-",
+                });
             }
         }
 
@@ -204,40 +221,22 @@ export async function GET(request: NextRequest) {
                 uniquePoCount: name === "Follow UP / Lifting" ? followUpVendorPOs.size : undefined
             }));
 
-        // Sort detailed data by stage sequence to match summary
         detailed.sort((a, b) => {
             const indexA = allowedStages.indexOf(a.stage);
             const indexB = allowedStages.indexOf(b.stage);
             return indexA - indexB;
         });
 
-        // 4. Generate PDF Document
         const doc = React.createElement(ReportDocument, { summaryData, detailedData: detailed }) as any;
         const buffer = await renderToBuffer(doc);
         const base64Pdf = buffer.toString('base64');
         const filename = `Purchase_Report_${new Date().toISOString().split('T')[0]}.pdf`;
 
-        // 5. Upload via GAS
-        const payload = {
-            action: "uploadReport",
-            base64Data: base64Pdf,
-            fileName: filename,
-            folderId: process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || ""
-        };
-
-        const uploadRes = await fetch(API_URI, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
-        const uploadResult = await uploadRes.json();
-
-        if (!uploadResult.success) throw new Error(`GAS Upload failed: ${uploadResult.error}`);
-
         return NextResponse.json({
             success: true,
-            message: "Purchase Report synced with frontend and uploaded successfully",
-            fileUrl: uploadResult.fileUrl
+            message: "Purchase Report generated successfully via Supabase",
+            filename,
+            summary: summaryData,
         });
 
     } catch (error: any) {

@@ -32,8 +32,10 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Loader2, Search, Link as LinkIcon, Mail, CheckCircle, ExternalLink, Copy, MessagesSquare } from "lucide-react";
-import { formatDate, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import { toast } from "sonner";
+import { fetchIndentWorkflow, submitQuotation } from "@/lib/supabase/queries";
+import { supabase } from "@/lib/supabase/client";
 
 const formatDateDash = (dateStr: string) => {
   if (!dateStr || dateStr === "-" || dateStr === "—") return "-";
@@ -127,64 +129,60 @@ export default function Quotation() {
   const [newTerm, setNewTerm] = useState("");
 
   const fetchData = async () => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        const rows = json.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "") // Skip empty rows
-          .map(({ row, originalIndex }: any) => {
-            const hasPlan3 = !!row[45] && String(row[45]).trim() !== "" && String(row[45]).trim() !== "-";
-            const hasActual3 = !!row[46] && String(row[46]).trim() !== "" && String(row[46]).trim() !== "-";
+      const workflowData = await fetchIndentWorkflow();
+      const rows = workflowData.map((row) => {
+        const hasApprovedQty = parseFloat((row.data as any).totalApprovedQty || row.data.approvedQty || "0") > 0;
+        const isApproved = hasApprovedQty || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-");
+        const hasActual3 = !!row.data.actual3 && row.data.actual3.trim() !== "";
+        const isRegularVendor = (row.data.vendorType || "").toLowerCase().includes("regular");
+        const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "";
+        const hasSelectedVendor = !!row.data.selectedVendorName && row.data.selectedVendorName.trim() !== "";
 
-            return {
-              id: `${row[1]}_${originalIndex}`,
-              rowIndex: originalIndex,
-              stage: 3,
-              status: (hasPlan3 && hasActual3) ? "completed" : (hasPlan3 && !hasActual3 ? "pending" : "not_ready"),
-              createdAt: parseSheetDate(row[0]),
-              data: {
-                indentNumber: row[1],
-                timestamp: row[0],
-                createdBy: row[2],
-                category: row[3],
-                itemName: row[4],
-                quantity: row[14], // Approved Qty
-                planned3: row[45],
-                actual3: row[46],
-                selectedVendor: row[47],
-                selectedVendorName: row[48],
-                uom: row[69] || "PCS",
+        let status: string;
+        if (!isApproved || isRegularVendor) {
+          status = "not_ready";
+        } else if (hasActual3 || hasPlan4 || hasSelectedVendor) {
+          status = "completed";
+        } else {
+          status = "pending";
+        }
 
-                // Vendor 1
-                vendor1Name: row[21],
-                vendor1Rate: row[22],
-                vendor1Terms: row[23],
-                vendor1DeliveryDate: row[24],
-                vendor1Remarks: row[28],
-
-                // Vendor 2
-                vendor2Name: row[29],
-                vendor2Rate: row[30],
-                vendor2Terms: row[31],
-                vendor2DeliveryDate: row[32],
-                vendor2Remarks: row[36],
-
-                // Vendor 3
-                vendor3Name: row[37],
-                vendor3Rate: row[38],
-                vendor3Terms: row[39],
-                vendor3DeliveryDate: row[40],
-                vendor3Remarks: row[44],
-              }
-            };
-          });
-        setSheetRecords(rows);
-      }
+        return {
+          id: row.id,
+          status,
+          data: {
+            indentNumber: row.data.indentNumber,
+            createdBy: row.data.createdBy,
+            category: row.data.category,
+            itemName: row.data.itemName,
+            quantity: row.data.approvedQty || row.data.quantity,
+            planned3: row.data.plan3,
+            actual3: row.data.actual3,
+            selectedVendor: row.data.selectedVendor,
+            selectedVendorName: row.data.selectedVendorName,
+            uom: row.data.uom || "PCS",
+            vendor1Name: row.data.vendor1Name,
+            vendor1Rate: row.data.vendor1Rate,
+            vendor1Terms: row.data.vendor1Terms,
+            vendor1DeliveryDate: row.data.vendor1Delivery,
+            vendor1Remarks: row.data.vendor1Remarks,
+            vendor2Name: row.data.vendor2Name,
+            vendor2Rate: row.data.vendor2Rate,
+            vendor2Terms: row.data.vendor2Terms,
+            vendor2DeliveryDate: row.data.vendor2Delivery,
+            vendor2Remarks: row.data.vendor2Remarks,
+            vendor3Name: row.data.vendor3Name,
+            vendor3Rate: row.data.vendor3Rate,
+            vendor3Terms: row.data.vendor3Terms,
+            vendor3DeliveryDate: row.data.vendor3Delivery,
+            vendor3Remarks: row.data.vendor3Remarks,
+          },
+          _quotationIds: row._quotationIds,
+        };
+      });
+      setSheetRecords(rows);
     } catch (e) {
       console.error("Fetch error Stage 3:", e);
     }
@@ -200,75 +198,42 @@ export default function Quotation() {
     if (!open || currentRecords.length === 0) return;
 
     const interval = setInterval(async () => {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-      if (!SHEET_API_URL) return;
-
       try {
-        const res = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`);
-        const json = await res.json();
-        if (json.success && Array.isArray(json.data)) {
-          const rows = json.data.slice(6)
-            .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-            .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "");
+        const workflowData = await fetchIndentWorkflow();
 
-          const updatedRecords = currentRecords.map((curRec) => {
-            const freshRow = rows.find((r: any) => r.originalIndex === curRec.rowIndex);
-            if (freshRow) {
-              return {
-                id: `${freshRow.row[1]}_${freshRow.originalIndex}`,
-                rowIndex: freshRow.originalIndex,
-                stage: 3,
-                status: curRec.status,
-                createdAt: parseSheetDate(freshRow.row[0]),
-                data: {
-                  indentNumber: freshRow.row[1],
-                  timestamp: freshRow.row[0],
-                  createdBy: freshRow.row[2],
-                  category: freshRow.row[3],
-                  itemName: freshRow.row[4],
-                  quantity: freshRow.row[14],
-                  planned3: freshRow.row[45],
-                  actual3: freshRow.row[46],
-                  selectedVendor: freshRecordOffset(freshRow.row, 47),
-                  selectedVendorName: freshRecordOffset(freshRow.row, 48),
-                  uom: freshRow.row[69] || "PCS",
-
-                  vendor1Name: freshRow.row[21],
-                  vendor1Rate: freshRow.row[22],
-                  vendor1Terms: freshRow.row[23],
-                  vendor1DeliveryDate: freshRow.row[24],
-                  vendor1Remarks: freshRow.row[28],
-
-                  vendor2Name: freshRow.row[29],
-                  vendor2Rate: freshRow.row[30],
-                  vendor2Terms: freshRow.row[31],
-                  vendor2DeliveryDate: freshRow.row[32],
-                  vendor2Remarks: freshRow.row[36],
-
-                  vendor3Name: freshRow.row[37],
-                  vendor3Rate: freshRow.row[38],
-                  vendor3Terms: freshRow.row[39],
-                  vendor3DeliveryDate: freshRow.row[40],
-                  vendor3Remarks: freshRow.row[44],
-                }
-              };
-            }
-            return curRec;
-          });
-
-          // Check if any of them updated
-          const oldQuotesStr = currentRecords.map(r => [r.data.vendor1Rate, r.data.vendor2Rate, r.data.vendor3Rate].join(",")).join("|");
-          const newQuotesStr = updatedRecords.map(r => [r.data.vendor1Rate, r.data.vendor2Rate, r.data.vendor3Rate].join(",")).join("|");
-
-          if (oldQuotesStr !== newQuotesStr) {
-            setCurrentRecords(updatedRecords);
-            setSheetRecords((prev) =>
-              prev.map((rec) => {
-                const matched = updatedRecords.find((u) => u.rowIndex === rec.rowIndex);
-                return matched || rec;
-              })
-            );
+        const updatedRecords = currentRecords.map((curRec) => {
+          const freshRow = workflowData.find((r) => r.id === curRec.id);
+          if (freshRow) {
+            return {
+              ...curRec,
+              data: {
+                ...curRec.data,
+                vendor1Rate: freshRow.data.vendor1Rate,
+                vendor2Rate: freshRow.data.vendor2Rate,
+                vendor3Rate: freshRow.data.vendor3Rate,
+                vendor1Terms: freshRow.data.vendor1Terms,
+                vendor2Terms: freshRow.data.vendor2Terms,
+                vendor3Terms: freshRow.data.vendor3Terms,
+                vendor1DeliveryDate: freshRow.data.vendor1Delivery,
+                vendor2DeliveryDate: freshRow.data.vendor2Delivery,
+                vendor3DeliveryDate: freshRow.data.vendor3Delivery,
+              }
+            };
           }
+          return curRec;
+        });
+
+        const oldQuotesStr = currentRecords.map(r => [r.data.vendor1Rate, r.data.vendor2Rate, r.data.vendor3Rate].join(",")).join("|");
+        const newQuotesStr = updatedRecords.map(r => [r.data.vendor1Rate, r.data.vendor2Rate, r.data.vendor3Rate].join(",")).join("|");
+
+        if (oldQuotesStr !== newQuotesStr) {
+          setCurrentRecords(updatedRecords);
+          setSheetRecords((prev) =>
+            prev.map((rec) => {
+              const matched = updatedRecords.find((u) => u.id === rec.id);
+              return matched || rec;
+            })
+          );
         }
       } catch (err) {
         console.error("Polling error in quotation stage:", err);
@@ -277,11 +242,6 @@ export default function Quotation() {
 
     return () => clearInterval(interval);
   }, [open, currentRecords]);
-
-  // Helper helper function
-  function freshRecordOffset(row: any[], index: number) {
-    return row[index] !== undefined ? row[index] : "";
-  }
 
   const pending = useMemo(() => sheetRecords
     .filter((r) => r.status === "pending")
@@ -511,66 +471,18 @@ export default function Quotation() {
 
     setIsSubmitting(true);
     try {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-      if (!SHEET_API_URL) return;
+      const createPromises = currentRecords.flatMap((record) =>
+        mappedInputs.map((vendor) =>
+          submitQuotation(record.id, {
+            vendorName: vendor.name,
+            quotedRate: 0,
+            paymentTerms: "-",
+            deliveryTerms: "-",
+          })
+        )
+      );
 
-      const timestamp = getFmsTimestamp();
-
-      const updatePromises = currentRecords.map(async (record) => {
-        const rowArray = new Array(60).fill("");
-        rowArray[46] = timestamp; // AU: Actual completion of Stage 3 (Quotation)
-
-        // Save vendor names to columns so links fetch correctly
-        if (mappedInputs[0]) {
-          rowArray[21] = mappedInputs[0].name;
-          rowArray[22] = "-";
-          rowArray[23] = "-";
-          rowArray[24] = "-";
-          rowArray[25] = "No";
-        }
-
-        if (mappedInputs[1]) {
-          rowArray[29] = mappedInputs[1].name;
-          rowArray[30] = "-";
-          rowArray[31] = "-";
-          rowArray[32] = "-";
-          rowArray[33] = "No";
-        } else {
-          rowArray[29] = "-";
-          rowArray[30] = "-";
-          rowArray[31] = "-";
-          rowArray[32] = "-";
-          rowArray[33] = "-";
-        }
-
-        if (mappedInputs[2]) {
-          rowArray[37] = mappedInputs[2].name;
-          rowArray[38] = "-";
-          rowArray[39] = "-";
-          rowArray[40] = "-";
-          rowArray[41] = "No";
-        } else {
-          rowArray[37] = "-";
-          rowArray[38] = "-";
-          rowArray[39] = "-";
-          rowArray[40] = "-";
-          rowArray[41] = "-";
-        }
-
-        const params = new URLSearchParams();
-        params.append("action", "update");
-        params.append("sheetName", "INDENT-LIFT");
-        params.append("rowIndex", record.rowIndex.toString());
-        params.append("rowData", JSON.stringify(rowArray));
-
-        const res = await fetch(SHEET_API_URL, {
-          method: "POST",
-          body: params,
-        });
-        return res.json();
-      });
-
-      await Promise.all(updatePromises);
+      await Promise.all(createPromises);
       toast.success("Enquiry generated and sent! Selected indents moved to Approved Vendor stage.");
       await fetchData();
 
@@ -593,7 +505,6 @@ export default function Quotation() {
   const handleProceedToApproval = async () => {
     if (currentRecords.length === 0) return;
 
-    // Check if at least one quotation has been received
     for (const record of currentRecords) {
       const hasQuote1 = record.data.vendor1Rate && record.data.vendor1Rate !== "-";
       const hasQuote2 = record.data.vendor2Rate && record.data.vendor2Rate !== "-";
@@ -607,29 +518,8 @@ export default function Quotation() {
 
     setIsSubmitting(true);
     try {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-      if (!SHEET_API_URL) return;
-
-      const timestamp = getFmsTimestamp();
-      const updatePromises = currentRecords.map((record) => {
-        const rowArray = new Array(60).fill("");
-        rowArray[46] = timestamp; // AU: Actual completion of Stage 3 (Quotation)
-
-        const params = new URLSearchParams();
-        params.append("action", "update");
-        params.append("sheetName", "INDENT-LIFT");
-        params.append("rowIndex", record.rowIndex.toString());
-        params.append("rowData", JSON.stringify(rowArray));
-
-        return fetch(SHEET_API_URL, {
-          method: "POST",
-          body: params,
-        });
-      });
-
-      await Promise.all(updatePromises);
-      toast.success("Quotation stage completed! Selected indents moved to Approved Vendor stage.");
       await fetchData();
+      toast.success("Quotation stage completed! Selected indents moved to Approved Vendor stage.");
       resetForm();
     } catch (e: any) {
       console.error(e);
@@ -1042,13 +932,13 @@ export default function Quotation() {
                       <div className="space-y-2">
                         <Input
                           size={24}
-                          value={destCompany}
+                          value={destCompany || ""}
                           onChange={(e) => setDestCompany(e.target.value)}
                           className="h-8 text-xs border-slate-200"
                           placeholder="Company name"
                         />
                         <Textarea
-                          value={destAddress}
+                          value={destAddress || ""}
                           onChange={(e) => setDestAddress(e.target.value)}
                           className="text-xs min-h-[50px] border-slate-200"
                           placeholder="Destination Address details"
@@ -1070,7 +960,7 @@ export default function Quotation() {
                   </Label>
                   <Textarea
                     placeholder="Enter enquiry specific message details..."
-                    value={descriptionNote}
+                    value={descriptionNote || ""}
                     onChange={(e) => setDescriptionNote(e.target.value)}
                     className="min-h-[80px] border-slate-200 text-sm focus-visible:ring-slate-500"
                   />

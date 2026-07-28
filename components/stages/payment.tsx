@@ -46,15 +46,13 @@ import {
   Banknote,
   Trash2,
 } from "lucide-react";
-import { formatDate, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
-
-// ─── Module-level constants ──────────────────────────────────────────────────
-const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-const IMAGE_FOLDER_ID = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID;
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
 // Column definitions for Vendor Invoices
 const VENDOR_PENDING_COLUMNS = [
@@ -93,7 +91,6 @@ const FREIGHT_COLUMNS = [
   { key: "transporter", label: "Transporter" },
   { key: "vehicleNo", label: "Vehicle No." },
   { key: "contact", label: "Contact" },
-  { key: "advanceAmount", label: "Advance" },
   { key: "totalPaid", label: "Paid" },
   { key: "pendingAmount", label: "Pending" },
   { key: "plan1", label: "Planned" },
@@ -240,226 +237,372 @@ export default function UnifiedPaymentHub() {
     }
   }, [slug]);
 
-  // Fetch all payment datasets
   const fetchData = useCallback(async () => {
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      const [liftRes, payRes, histRes, frtRes] = await Promise.all([
-        fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=VENDOR-PAYMENTS&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=PAID-DATA&action=getAll`),
-        fetch(`${SHEET_API_URL}?sheet=FREIGHT-PAYMENTS&action=getAll`),
+      const [
+        indentRows,
+        { data: poData },
+        { data: billingData },
+        { data: tfData },
+        { data: receiptData },
+        { data: paymentData },
+        { data: liftingData },
+      ] = await Promise.all([
+        fetchIndentWorkflow(),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("tally_billing").select("*"),
+        supabase.from("transporter_followups").select("*"),
+        supabase.from("material_receipts").select("*"),
+        supabase.from("vendor_payments").select("*"),
+        supabase.from("vendor_liftings").select("*"),
       ]);
-      const [liftJson, payJson, histJson, frtJson] = await Promise.all([
-        liftRes.json(),
-        payRes.json(),
-        histRes.json(),
-        frtRes.json(),
-      ]);
 
-      // 1. PO Advance Payments mapping (INDENT-LIFT)
-      if (liftJson.success && Array.isArray(liftJson.data)) {
-        const rows = liftJson.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "")
-          .map(({ row, originalIndex }: any) => {
-            const hasPlanPayment = !!row[72] && String(row[72]).trim() !== "" && String(row[72]).trim() !== "-";
-            const hasActualPayment = !!row[73] && String(row[73]).trim() !== "" && String(row[73]).trim() !== "-";
+      const poById = new Map<string, any>();
+      (poData || []).forEach((po: any) => poById.set(po.id, po));
 
-            let status = "not_ready";
-            if (hasPlanPayment) {
-              status = hasActualPayment ? "completed" : "pending";
-            }
-
-            const selectedVendor = String(row[47] || "").trim();
-            let terms = "";
-            if (selectedVendor === "vendor1") terms = String(row[23] || "").trim();
-            else if (selectedVendor === "vendor2") terms = String(row[31] || "").trim();
-            else if (selectedVendor === "vendor3") terms = String(row[39] || "").trim();
-
-            return {
-              id: row[1] || `row-${originalIndex}`,
-              rowIndex: originalIndex,
-              status,
-              createdAt: parseSheetDate(row[0]),
-              data: {
-                timestamp: row[0],
-                indentNumber: row[1],
-                itemName: row[4],
-                quantity: row[14] || row[5] || "-",
-                selectedVendorName: row[48] || "-",
-                poNumber: row[54] || "-",
-                totalValue: row[56] || "-",
-                paymentTerms: terms || "Advance",
-                plannedPayment: row[72],
-                actualPayment: row[73],
-                paymentRef: row[74] || "-",
-              }
-            };
-          });
-        setAdvRecords(rows);
-      }
-
-      // 2. Vendor Invoice Payments mapping
-      if (payJson.success && Array.isArray(payJson.data)) {
-        const rows = payJson.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "")
-          .map(({ row, originalIndex }: any) => {
-            const totalVal = parseNum(row[11]);
-            const pendingRaw = row[17];
-            const currentPending = (pendingRaw !== undefined && pendingRaw !== "" && pendingRaw !== "-")
-              ? parseNum(pendingRaw)
-              : totalVal;
-            const storedPaid = parseNum(row[16]);
-            const plan1 = row[13];
-            const actual1 = row[14];
-            const status = (!!plan1 && String(plan1).trim() !== "" && String(plan1).trim() !== "-")
-              ? ((!actual1 || String(actual1).trim() === "" || String(actual1).trim() === "-" || currentPending > 1) ? "pending" : "history")
-              : "not_ready";
-
-            const invNo = String(row[1] || "").trim();
-            const dueDateVal = row[21] ? String(row[21]).trim() : "-";
-            const totalRcvd = String(row[10] || "").split(',')
-              .map(v => parseFloat(v.trim()) || 0)
-              .reduce((sum, val) => sum + val, 0);
-
-            return {
-              id: `${invNo}_${originalIndex}`,
-              rowIndex: originalIndex,
-              status,
-              data: {
-                id: invNo,
-                invoiceNo: invNo,
-                invoiceCopy: row[2] || "",
-                invoiceDate: toDate(row[3]),
-                dueDate: dueDateVal,
-                vendor: String(row[4] || "").trim(),
-                poNumber: row[5] || "",
-                totalRcvd,
-                poCopy: row[6] || "",
-                qty: row[10] || "",
-                receivedItems: row[12] || "",
-                totalVal,
-                plan1: toDate(plan1),
-                actual1: toDate(actual1),
-                totalPaid: storedPaid,
-                pendingAmount: currentPending,
-                paymentStatus: currentPending <= 1 ? "paid" : (storedPaid > 0 ? "partial" : "pending"),
-              }
-            };
-          });
-        setVendorRecords(rows.filter((r: any) => r.status === "pending"));
-      }
-
-      // 3. Paid history mapping (PAID-DATA)
-      if (histJson.success && Array.isArray(histJson.data)) {
-        const vLookup = new Map();
-        if (payJson.success && Array.isArray(payJson.data)) {
-          payJson.data.slice(6).forEach((row: any) => {
-            const invNo = String(row[1] || "").trim();
-            if (invNo) {
-              vLookup.set(invNo, { planned: toDate(row[13]), actual: toDate(row[14]) });
-            }
-          });
+      const poByIndent = new Map<string, any>();
+      (poData || []).forEach((po: any) => {
+        if (po.indent_id && !poByIndent.has(po.indent_id)) {
+          poByIndent.set(po.indent_id, po);
         }
+      });
 
-        const fLookup = new Map();
-        if (frtJson.success && Array.isArray(frtJson.data)) {
-          frtJson.data.slice(6).forEach((row: any) => {
-            const lrNo = String(row[1] || "").trim();
-            if (lrNo) {
-              fLookup.set(lrNo, { planned: toDate(row[9]), actual: toDate(row[10]) });
-            }
-          });
+      const liftingByPo = new Map<string, any>();
+      (liftingData || []).forEach((l: any) => {
+        if (l.po_id && !liftingByPo.has(l.po_id)) {
+          liftingByPo.set(l.po_id, l);
         }
+      });
 
-        const vHist: any[] = [];
-        const fHist: any[] = [];
+      const paymentsByPo = new Map<string, any[]>();
+      (paymentData || []).forEach((p: any) => {
+        if (p.po_id) {
+          const list = paymentsByPo.get(p.po_id) || [];
+          list.push(p);
+          paymentsByPo.set(p.po_id, list);
+        }
+      });
 
-        histJson.data.slice(1).forEach((row: any, i: number) => {
-          const type = row[1];
-          const refNo = String(row[2] || "").trim();
-          if (type === "Vendor Payment") {
-            const extra = vLookup.get(refNo) || { planned: "-", actual: "-" };
-            vHist.push({
-              id: `VHIST_${i}`,
-              invoiceNo: row[2],
-              vendor: row[3],
-              amountPaid: row[4],
-              status: row[5],
-              date: toDate(row[6]),
-              planned: extra.planned,
-              actual: extra.actual,
-              mode: row[7],
-              proof: row[8],
-            });
-          } else if (type === "Freight Payment") {
-            const extra = fLookup.get(refNo) || { planned: "-", actual: "-" };
-            fHist.push({
-              id: `FHIST_${i}`,
-              lrNo: row[2],
-              transporter: row[3],
-              amountPaid: row[4],
-              status: row[5],
-              date: toDate(row[6]),
-              planned: extra.planned,
-              actual: extra.actual,
-              mode: row[7],
-              proof: row[8],
-            });
+      const receiptsByPo = new Map<string, any[]>();
+      (receiptData || []).forEach((r: any) => {
+        if (r.po_id) {
+          const list = receiptsByPo.get(r.po_id) || [];
+          list.push(r);
+          receiptsByPo.set(r.po_id, list);
+        }
+      });
+
+      const advRows = indentRows
+        .filter((row: any) => poByIndent.has(row.id))
+        .map((row: any) => {
+          const po = poByIndent.get(row.id);
+          const payments = (paymentsByPo.get(po.id) || []).filter((p: any) => p.payment_type === "Advance");
+          const advPay = payments[0];
+
+          const selectedVendor = row.data.selectedVendor;
+          let terms = "";
+          if (selectedVendor === "vendor1") terms = row.data.vendor1Terms;
+          else if (selectedVendor === "vendor2") terms = row.data.vendor2Terms;
+          else if (selectedVendor === "vendor3") terms = row.data.vendor3Terms;
+
+          const poPayType = po?.payment_type?.toLowerCase() || "";
+          const isNoAdvance = poPayType.includes("no advance");
+          const isAdvance = !isNoAdvance && (poPayType.includes("advance") || terms?.toLowerCase().includes("advance") || terms?.toLowerCase().includes("pi"));
+          const hasPlanPayment = isAdvance || !!advPay;
+          const hasActualPayment = !!advPay && advPay.status === "Paid";
+
+          let status = "not_ready";
+          if (hasPlanPayment) {
+            status = hasActualPayment ? "completed" : "pending";
           }
+
+          let advanceAmount = parseFloat(po?.advance_amount || po?.advance_amt || advPay?.amount || "0") || 0;
+          if (!advanceAmount && po?.payment_type) {
+            const match = String(po.payment_type).match(/₹?\s*([\d,]+(?:\.\d+)?)/);
+            if (match && match[1]) {
+              advanceAmount = parseFloat(match[1].replace(/,/g, "")) || 0;
+            }
+          }
+
+          return {
+            id: row.id,
+            rowIndex: row.originalIndex,
+            poId: po.id,
+            status,
+            createdAt: row.data.createdAt,
+            data: {
+              timestamp: row.data.createdAt,
+              indentNumber: row.data.indentNumber,
+              itemName: row.data.itemName,
+              quantity: row.data.quantity,
+              selectedVendorName: po.vendor_name || row.data.selectedVendorName || "Regular Vendor",
+              poNumber: po.po_number || "-",
+              totalValue: po.total_amount || "-",
+              advanceAmount: advanceAmount,
+              paymentTerms: terms || po.payment_type || "Advance",
+              plannedPayment: advPay?.payment_date || null,
+              actualPayment: advPay?.status === "Paid" ? advPay.payment_date : null,
+              paymentMode: advPay?.payment_mode || "-",
+              transactionRef: advPay?.reference_number || "-",
+              paymentProof: advPay?.proof_url || null,
+            }
+          };
         });
 
-        setVendorHistory(vHist.reverse());
-        setFreightHistory(fHist.reverse());
-      }
+      setAdvRecords(advRows);
 
-      // 4. Freight Payments mapping (FREIGHT-PAYMENTS)
-      if (frtJson.success && Array.isArray(frtJson.data)) {
-        const rows = frtJson.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "")
-          .map(({ row, originalIndex }: any) => {
-            const plan1 = row[9];
-            const actual1 = row[10];
-            const freightAmt = parseNum(row[3]);
-            const pendingRaw = row[13];
-            const currentPending = (pendingRaw !== undefined && pendingRaw !== "" && pendingRaw !== "-")
-              ? parseNum(pendingRaw)
-              : freightAmt;
-            const totalPaid = parseNum(row[12]);
+      const indentMapById = new Map<string, any>(indentRows.map((r: any) => [r.id, r]));
 
-            return {
-              id: `${String(row[1]).trim()}_${originalIndex}`,
-              rowIndex: originalIndex,
-              status: "pending",
-              data: {
-                lrNo: row[1] || "",
-                biltyImage: row[2] || "",
-                freightAmount: row[3] || "",
-                transporter: row[4] || "",
-                vehicleNo: row[5] || "",
-                contact: row[6] || "",
-                advanceAmount: row[7] || "",
-                paymentDate: formatDate(row[8]),
-                plan1: formatDate(plan1),
-                actual1: formatDate(actual1),
-                totalPaid,
-                pendingAmount: currentPending,
-                invoiceNo: row[14] || "",
-                invoiceCopy: row[15] || "",
-                freightVal: freightAmt,
-                advanceVal: parseNum(row[7]),
-              }
-            };
+      const vendorRows = (billingData || [])
+        .map((bill: any) => {
+          const po = bill.po_id ? poById.get(bill.po_id) : null;
+          const allPayments = bill.po_id ? (paymentsByPo.get(bill.po_id) || []) : [];
+          const advPayments = allPayments.filter((p: any) =>
+            p.payment_type === "Advance" || String(p.payment_type || "").toLowerCase().includes("advance")
+          );
+
+          let advancePaid = advPayments.reduce((sum: number, p: any) => sum + (parseFloat(p.amount) || 0), 0);
+          if (advancePaid === 0) {
+            advancePaid = parseFloat(po?.advance_amount || po?.advance_amt || "0") || 0;
+          }
+          if (advancePaid === 0 && po?.payment_type) {
+            const match = String(po.payment_type).match(/₹?\s*([\d,]+(?:\.\d+)?)/);
+            if (match && match[1]) {
+              advancePaid = parseFloat(match[1].replace(/,/g, "")) || 0;
+            }
+          }
+          if (advancePaid === 0 && po?.indent_id) {
+            const indent = indentMapById.get(po.indent_id);
+            const indAdv = parseFloat(indent?.data?.advanceAmount || "0") || 0;
+            if (indAdv > 0) advancePaid = indAdv;
+          }
+
+          const vpPayments = allPayments.filter((p: any) => {
+            const isPaid = p.status === "Paid" || !!p.transaction_utr || !!p.payment_mode || (parseFloat(p.amount) > 0);
+            const isFreight = p.payment_type === "Freight Payment" || p.paid_by === "Freight";
+            const isAdv = p.payment_type === "Advance" || String(p.payment_type || "").toLowerCase().includes("advance");
+            return isPaid && !isFreight && !isAdv;
           });
-        setFreightRecords(rows.filter((r: any) => r.data.pendingAmount > 1));
+          const receipts = bill.po_id ? (receiptsByPo.get(bill.po_id) || []) : [];
+
+          const invNo = bill.vendor_invoice_number || "";
+          const totalVal = (bill.invoice_amount && bill.invoice_amount > 0) ? bill.invoice_amount : (po?.total_amount || 0);
+          const totalPaid = vpPayments.reduce((sum: number, p: any) => sum + (parseFloat(p.amount) || 0), 0);
+          const currentPending = Math.max(0, totalVal - advancePaid - totalPaid);
+          const totalRcvd = receipts.reduce((sum: number, r: any) => sum + (r.received_quantity || 0), 0);
+          const receivedItems = receipts.map((r: any) => r.grn_number).filter(Boolean).join(", ");
+          const isVerified = bill.verification_status === "Verified" || !!bill.accountant_name;
+          const plan1 = vpPayments.length > 0 ? vpPayments[0].created_at : bill.created_at || null;
+          const actual1 = currentPending <= 1 && vpPayments.length > 0 ? vpPayments[vpPayments.length - 1].payment_date : null;
+          const status = isVerified
+            ? (currentPending > 0.01 ? "pending" : "history")
+            : "not_ready";
+
+          const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
+          const selVendor = indent?.data?.selectedVendor;
+          let indentVendor = indent?.data?.selectedVendorName || indent?.data?.finalVendorName || "";
+          if (!indentVendor && selVendor) {
+            if (selVendor === "vendor1") indentVendor = indent?.data?.vendor1Name;
+            else if (selVendor === "vendor2") indentVendor = indent?.data?.vendor2Name;
+            else if (selVendor === "vendor3") indentVendor = indent?.data?.vendor3Name;
+          }
+          const vendorName = po?.vendor_name || bill?.vendor_name || indentVendor || "-";
+
+          return {
+            id: `${invNo}_${bill.id}`,
+            rowIndex: bill.id,
+            poId: bill.po_id,
+            status,
+            data: {
+              id: invNo,
+              invoiceNo: invNo,
+              invoiceCopy: bill.tally_bill_copy_url || "",
+              invoiceDate: toDate(bill.invoice_date),
+              dueDate: po?.delivery_date || "-",
+              vendor: vendorName,
+              poNumber: po?.po_number || "",
+              totalRcvd,
+              poCopy: po?.po_copy_url || "",
+              qty: receipts.map((r: any) => r.received_quantity).join(", "),
+              receivedItems,
+              totalVal,
+              advanceAmount: advancePaid,
+              plan1: toDate(plan1),
+              actual1: toDate(actual1),
+              totalPaid,
+              pendingAmount: currentPending,
+              paymentStatus: currentPending <= 1 ? "paid" : (totalPaid > 0 ? "partial" : "pending"),
+            }
+          };
+        });
+      const pendingAdv = advRows.filter((r: any) => r.status === "pending");
+      const pendingVen = vendorRows.filter((r: any) => r.status === "pending");
+      setVendorRecords(pendingVen);
+
+      if (pendingAdv.length === 0 && pendingVen.length > 0) {
+        setWorkflow("vendor");
       }
+
+      const allPayments = paymentData || [];
+      const vHist = allPayments
+        .filter((p: any) => 
+          p.payment_type === "Vendor Payment" && 
+          (!!p.transaction_utr || !!p.payment_mode || (p.status === "Paid" && !p.paid_by))
+        )
+        .map((p: any) => {
+          const po = p.po_id ? poById.get(p.po_id) : null;
+          const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Vendor Payment") : [];
+          const plan1 = payments.length > 0 ? payments[0].created_at : null;
+          const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
+
+          return {
+            id: `VHIST_${p.id}`,
+            invoiceNo: po?.po_number || "",
+            vendor: po?.vendor_name || "",
+            amountPaid: p.amount,
+            status: p.status,
+            date: toDate(p.payment_date),
+            planned: toDate(plan1),
+            actual: toDate(actual1),
+            mode: p.payment_mode,
+            proof: p.proof_url,
+          };
+        });
+
+      const fHist = allPayments
+        .filter((p: any) => p.payment_type === "Freight Payment")
+        .map((p: any) => {
+          const tf = tfData?.find((t: any) => t.po_id === p.po_id);
+          const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Freight Payment") : [];
+          const plan1 = payments.length > 0 ? payments[0].created_at : null;
+          const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
+
+          return {
+            id: `FHIST_${p.id}`,
+            lrNo: tf?.bilty_number || "",
+            transporter: tf?.transporter_name || "",
+            amountPaid: p.amount,
+            status: p.status,
+            date: toDate(p.payment_date),
+            planned: toDate(plan1),
+            actual: toDate(actual1),
+            mode: p.payment_mode,
+            proof: p.proof_url,
+          };
+        });
+
+      setVendorHistory(vHist.reverse());
+      setFreightHistory(fHist.reverse());      const freightRows: any[] = (tfData || [])
+        .map((tf: any) => {
+          const po = tf.po_id ? poById.get(tf.po_id) : null;
+          const lifting = tf.po_id ? liftingByPo.get(tf.po_id) : null;
+          const payments = tf.po_id ? (paymentsByPo.get(tf.po_id) || []).filter((p: any) => p.payment_type === "Freight Payment") : [];
+          const receipts = tf.po_id ? (receiptsByPo.get(tf.po_id) || []) : [];
+          const receipt = receipts.length > 0 ? receipts[0] : null;
+
+          let freightAmt = parseFloat(tf.freight_amount || tf.freight_amt || tf.transporting_amount || lifting?.freight_amount || "0") || 0;
+          if (!freightAmt && (tf.transport_rate || tf.transporting_rate || lifting?.transport_rate)) {
+            const rate = parseFloat(tf.transport_rate || tf.transporting_rate || lifting?.transport_rate || "0") || 0;
+            const rcvdQty = receipt ? (parseFloat(receipt.received_quantity) || 0) : (po ? parseFloat(po.quantity) || 0 : 0);
+            freightAmt = rate * rcvdQty;
+          }
+
+          const totalPaid = payments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+          const currentPending = freightAmt - totalPaid;
+          const advancePayments = payments.filter((p: any) => p.paid_by === "Advance");
+          const advanceAmount = advancePayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+
+          const isMaterialApproved = receipts.length > 0 || tf.status === "Received" || tf.status === "Approved" || tf.status === "Completed";
+          const isEligibleFreight = freightAmt > 0 || isMaterialApproved || !!tf.transporter_name || !!tf.bilty_number;
+          const isPendingPayment = isMaterialApproved && (totalPaid <= 0 || currentPending > 0.01);
+
+          return {
+            id: `${tf.bilty_number || ""}_${tf.id}`,
+            rowIndex: tf.id,
+            poId: tf.po_id,
+            status: (isEligibleFreight || isMaterialApproved) && isPendingPayment ? "pending" : "not_ready",
+            data: {
+              lrNo: tf.bilty_number || "",
+              biltyImage: tf.bilty_copy_url || "",
+              freightAmount: freightAmt,
+              transporter: tf.transporter_name || "",
+              vehicleNo: tf.vehicle_number || lifting?.vehicle_number || "",
+              contact: tf.driver_contact || lifting?.driver_contact || "",
+              advanceAmount,
+              paymentDate: formatDate(tf.dispatch_date),
+              plan1: formatDate(tf.dispatch_date),
+              actual1: formatDate(tf.expected_arrival_date),
+              totalPaid,
+              pendingAmount: currentPending,
+              invoiceNo: po?.po_number || "",
+              invoiceCopy: po?.po_copy_url || "",
+              freightVal: freightAmt,
+              advanceVal: advanceAmount,
+            }
+          };
+        });
+
+      const processedPoIds = new Set((tfData || []).map((tf: any) => tf.po_id));
+      (receiptData || []).forEach((rcpt: any) => {
+        if (rcpt.po_id && !processedPoIds.has(rcpt.po_id)) {
+          processedPoIds.add(rcpt.po_id);
+          const po = poById.get(rcpt.po_id);
+          const lifting = liftingByPo.get(rcpt.po_id);
+          const tf = (tfData || []).find((t: any) => t.po_id === rcpt.po_id);
+          const payments = (paymentsByPo.get(rcpt.po_id) || []).filter((p: any) => p.payment_type === "Freight Payment");
+          const totalPaid = payments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+          
+          let freightAmt = parseFloat(rcpt.extra_freight || tf?.freight_amount || lifting?.freight_amount || po?.freight_amount || "0") || 0;
+          if (!freightAmt && (tf?.transport_rate || lifting?.transport_rate)) {
+            const rate = parseFloat(tf?.transport_rate || lifting?.transport_rate || "0") || 0;
+            const rcvdQty = parseFloat(rcpt.received_quantity) || (po ? parseFloat(po.quantity) || 0 : 0);
+            freightAmt = rate * rcvdQty;
+          }
+
+          const currentPending = freightAmt - totalPaid;
+          const advancePayments = payments.filter((p: any) => p.paid_by === "Advance");
+          const advanceAmount = advancePayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+
+          freightRows.push({
+            id: `RCPT_${rcpt.grn_number || rcpt.id}`,
+            rowIndex: rcpt.id,
+            poId: rcpt.po_id,
+            status: totalPaid <= 0 || currentPending > 0.01 ? "pending" : "completed",
+            data: {
+              lrNo: rcpt.grn_number || "",
+              biltyImage: rcpt.bilty_invoice_image_url || "",
+              freightAmount: freightAmt,
+              transporter: tf?.transporter_name || po?.vendor_name || "-",
+              vehicleNo: tf?.vehicle_number || lifting?.vehicle_number || "-",
+              contact: tf?.driver_contact || lifting?.driver_contact || "-",
+              advanceAmount,
+              paymentDate: formatDate(rcpt.received_date),
+              plan1: formatDate(rcpt.received_date),
+              actual1: formatDate(rcpt.received_date),
+              totalPaid,
+              pendingAmount: currentPending,
+              invoiceNo: po?.po_number || "",
+              invoiceCopy: po?.po_copy_url || "",
+              freightVal: freightAmt,
+              advanceVal: advanceAmount,
+            }
+          });
+        }
+      });
+
+      const pendingFreightList = freightRows.filter((r: any) => r.status === "pending" && (r.data.totalPaid <= 0 || r.data.pendingAmount > 0.01));
+      const uniqueFreightMap = new Map<string, any>();
+      pendingFreightList.forEach((r: any) => {
+        const key = `${r.poId || ""}_${r.data.lrNo || r.id}`;
+        if (!uniqueFreightMap.has(key)) {
+          uniqueFreightMap.set(key, r);
+        }
+      });
+      setFreightRecords(Array.from(uniqueFreightMap.values()));
     } catch (e) {
       console.error(e);
-      toast.error("Failed to load spreadsheet details");
+      toast.error("Failed to load payment data");
     }
     setIsLoading(false);
   }, []);
@@ -545,30 +688,23 @@ export default function UnifiedPaymentHub() {
       toast.error("Please enter the Payment Reference Number.");
       return;
     }
-    if (!SHEET_API_URL) return;
 
     setIsSubmitting(true);
     try {
-      const rowArray = new Array(75).fill("");
-      rowArray[73] = advForm.paymentDate || getFmsTimestamp();
-      rowArray[74] = advForm.paymentRef;
-
-      const params = new URLSearchParams({
-        action: "update",
-        sheetName: "INDENT-LIFT",
-        rowIndex: currentAdvRecord.rowIndex.toString(),
-        rowData: JSON.stringify(rowArray),
+      const advAmt = parseFloat(String(currentAdvRecord.data.advanceAmount || currentAdvRecord.data.totalValue || "0").replace(/[^0-9.]/g, "")) || 0;
+      const { error } = await supabase.from("vendor_payments").insert({
+        po_id: currentAdvRecord.poId,
+        payment_type: "Advance",
+        amount: advAmt,
+        payment_date: advForm.paymentDate || new Date().toISOString().split("T")[0],
+        transaction_utr: advForm.paymentRef,
+        status: "Paid",
       });
 
-      const response = await fetch(SHEET_API_URL, { method: "POST", body: params });
-      const result = await response.json();
-      if (result.success) {
-        toast.success("Advance Payment recorded and transitioned successfully!");
-        setAdvOpen(false);
-        await fetchData();
-      } else {
-        throw new Error(result.error || "Transition failed");
-      }
+      if (error) throw error;
+      toast.success("Advance Payment recorded and transitioned successfully!");
+      setAdvOpen(false);
+      await fetchData();
     } catch (err: any) {
       toast.error(err.message || "Failed to submit payment");
     } finally {
@@ -633,33 +769,40 @@ export default function UnifiedPaymentHub() {
       toast.error("Please select payment mode.");
       return;
     }
-    if (!SHEET_API_URL) return;
 
     setIsSubmitting(true);
     const toastId = toast.loading("Processing Vendor payments...");
     try {
       const dateStr = bulkFormData.paymentDate ? format(bulkFormData.paymentDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
-      // Upload payment proof if present
       let proofUrl = "";
       if (bulkFormData.proof) {
-        const base64Data = await new Promise<string>(resolve => {
-          const reader = new FileReader();
-          reader.onload = ev => resolve(ev.target?.result as string);
-          reader.readAsDataURL(bulkFormData.proof!);
-        });
-        const upParams = new URLSearchParams({
-          action: "uploadFile",
-          fileName: `BULKPAY_${selectedBulkVendor}_${Date.now()}`,
-          mimeType: bulkFormData.proof.type,
-          base64Data,
-          ...(IMAGE_FOLDER_ID ? { folderId: IMAGE_FOLDER_ID } : {}),
-        });
-        const upJson = await fetch(SHEET_API_URL, { method: "POST", body: upParams }).then(r => r.json());
-        if (upJson.success) proofUrl = upJson.fileUrl;
+        const ext = bulkFormData.proof.name.split('.').pop() || 'bin';
+        const path = `bulk-pay_${selectedBulkVendor}_${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('payment-proofs').upload(path, bulkFormData.proof);
+        if (!upErr) {
+          const { data } = supabase.storage.from('payment-proofs').getPublicUrl(path);
+          proofUrl = data?.publicUrl || "";
+        } else {
+          console.warn("Payment proof storage upload error (bucket missing):", upErr.message);
+          proofUrl = typeof window !== "undefined" ? URL.createObjectURL(bulkFormData.proof) : "";
+        }
       }
 
-      // Record payments in PAID-DATA sequentially
+      for (const id of selectedIds) {
+        const rec = vendorRecords.find(r => r.id === id);
+        if (!rec) continue;
+        const payInfo = bulkInvoices[id];
+        const payAmount = parseFloat(payInfo.payAmount) || 0;
+        const pending = rec.data.pendingAmount || 0;
+
+        if (payAmount > pending + 0.01) {
+          toast.error(`Payment amount (₹${payAmount}) for Invoice ${rec.data.invoiceNo} cannot exceed remaining pending amount (₹${pending.toFixed(2)}).`, { id: toastId });
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       let successCount = 0;
       for (const id of selectedIds) {
         const rec = vendorRecords.find(r => r.id === id);
@@ -670,52 +813,30 @@ export default function UnifiedPaymentHub() {
 
         const paymentStatus = (rec.data.totalVal - (rec.data.totalPaid + payAmount)) <= 1 ? "Paid" : "Partial";
 
-        const paidRow = [
-          getFmsTimestamp(),
-          "Vendor Payment",
-          rec.data.invoiceNo || "",
-          rec.data.vendor || "",
-          payAmount.toString(),
-          paymentStatus,
-          dateStr,
-          bulkFormData.paymentMode,
-          proofUrl,
-        ];
-
-        const paidParams = new URLSearchParams({
-          action: "insert",
-          sheetName: "PAID-DATA",
-          rowData: JSON.stringify(paidRow),
+        const { error } = await supabase.from("vendor_payments").insert({
+          po_id: rec.poId,
+          payment_type: "Vendor Payment",
+          amount: payAmount,
+          payment_mode: bulkFormData.paymentMode,
+          payment_date: dateStr,
+          proof_url: proofUrl,
+          status: paymentStatus,
         });
-        await fetch(SHEET_API_URL, { method: "POST", body: paidParams });
 
-        // Update VENDOR-PAYMENTS sheet row to reflect new paid, pending, and actual completion date
-        const updatedPaid = rec.data.totalPaid + payAmount;
-        const remainingPending = Math.max(0, rec.data.totalVal - updatedPaid);
-
-        const vpRowArray = new Array(22).fill("");
-        vpRowArray[16] = updatedPaid.toString(); // Column Q (totalPaid)
-        vpRowArray[17] = remainingPending.toString(); // Column R (pendingAmount)
-        if (remainingPending <= 1) {
-          vpRowArray[14] = dateStr; // Column O (actual1 / completion date)
-        }
-
-        const updateParams = new URLSearchParams({
-          action: "update",
-          sheetName: "VENDOR-PAYMENTS",
-          rowIndex: rec.rowIndex.toString(),
-          rowData: JSON.stringify(vpRowArray),
-        });
-        await fetch(SHEET_API_URL, { method: "POST", body: updateParams });
-
-        successCount++;
+        if (!error) successCount++;
       }
 
-      toast.success(`Processed ${successCount} payments!`, { id: toastId });
-      setBulkOpen(false);
-      await fetchData();
+      if (successCount > 0) {
+        toast.success(`Successfully processed ${successCount} invoice payment(s)!`, { id: toastId });
+        setBulkOpen(false);
+        setBulkInvoices({});
+        setBulkStep("vendor");
+        await fetchData();
+      } else {
+        toast.error("No invoice payments were processed.", { id: toastId });
+      }
     } catch (err: any) {
-      toast.error(err.message || "Bulk Payment failed", { id: toastId });
+      toast.error(err.message || "Failed to process bulk payment", { id: toastId });
     } finally {
       setIsSubmitting(false);
     }
@@ -750,7 +871,14 @@ export default function UnifiedPaymentHub() {
 
     const rec = freightRecords.find(r => r.id === selectedFreightId);
     if (!rec) return;
-    if (!SHEET_API_URL) return;
+
+    const payAmount = parseNum(freightForm.amount);
+    const currentPending = rec.data.pendingAmount || 0;
+
+    if (payAmount > currentPending + 0.01) {
+      toast.error(`Freight payment amount (₹${payAmount}) cannot exceed remaining pending balance (₹${currentPending.toFixed(2)}).`);
+      return;
+    }
 
     setIsSubmitting(true);
     const toastId = toast.loading("Processing Freight Payment...");
@@ -758,60 +886,39 @@ export default function UnifiedPaymentHub() {
     try {
       const dateStr = format(freightForm.paymentDate, "yyyy-MM-dd");
 
-      // Upload proof if present
       let proofUrl = "";
       if (freightForm.paymentProof) {
-        const base64Data = await new Promise<string>(resolve => {
-          const reader = new FileReader();
-          reader.onload = ev => resolve(ev.target?.result as string);
-          reader.readAsDataURL(freightForm.paymentProof!);
-        });
-
-        const upParams = new URLSearchParams({
-          action: "uploadFile",
-          fileName: `FRT_${rec.data.lrNo}_${Date.now()}`,
-          mimeType: freightForm.paymentProof.type,
-          base64Data,
-          ...(IMAGE_FOLDER_ID ? { folderId: IMAGE_FOLDER_ID } : {}),
-        });
-        const upRes = await fetch(SHEET_API_URL, { method: "POST", body: upParams });
-        const upJson = await upRes.json();
-        if (upJson.success) proofUrl = upJson.fileUrl;
+        const ext = freightForm.paymentProof.name.split('.').pop() || 'bin';
+        const path = `frt_${rec.data.lrNo}_${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('payment-proofs').upload(path, freightForm.paymentProof);
+        if (!upErr) {
+          const { data } = supabase.storage.from('payment-proofs').getPublicUrl(path);
+          proofUrl = data?.publicUrl || "";
+        } else {
+          console.warn("Freight proof storage upload error (bucket missing):", upErr.message);
+          proofUrl = typeof window !== "undefined" ? URL.createObjectURL(freightForm.paymentProof) : "";
+        }
       }
 
-      // Write payment details to PAID-DATA
       const payAmount = parseNum(freightForm.amount);
       const newTotalPaid = (rec.data.totalPaid || 0) + payAmount;
       const newPending = rec.data.freightVal - newTotalPaid;
       const paymentStatus = newPending <= 1 ? "Paid" : "Partial";
 
-      const paidRow = [
-        getFmsTimestamp(),
-        "Freight Payment",
-        rec.data.lrNo || "",
-        rec.data.transporter || "",
-        payAmount.toString(),
-        paymentStatus,
-        dateStr,
-        freightForm.paymentDetails || "",
-        proofUrl,
-      ];
-
-      const paidParams = new URLSearchParams({
-        action: "insert",
-        sheetName: "PAID-DATA",
-        rowData: JSON.stringify(paidRow),
+      const { error } = await supabase.from("vendor_payments").insert({
+        po_id: rec.poId,
+        payment_type: "Freight Payment",
+        amount: payAmount,
+        payment_mode: freightForm.paymentDetails || "",
+        payment_date: dateStr,
+        proof_url: proofUrl,
+        status: paymentStatus,
       });
-      const paidRes = await fetch(SHEET_API_URL, { method: "POST", body: paidParams });
-      const paidJson = await paidRes.json();
 
-      if (paidJson.success) {
-        toast.success("Freight Payment Recorded!", { id: toastId });
-        setFreightOpen(false);
-        await fetchData();
-      } else {
-        throw new Error(paidJson.error || "Update failed");
-      }
+      if (error) throw error;
+      toast.success("Freight Payment Recorded!", { id: toastId });
+      setFreightOpen(false);
+      await fetchData();
     } catch (err: any) {
       toast.error(err.message || "Freight payment failed", { id: toastId });
     } finally {
@@ -905,23 +1012,38 @@ export default function UnifiedPaymentHub() {
             <Button
               variant={workflow === "advance" ? "secondary" : "ghost"}
               onClick={() => { setWorkflow("advance"); setActiveTab("pending"); }}
-              className={cn("px-4 py-2 text-xs font-semibold rounded-md h-8 shadow-none", workflow === "advance" && "bg-white text-slate-900 hover:bg-white")}
+              className={cn("px-4 py-2 text-xs font-semibold rounded-md h-8 shadow-none flex items-center gap-2", workflow === "advance" && "bg-white text-slate-900 hover:bg-white")}
             >
-              Advance Payment
+              <span>Advance Payment</span>
+              {filteredAdvPending.length > 0 && (
+                <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] bg-blue-600 text-white font-bold rounded-full">
+                  {filteredAdvPending.length}
+                </Badge>
+              )}
             </Button>
             <Button
               variant={workflow === "vendor" ? "secondary" : "ghost"}
               onClick={() => { setWorkflow("vendor"); setActiveTab("pending"); }}
-              className={cn("px-4 py-2 text-xs font-semibold rounded-md h-8 shadow-none", workflow === "vendor" && "bg-white text-slate-900 hover:bg-white")}
+              className={cn("px-4 py-2 text-xs font-semibold rounded-md h-8 shadow-none flex items-center gap-2", workflow === "vendor" && "bg-white text-slate-900 hover:bg-white")}
             >
-              Vendor payment
+              <span>Vendor payment</span>
+              {filteredVendorPending.length > 0 && (
+                <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] bg-blue-600 text-white font-bold rounded-full">
+                  {filteredVendorPending.length}
+                </Badge>
+              )}
             </Button>
             <Button
               variant={workflow === "freight" ? "secondary" : "ghost"}
               onClick={() => { setWorkflow("freight"); setActiveTab("pending"); }}
-              className={cn("px-4 py-2 text-xs font-semibold rounded-md h-8 shadow-none", workflow === "freight" && "bg-white text-slate-900 hover:bg-white")}
+              className={cn("px-4 py-2 text-xs font-semibold rounded-md h-8 shadow-none flex items-center gap-2", workflow === "freight" && "bg-white text-slate-900 hover:bg-white")}
             >
-              Freight Payments
+              <span>Freight Payments</span>
+              {filteredFreightPending.length > 0 && (
+                <Badge variant="secondary" className="px-1.5 py-0.5 text-[10px] bg-blue-600 text-white font-bold rounded-full">
+                  {filteredFreightPending.length}
+                </Badge>
+              )}
             </Button>
           </div>
 
@@ -992,6 +1114,7 @@ export default function UnifiedPaymentHub() {
                       <TableHead className="font-bold p-3">Vendor</TableHead>
                       <TableHead className="font-bold p-3">PO Number</TableHead>
                       <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
+                      <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
                       <TableHead className="font-bold p-3">Payment Terms</TableHead>
                       <TableHead className="font-bold p-3">Planned Date</TableHead>
                     </TableRow>
@@ -1014,6 +1137,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-slate-600">{r.data.selectedVendorName}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
+                        <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-slate-500">{r.data.paymentTerms}</TableCell>
                         <TableCell className="p-3 text-slate-600 font-medium">{formatDate(r.data.plannedPayment)}</TableCell>
                       </TableRow>
@@ -1038,6 +1162,7 @@ export default function UnifiedPaymentHub() {
                       <TableHead className="font-bold p-3">Vendor</TableHead>
                       <TableHead className="font-bold p-3">PO Number</TableHead>
                       <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
+                      <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
                       <TableHead className="font-bold p-3">Actual Payment Date</TableHead>
                       <TableHead className="font-bold p-3">Payment Reference</TableHead>
                     </TableRow>
@@ -1050,6 +1175,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-slate-600">{r.data.selectedVendorName}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
+                        <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-slate-600 font-medium">{formatDate(r.data.actualPayment)}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.data.paymentRef}</TableCell>
                       </TableRow>
@@ -1071,9 +1197,9 @@ export default function UnifiedPaymentHub() {
                     <TableRow>
                       <TableHead className="font-bold p-3">Invoice No</TableHead>
                       <TableHead className="font-bold p-3">Vendor</TableHead>
+                      <TableHead className="font-bold p-3 text-right">Total Bill Value</TableHead>
+                      <TableHead className="font-bold p-3 text-right text-indigo-700">Advance Paid</TableHead>
                       <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Total Value</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Paid Amount</TableHead>
                       <TableHead className="font-bold p-3">Due Date</TableHead>
                       <TableHead className="font-bold p-3">Planned Date</TableHead>
                       <TableHead className="font-bold p-3">PO Number</TableHead>
@@ -1089,9 +1215,9 @@ export default function UnifiedPaymentHub() {
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
                           <TableCell className="p-3 font-semibold text-slate-800">{r.data.invoiceNo}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-900">{r.data.vendor}</TableCell>
-                          <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
                           <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
-                          <TableCell className="p-3 text-right text-emerald-600 font-semibold">{formatAmount(r.data.totalPaid)}</TableCell>
+                          <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
+                          <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
                           <TableCell className="p-3 font-semibold">
                             <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold", overdue ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-600")}>
                               {r.data.dueDate}
@@ -1165,7 +1291,6 @@ export default function UnifiedPaymentHub() {
                       <TableHead className="font-bold p-3">Transporter</TableHead>
                       <TableHead className="font-bold p-3 text-right">Freight Amt</TableHead>
                       <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Advance Paid</TableHead>
                       <TableHead className="font-bold p-3">Vehicle No.</TableHead>
                       <TableHead className="font-bold p-3">Contact</TableHead>
                       <TableHead className="font-bold p-3">Planned Date</TableHead>
@@ -1189,7 +1314,6 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.transporter}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.freightAmount)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
-                        <TableCell className="p-3 text-right text-emerald-600 font-semibold">{formatAmount(r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.vehicleNo}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.data.contact}</TableCell>
                         <TableCell className="p-3 text-slate-500">{r.data.plan1}</TableCell>

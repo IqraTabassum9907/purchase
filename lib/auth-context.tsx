@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase/client";
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -25,7 +26,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  // Check for existing session on mount and refresh data
   useEffect(() => {
     const initializeAuth = async () => {
       try {
@@ -36,7 +36,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const storedAccess = localStorage.getItem("pageAccess");
 
         if (storedAuth === "true" && storedUser) {
-          // 1. Instant Restore from LocalStorage
           setIsAuthenticated(true);
           setUser(storedUser);
           setFullName(storedFullName);
@@ -45,41 +44,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setPageAccess(JSON.parse(storedAccess));
           }
 
-          // 2. Background Refresh from API (skip for hardcoded credentials)
-          const apiUri = process.env.NEXT_PUBLIC_API_URI;
           const isHardcoded = storedUser === "user" || storedUser === "admin";
-          if (apiUri && !isHardcoded) {
+          if (!isHardcoded) {
             try {
-              const response = await fetch(`${apiUri}?sheet=Master`);
-              if (response.ok) {
-                const responseData = await response.json();
-                const rows = responseData.data;
+              const { data: foundUser } = await supabase
+                .from("users_master")
+                .select("full_name, role, page_access")
+                .eq("username", storedUser.trim())
+                .single();
 
-                if (Array.isArray(rows)) {
-                  const foundUser = rows.slice(1).find((row: any) => {
-                    const sheetUsername = Array.isArray(row) ? row[0] : row.Username;
-                    return String(sheetUsername || "").trim() === storedUser.trim();
-                  });
+              if (foundUser) {
+                const newAccessList = foundUser.page_access
+                  ? String(foundUser.page_access).split(",").map((p: string) => p.trim()).filter(Boolean)
+                  : [];
 
-                  if (foundUser) {
-                    const newFullName = Array.isArray(foundUser) ? foundUser[1] : foundUser["Full Name"];
-                    const newRole = Array.isArray(foundUser) ? foundUser[3] : foundUser["Role"];
-                    const accessStr = Array.isArray(foundUser) ? foundUser[4] : foundUser["page access"];
-                    const newAccessList = accessStr
-                      ? String(accessStr).split(",").map(p => p.trim()).filter(Boolean)
-                      : [];
+                setFullName(foundUser.full_name || storedUser);
+                setRole(foundUser.role || "User");
+                setPageAccess(newAccessList);
 
-                    // Update State
-                    setFullName(newFullName || storedUser);
-                    setRole(newRole || "User");
-                    setPageAccess(newAccessList);
-
-                    // Update Storage
-                    localStorage.setItem("fullName", newFullName || storedUser);
-                    localStorage.setItem("role", newRole || "User");
-                    localStorage.setItem("pageAccess", JSON.stringify(newAccessList));
-                  }
-                }
+                localStorage.setItem("fullName", foundUser.full_name || storedUser);
+                localStorage.setItem("role", foundUser.role || "User");
+                localStorage.setItem("pageAccess", JSON.stringify(newAccessList));
               }
             } catch (fetchErr) {
               console.error("Background sync failed", fetchErr);
@@ -101,99 +86,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const u = username.trim().toLowerCase();
       const p = password.trim();
 
-      let matchedUser = null;
-
+      // Hardcoded credentials (fallback)
       if (u === "admin" && p === "admin123") {
-        matchedUser = {
+        const matchedUser = {
           username: "admin",
           fullName: "Admin",
           role: "Admin",
           pageAccess: []
         };
-      } else if (u === "user" && p === "user123") {
-        matchedUser = {
-          username: "user",
-          fullName: "User",
-          role: "User",
-          pageAccess: []
-        };
-      }
-
-      if (matchedUser) {
         setIsAuthenticated(true);
         setUser(matchedUser.username);
         setFullName(matchedUser.fullName);
         setRole(matchedUser.role);
         setPageAccess(matchedUser.pageAccess);
-
         localStorage.setItem("isAuthenticated", "true");
         localStorage.setItem("user", matchedUser.username);
         localStorage.setItem("fullName", matchedUser.fullName);
         localStorage.setItem("role", matchedUser.role);
         localStorage.setItem("pageAccess", JSON.stringify(matchedUser.pageAccess));
-
         router.push("/");
         return true;
       }
 
-      const apiUri = process.env.NEXT_PUBLIC_API_URI;
-      if (!apiUri) {
-        console.error("API URI not found in environment variables");
-        return false;
-      }
-
-      // Fetch data from the Google Sheet via the Apps Script API
-      const response = await fetch(`${apiUri}?sheet=Master`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch user data from the API");
-      }
-
-      const responseData = await response.json();
-      const rows = responseData.data;
-
-      if (!Array.isArray(rows)) {
-        console.error("API response data is not an array:", rows);
-        return false;
-      }
-
-      // Skip the header row and search for the user
-      const foundUser = rows.slice(1).find((row: any) => {
-        const sheetUsername = Array.isArray(row) ? row[0] : row.Username;
-        const sheetPassword = Array.isArray(row) ? row[2] : row.Password;
-
-        return String(sheetUsername || "").trim() === username.trim() &&
-          String(sheetPassword || "").trim() === password.trim();
-      });
-
-      if (foundUser) {
-        // Col B (Index 1): Full Name
-        // Col D (Index 3): Role
-        // Col E (Index 4): Page Access
-        const sheetFullName = Array.isArray(foundUser) ? foundUser[1] : foundUser["Full Name"];
-        const sheetRole = Array.isArray(foundUser) ? foundUser[3] : foundUser["Role"];
-        const accessStr = Array.isArray(foundUser) ? foundUser[4] : foundUser["page access"];
-
-        const accessList = accessStr
-          ? String(accessStr).split(",").map(p => p.trim()).filter(Boolean)
-          : [];
-
+      if (u === "user" && p === "user123") {
+        const matchedUser = {
+          username: "user",
+          fullName: "User",
+          role: "User",
+          pageAccess: []
+        };
         setIsAuthenticated(true);
-        setUser(username);
-        setFullName(sheetFullName || username);
-        setRole(sheetRole || "User");
-        setPageAccess(accessList);
-
+        setUser(matchedUser.username);
+        setFullName(matchedUser.fullName);
+        setRole(matchedUser.role);
+        setPageAccess(matchedUser.pageAccess);
         localStorage.setItem("isAuthenticated", "true");
-        localStorage.setItem("user", username);
-        localStorage.setItem("fullName", sheetFullName || username);
-        localStorage.setItem("role", sheetRole || "User");
-        localStorage.setItem("pageAccess", JSON.stringify(accessList));
-
+        localStorage.setItem("user", matchedUser.username);
+        localStorage.setItem("fullName", matchedUser.fullName);
+        localStorage.setItem("role", matchedUser.role);
+        localStorage.setItem("pageAccess", JSON.stringify(matchedUser.pageAccess));
         router.push("/");
         return true;
       }
 
-      return false;
+      // Query Supabase users_master table
+      const { data: foundUser, error } = await supabase
+        .from("users_master")
+        .select("username, full_name, password_hash, role, page_access")
+        .eq("username", username.trim())
+        .single();
+
+      if (error || !foundUser) {
+        return false;
+      }
+
+      // Verify password (plain text match — matches existing Google Sheets behavior)
+      if (String(foundUser.password_hash).trim() !== password.trim()) {
+        return false;
+      }
+
+      const accessList = foundUser.page_access
+        ? String(foundUser.page_access).split(",").map((p: string) => p.trim()).filter(Boolean)
+        : [];
+
+      setIsAuthenticated(true);
+      setUser(username);
+      setFullName(foundUser.full_name || username);
+      setRole(foundUser.role || "User");
+      setPageAccess(accessList);
+
+      localStorage.setItem("isAuthenticated", "true");
+      localStorage.setItem("user", username);
+      localStorage.setItem("fullName", foundUser.full_name || username);
+      localStorage.setItem("role", foundUser.role || "User");
+      localStorage.setItem("pageAccess", JSON.stringify(accessList));
+
+      router.push("/");
+      return true;
     } catch (error) {
       console.error("Login Error:", error);
       return false;

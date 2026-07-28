@@ -63,6 +63,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn, formatDate, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
 
 const formatDateDash = (date: any) => {
@@ -113,61 +114,61 @@ export default function Stage2() {
   // const approvers = ["John Doe", "Jane Smith", "Bob Johnson"]; // Replaced by dynamic fetch
 
 
+  const [historyRecords, setHistoryRecords] = useState<any[]>([]);
+
   const fetchData = async () => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      // User's script expects 'sheet' parameter
-      const res = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        // Skip header (6 rows) -> Data starts at Row 7
-        const rows = json.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "") // CHECK COL B (Index 1 - Indent #)
-          .map(({ row, originalIndex }: any) => {
-            const hasPlan1 = !!row[9] && String(row[9]).trim() !== "" && String(row[9]).trim() !== "-";
-            const hasActual1 = !!row[10] && String(row[10]).trim() !== "" && String(row[10]).trim() !== "-";
+      const { fetchIndentWorkflow } = await import("@/lib/supabase/queries");
+      const { supabase } = await import("@/lib/supabase/client");
+      const rows = await fetchIndentWorkflow();
 
-            let status = "not_ready";
-            if (!hasActual1) {
-              status = "pending";
-            } else if (hasActual1) {
-              status = "completed";
-            }
+      const stage2Rows = rows
+        .map((r: any) => {
+          const pendingQty = parseFloat(r.data.pendingApprovalQty || "0");
+          const isRejected = (r.data.status || "").toLowerCase() === "rejected";
+          let status = "pending";
+          if (pendingQty <= 0 || isRejected) {
+            status = "completed";
+          }
 
-            return {
-              id: row[1] || `row-${originalIndex}`, // CHECK COL B (Index 1 - Indent #)
-              rowIndex: originalIndex,
-              stage: 2,
-              status: status,
-              createdAt: parseSheetDate(row[0]), // Index 0 is Timestamp
-              history: [],
-              data: {
-                indentNumber: row[1],     // Col B
-                timestamp: row[0],        // Col A
-                createdBy: row[2],
-                category: row[3],
-                itemName: row[4],
-                quantity: row[5],
-                warehouseLocation: row[6],
-                itemCode: row[7],
-                leadTime: row[8],
-                // Approval fields
-                plannedDate: row[9],
-                actualDate: row[10],
-                delay: row[11],
-                status: row[13],
-                approvedQty: row[14],
-                vendorType: row[15],
-                remarks: row[16]
-              }
-            };
-          })
-          .filter((r: any) => r.status !== "not_ready");
-        setSheetRecords(rows);
-      }
+          const indentQtyNum = parseFloat(String(r.data.indentQty || r.data.quantity || "0").replace(/,/g, "")) || 0;
+          const approvedQtyNum = parseFloat(String(r.data.totalApprovedQty || r.data.approvedQty || "0").replace(/,/g, "")) || 0;
+          const computedRejected = approvedQtyNum > 0 ? Math.max(0, indentQtyNum - approvedQtyNum) : (r.data.status?.toLowerCase() === "rejected" ? indentQtyNum : 0);
+
+          return {
+            id: r.data.indentNumber || r.id,
+            rowIndex: r.originalIndex,
+            stage: 2,
+            status,
+            createdAt: parseSheetDate(r.data.createdAt),
+            history: [],
+            data: {
+              indentNumber: r.data.indentNumber,
+              timestamp: r.data.createdAt,
+              createdBy: r.data.createdBy,
+              category: r.data.category,
+              itemName: r.data.itemName,
+              quantity: r.data.quantity,
+              indentQty: String(indentQtyNum),
+              totalApprovedQty: String(approvedQtyNum),
+              rejectedQty: String(computedRejected),
+              warehouseLocation: r.data.warehouseLocation,
+              itemCode: r.data.itemCode,
+              leadTime: r.data.leadTime,
+              plannedDate: r.data.plan1,
+              actualDate: r.data.actual1,
+              delay: r.data.delay,
+              status: r.data.status,
+              approvedQty: r.data.approvedQty,
+              vendorType: r.data.vendorType,
+              remarks: r.data.remarks,
+            },
+          };
+        })
+        .filter((r: any) => r.status !== "not_ready");
+
+      setSheetRecords(stage2Rows);
     } catch (e) {
       console.error("Fetch error:", e);
     }
@@ -184,6 +185,7 @@ export default function Stage2() {
     .filter((r) => r.status === "pending")
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
+      if (!searchLower) return true;
       return (
         r.data.indentNumber?.toLowerCase().includes(searchLower) ||
         r.data.itemName?.toLowerCase().includes(searchLower) ||
@@ -193,7 +195,7 @@ export default function Stage2() {
     }), [sheetRecords, searchTerm]);
 
   const history = useMemo(() => sheetRecords
-    .filter((r) => r.status === "completed")
+    .filter((r) => parseFloat(r.data.totalApprovedQty || r.data.approvedQty || "0") > 0 || r.status === "completed")
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       if (!searchLower) return true;
@@ -210,8 +212,9 @@ export default function Stage2() {
     { key: "createdBy", label: "Created By", icon: User },
     { key: "category", label: "Category", icon: FileText },
     { key: "itemName", label: "Item", icon: Package },
-    { key: "quantity", label: "Qty", icon: Package },
-    { key: "approvedQty", label: "Approved Qty", icon: Package },
+    { key: "indentQty", label: "Indent Qty", icon: Package },
+    { key: "totalApprovedQty", label: "Total Approved", icon: CheckCircle2 },
+    { key: "rejectedQty", label: "Rejected Qty", icon: XCircle },
     { key: "warehouseLocation", label: "Warehouse", icon: Warehouse },
     { key: "itemCode", label: "Item Code", icon: Hash },
     { key: "leadTime", label: "Expected Requirement Date", icon: Calendar },
@@ -221,7 +224,6 @@ export default function Stage2() {
     { key: "remarks", label: "Remarks", icon: FileText },
   ] as const;
 
-  // All columns selected by default
   const [selectedColumns, setSelectedColumns] = useState<string[]>(
     columns.map((c) => c.key)
   );
@@ -240,111 +242,42 @@ export default function Stage2() {
     }
   };
 
-  // Pre-fill first record qty when selection changes
-  useEffect(() => {
-    if (selectedRecords.length > 0) {
-      const first = sheetRecords.find((r) => r.id === selectedRecords[0]);
-      if (first) {
-        setApprovalForm((prev) => ({
-          ...prev,
-          approvedQty: selectedRecords.length === 1 ? (first?.data.quantity ?? "") : "", // Only pre-fill if single record selected
-          status: "approved",
-        }));
-      }
-    }
-  }, [selectedRecords, sheetRecords]);
-
-  const updateLineItem = (id: string, field: string, value: string) => {
-    setLineItemsData(prev => ({
-      ...prev,
-      [id]: { ...prev[id], [field]: value }
-    }));
-  };
-
   const submitToSheet = async (recordsToSubmit: any[], approvalData: any) => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
-
     try {
-      // Upload image if attachment exists
-      let imageUrl = "";
-      if (approvalData.attachment) {
-        try {
-          const toBase64 = (file: File) => new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = error => reject(error);
-          });
+      const { approveIndent, fetchIndentWorkflow } = await import("@/lib/supabase/queries");
 
-          const base64Data = await toBase64(approvalData.attachment);
+      for (const record of recordsToSubmit) {
+        const itemData = (approvalData as any).lineData?.[record.id];
+        const finalQty = parseFloat(itemData?.approvedQty || approvalData.approvedQty || record.data.pendingApprovalQty || record.data.quantity) || 0;
+        const pendingQty = parseFloat(record.data.pendingApprovalQty || record.data.quantity || "0") || 0;
 
-          const uploadParams = new URLSearchParams();
-          uploadParams.append("action", "uploadFile");
-          uploadParams.append("sheetName", "INDENT-LIFT");
-          uploadParams.append("base64Data", base64Data);
-          uploadParams.append("fileName", approvalData.attachment.name);
-          uploadParams.append("mimeType", approvalData.attachment.type);
-          const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
-          uploadParams.append("folderId", folderId);
-
-          const uploadRes = await fetch(SHEET_API_URL, {
-            method: "POST",
-            body: uploadParams,
-          });
-
-          const uploadJson = await uploadRes.json();
-          if (uploadJson.success) {
-            imageUrl = uploadJson.fileUrl;
-          } else {
-            console.error("Image upload failed:", uploadJson.error);
-          }
-        } catch (error) {
-          console.error("Image processing error:", error);
+        if (finalQty > pendingQty) {
+          alert(`Approved quantity (${finalQty}) for Indent ${record.data.indentNumber} cannot exceed remaining pending quantity (${pendingQty}).`);
+          return;
         }
       }
 
       let successCount = 0;
 
-      // Fetch latest data to avoid overwrites
-      const refreshRes = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll`);
-      const refreshJson = await refreshRes.json();
-      const allRows = Array.isArray(refreshJson.data) ? refreshJson.data : [];
-
       for (const record of recordsToSubmit) {
-        const currentRowIndex = record.rowIndex - 1;
-        const existingRow = allRows[currentRowIndex] || [];
-
-        // ✅ UPDATED: sparse row (only update touched columns)
-        const rowArray: any[] = [];
-
-        const actualDate = getFmsTimestamp();
-        // Column K (index 10): Actual 1 Date
-        rowArray[10] = actualDate;
-
         const itemData = (approvalData as any).lineData?.[record.id];
         const finalStatus = itemData?.status || approvalData.status || "approved";
-        const finalQty = itemData?.approvedQty || approvalData.approvedQty || record.data.quantity;
+        const finalQty = itemData?.approvedQty || approvalData.approvedQty || record.data.pendingApprovalQty || record.data.quantity;
         const finalVendorType = itemData?.vendorType || approvalData.vendorType || "regular";
 
-        rowArray[13] = finalStatus; // N: Status
-        rowArray[14] = finalQty; // O: Approved Qty
-        rowArray[15] = finalVendorType; // P: Vendor Type
-        rowArray[16] = approvalData.remarks; // Q: Remarks
-        rowArray[17] = imageUrl || ""; // R: Image URL
+        const allRows = await fetchIndentWorkflow();
+        const matchingRow = allRows.find((r: any) => r.data.indentNumber === record.data.indentNumber);
 
-        const params = new URLSearchParams();
-        params.append("action", "update");
-        params.append("sheetName", "INDENT-LIFT");
-        params.append("rowIndex", record.rowIndex.toString());
-        params.append("rowData", JSON.stringify(rowArray));
-
-        const res = await fetch(SHEET_API_URL, {
-          method: "POST",
-          body: params,
-        });
-        const result = await res.json();
-        if (result.success) successCount++;
+        if (matchingRow) {
+          await approveIndent(matchingRow.id, {
+            approverUsername: localStorage.getItem("user") || "unknown",
+            approvalStatus: finalStatus,
+            approvedQty: parseInt(finalQty) || 0,
+            vendorType: finalVendorType,
+            remarks: approvalData.remarks || "",
+          });
+          successCount++;
+        }
       }
 
       if (successCount > 0) {
@@ -356,7 +289,13 @@ export default function Stage2() {
     }
   };
 
-  // Handle Update Logic
+  const updateLineItem = (id: string, field: string, value: string) => {
+    setLineItemsData((prev) => ({
+      ...prev,
+      [id]: { ...prev[id], [field]: value },
+    }));
+  };
+
   const handleBulkApprove = async () => {
     const recordsToProcess = selectedRecords
       .map((id) => sheetRecords.find((r) => r.id === id))
@@ -698,8 +637,10 @@ export default function Stage2() {
                     <TableHeader className="bg-slate-50 sticky top-0 z-10">
                       <TableRow className="hover:bg-transparent border-b border-slate-200">
                         <TableHead className="w-[120px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Indent ID</TableHead>
-                        <TableHead className="min-w-[200px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Item Description</TableHead>
-                        <TableHead className="w-[80px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Req. Qty</TableHead>
+                        <TableHead className="min-w-[160px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Item Description</TableHead>
+                        <TableHead className="w-[80px] h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Indent Qty</TableHead>
+                        <TableHead className="w-[80px] h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Prev. Approved</TableHead>
+                        <TableHead className="w-[100px] h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Approve Qty</TableHead>
                         <TableHead className="w-[120px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Status</TableHead>
                         <TableHead className="w-[120px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Vendor Type</TableHead>
                       </TableRow>
@@ -712,12 +653,13 @@ export default function Stage2() {
                         >
                           <TableCell className="py-3 px-4 font-mono text-xs font-bold text-slate-900">{item.data.indentNumber}</TableCell>
                           <TableCell className="py-3 px-4 text-slate-600 text-xs font-medium">{item.data.itemName}</TableCell>
-                          <TableCell className="py-2 px-4 text-center">
+                          <TableCell className="py-3 px-3 text-center text-xs font-bold text-slate-800">{item.data.indentQty || item.data.quantity}</TableCell>
+                          <TableCell className="py-3 px-3 text-center text-xs font-bold text-emerald-700">{item.data.totalApprovedQty || "0"}</TableCell>
+                          <TableCell className="py-2 px-3 text-center">
                             <div className="flex flex-col items-center gap-1">
-
                               <Input
                                 type="number"
-                                className="h-8 w-20 text-center text-xs font-bold border-slate-200 focus:ring-slate-900"
+                                className="h-8 w-20 text-center text-xs font-extrabold border-slate-300 focus:ring-slate-900"
                                 value={lineItemsData[item.id]?.approvedQty || ""}
                                 onChange={(e) => setLineItemsData(prev => ({
                                   ...prev,

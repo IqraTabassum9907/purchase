@@ -31,8 +31,8 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getFmsTimestamp } from "@/lib/utils";
-
-const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
 const formatDateDash = (date: any) => {
     if (!date || date === "-" || date === "—") return "-";
@@ -82,112 +82,134 @@ export default function TransporterFollowUp() {
     // FETCH DATA
     // -----------------------------------------------------------------
     const fetchData = async () => {
-        if (!SHEET_API_URL) return;
         setIsLoading(true);
         try {
-            // Fetch Transport Follow-Up Data for Expected Dates
-            const resTransport = await fetch(`${SHEET_API_URL}?sheet=Transport Flw-Up&action=getAll`);
-            const jsonTransport = await resTransport.json();
-            const transportMap = new Map<string, { remarks: string, expectedDate: string, followUpCount: number }>();
+            const [indentRows, poResult, liftingResult, transporterResult] = await Promise.all([
+                fetchIndentWorkflow(),
+                supabase.from("purchase_orders").select("*").order("created_at", { ascending: true }),
+                supabase.from("vendor_liftings").select("*"),
+                supabase.from("transporter_followups").select("*"),
+            ]);
 
-            if (jsonTransport.success && Array.isArray(jsonTransport.data)) {
-                // Skip header (row 1)
-                jsonTransport.data.slice(1).forEach((row: any) => {
-                    const liftNo = row[1]; // Column B (Unit Tracking No.)
-                    const status = row[2]; // Column C
-                    const remarks = row[3]; // Column D
-                    const timestamp = row[0]; // Column A (Timestamp)
+            const poData = poResult.data || [];
+            const liftingData = liftingResult.data || [];
+            const transporterData = transporterResult.data || [];
 
-                    if (liftNo) {
-                        const existing = transportMap.get(liftNo);
-                        const currentCount = (existing?.followUpCount || 0) + (status === "Intransit" ? 1 : 0);
+            const posByIndent = new Map<string, any[]>();
+            poData.forEach((po: any) => {
+                if (po.indent_id) {
+                    const list = posByIndent.get(po.indent_id) || [];
+                    list.push(po);
+                    posByIndent.set(po.indent_id, list);
+                }
+            });
 
-                        transportMap.set(liftNo, {
-                            remarks: remarks || "",
-                            expectedDate: timestamp || "",
-                            followUpCount: currentCount
-                        });
-                    }
-                });
-            }
+            const liftingsByPo = new Map<string, any[]>();
+            liftingData.forEach((lift: any) => {
+                if (lift.po_id) {
+                    const list = liftingsByPo.get(lift.po_id) || [];
+                    list.push(lift);
+                    liftingsByPo.set(lift.po_id, list);
+                }
+            });
 
-            const res = await fetch(`${SHEET_API_URL}?sheet=RECEIVING-ACCOUNTS&action=getAll`);
-            const json = await res.json();
+            const transportersByPo = new Map<string, any[]>();
+            transporterData.forEach((tf: any) => {
+                if (tf.po_id) {
+                    const list = transportersByPo.get(tf.po_id) || [];
+                    list.push(tf);
+                    transportersByPo.set(tf.po_id, list);
+                }
+            });
 
-            if (json.success && Array.isArray(json.data)) {
-                console.log("RECEIVING-ACCOUNTS raw data:", json.data.slice(6));
-                const allMapped = json.data.slice(6).map((row: any, i: number) => {
-                    const plannedDate = row[88] || row[34];
-                    const actualDate = row[89];
-                    return {
-                        rowNum: i + 7,
-                        indentNumber: row[1],
-                        liftNo: row[2],
-                        plannedDate,
-                        actualDate,
-                        hasPlanned: !!plannedDate && String(plannedDate).trim() !== "" && String(plannedDate).trim() !== "-",
-                        hasActual: !!actualDate && String(actualDate).trim() !== "" && String(actualDate).trim() !== "-",
-                    };
-                });
-                console.log("All Mapped Rows for Transporter Follow-Up:", allMapped);
+            const rows: any[] = [];
 
-                // Data starts from row 7 (index 6) - skip 6 header rows
-                const rows = json.data.slice(6)
-                    .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-                    .filter(({ row }: any) => {
-                        // Filter: Only include rows where Column CK (Planned) has a value
-                        const plannedDate = row[88] || row[34]; // Column CK (index 88) fallback to Column AI (index 34)
-                        return plannedDate && String(plannedDate).trim() !== "" && String(plannedDate).trim() !== "-";
-                    })
-                    .map(({ row, originalIndex }: any) => {
-                        // Status Logic
-                        const plannedDate = row[88] || row[34]; // Column CK fallback to Column AI
-                        const actualDate = row[89];  // Column CL
+            for (const indentRow of indentRows) {
+                const indentPOs = posByIndent.get(indentRow.id) || [];
+                for (const po of indentPOs) {
+                    const poLiftings = liftingsByPo.get(po.id) || [];
+                    const poTransporters = transportersByPo.get(po.id) || [];
 
-                        const hasPlanned = !!plannedDate && String(plannedDate).trim() !== "" && String(plannedDate).trim() !== "-";
-                        const hasActual = !!actualDate && String(actualDate).trim() !== "" && String(actualDate).trim() !== "-";
+                const latestTransporter = poTransporters.length > 0
+                    ? [...poTransporters].sort((a: any, b: any) => new Date(b.created_at || b.updated_at || 0).getTime() - new Date(a.created_at || a.updated_at || 0).getTime())[0]
+                    : null;
 
-                        let status = "not_ready";
-                        if (hasPlanned && !hasActual) {
-                            status = "pending";
-                        } else if (hasPlanned && hasActual) {
-                            status = "history";
+                const totalIntransit = poTransporters.filter((t: any) => t.status === "Intransit").length;
+
+                const actualDispatchedLiftings = poLiftings.filter((l: any) =>
+                    !!l.actual_lifting_date && String(l.actual_lifting_date).trim() !== "" && String(l.actual_lifting_date).trim() !== "-"
+                );
+
+                if (actualDispatchedLiftings.length === 0) {
+                    const isDeliveredOrReceived = (latestTransporter && ["received", "delivered", "completed", "complete"].includes(String(latestTransporter.status || "").toLowerCase()));
+                    const status = isDeliveredOrReceived ? "history" : "pending";
+
+                    rows.push({
+                        id: `${indentRow.data.indentNumber}_${po.po_number}`,
+                        _poId: po.id,
+                        _liftingId: null,
+                        status,
+                        data: {
+                            indentNumber: indentRow.data.indentNumber,
+                            liftNo: po.po_number,
+                            vendorName: po.vendor_name,
+                            poNumber: po.po_number,
+                            invoiceNumber: "",
+                            itemName: indentRow.data.itemName,
+                            liftingQty: String(po.quantity || indentRow.data.quantity || ""),
+                            transporterName: latestTransporter?.transporter_name || "",
+                            vehicleNo: latestTransporter?.vehicle_number || "",
+                            contactNo: "",
+                            freightAmt: "",
+                            plannedDate: po.delivery_date || "",
+                            actualDate: latestTransporter?.status === "Received" ? latestTransporter.dispatch_date || "" : "",
+                            expectedDate: latestTransporter?.expected_arrival_date || "",
+                            remarks: "",
+                            totalFollowUps: totalIntransit,
+                            lrNo: latestTransporter?.bilty_number || "",
+                            lrCopy: latestTransporter?.bilty_copy_url || "",
                         }
+                    });
+                } else {
+                    for (const lifting of actualDispatchedLiftings) {
+                        const liftTrackingNo = String(lifting.id).substring(0, 8);
+                        const isDeliveredOrReceived = (latestTransporter && ["received", "delivered", "completed", "complete"].includes(String(latestTransporter.status || "").toLowerCase())) ||
+                                                      ["received", "delivered", "completed", "complete", "complete_delivered"].includes(String(lifting.lifting_status || "").toLowerCase());
 
-                        const liftNo = row[2]; // Column C (Unit Tracking No.)
-                        const followUpData = transportMap.get(liftNo);
-                        const expectedDate = row[34] || ""; // Column AI (index 34) from RECEIVING-ACCOUNTS
-                        const latestRemarks = followUpData?.remarks || "";
+                        const status = isDeliveredOrReceived ? "history" : "pending";
 
-                        return {
-                            id: `${liftNo}_${originalIndex}`, // Unit Tracking No. + row index as unique ID
-                            rowIndex: originalIndex,
+                        rows.push({
+                            id: `${indentRow.data.indentNumber}_${liftTrackingNo}`,
+                            _poId: po.id,
+                            _liftingId: lifting.id,
                             status,
                             data: {
-                                indentNumber: row[1],      // Column B
-                                liftNo: liftNo,            // Column C
-                                vendorName: row[3],        // Column D
-                                poNumber: row[4],          // Column E
-                                invoiceNumber: row[24],    // Column Y (Added for Search)
-                                itemName: row[7],          // Column H (Added for Search)
-                                liftingQty: row[8],        // Column I
-                                transporterName: row[9],   // Column J
-                                vehicleNo: row[10],        // Column K
-                                contactNo: row[11],        // Column L
-                                freightAmt: row[14],       // Column O
-                                plannedDate: row[88] || row[34],      // Column CK (Index 88) fallback to Column AI (Index 34)
-                                actualDate: row[89],       // Column CL (Index 89)
-                                expectedDate: expectedDate, // From Transport Flw-Up
-                                remarks: latestRemarks,      // From Transport Flw-Up
-                                totalFollowUps: followUpData?.followUpCount || 0, // Count of Intransit statuses
-                                lrNo: row[12],             // Column M (LR-No.)
-                                lrCopy: row[18],           // Column S (LR Copy)
+                                indentNumber: indentRow.data.indentNumber,
+                                liftNo: liftTrackingNo,
+                                vendorName: po.vendor_name,
+                                poNumber: po.po_number,
+                                invoiceNumber: "",
+                                itemName: indentRow.data.itemName,
+                                liftingQty: String(lifting.quantity || po.quantity || indentRow.data.quantity || ""),
+                                transporterName: latestTransporter?.transporter_name || lifting.contact_person || "",
+                                vehicleNo: lifting.vehicle_number || latestTransporter?.vehicle_number || "",
+                                contactNo: lifting.driver_contact || "",
+                                freightAmt: "",
+                                plannedDate: lifting.expected_lifting_date || po.delivery_date || "",
+                                actualDate: lifting.actual_lifting_date || "",
+                                expectedDate: lifting.followup_date || "",
+                                remarks: lifting.remarks || "",
+                                totalFollowUps: totalIntransit,
+                                lrNo: latestTransporter?.bilty_number || "",
+                                lrCopy: latestTransporter?.bilty_copy_url || "",
                             }
-                        };
-                    });
-
-                setRecords(rows);
+                        });
+                    }
+                }
             }
+        }
+
+            setRecords(rows);
         } catch (e) {
             console.error("Fetch error:", e);
             toast.error("Failed to load data");
@@ -359,7 +381,7 @@ export default function TransporterFollowUp() {
     };
 
     // -----------------------------------------------------------------
-    // SUBMIT (Writes to Transport Flw-Up sheet)
+    // SUBMIT
     // -----------------------------------------------------------------
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -369,13 +391,11 @@ export default function TransporterFollowUp() {
             return;
         }
 
-        // Validation
         if (!formData.status) {
             toast.error("Status is required");
             return;
         }
 
-        // Validate Expected Date and Expected Delivery when status is Intransit
         if (formData.status === "Intransit") {
             if (!formData.expectedDate) {
                 toast.error("Next Follow-Up is required when status is Intransit");
@@ -397,43 +417,38 @@ export default function TransporterFollowUp() {
 
             const timestamp = getFmsTimestamp();
 
-            // Process sequentially to ensure order and avoid rate limits
             for (const record of recordsToProcess) {
-                // Prepare row data for "Transport Flw-Up" sheet
-                const rowData = [
-                    timestamp,                      // Column A
-                    record.data.liftNo,             // Column B
-                    formData.status,                // Column C
-                    formData.remarks || "",         // Column D
-                    formData.expectedDate || "",    // Column E
-                    formData.expectedDelivery || "", // Column F
-                ];
+                const { error: insertError } = await supabase.from("transporter_followups").insert({
+                    po_id: record._poId,
+                    transporter_name: record.data.transporterName || "",
+                    vehicle_number: record.data.vehicleNo || "",
+                    bilty_number: record.data.lrNo || null,
+                    freight_amount: record.data.freightAmt || record.data.freightAmount ? parseFloat(record.data.freightAmt || record.data.freightAmount) : null,
+                    status: formData.status,
+                    expected_arrival_date: formData.expectedDelivery || null,
+                    dispatch_date: formData.status === "Received" ? timestamp : null,
+                });
 
-                // Insert into "Transport Flw-Up" sheet
-                const params = new URLSearchParams();
-                params.append("action", "insert");
-                params.append("sheetName", "Transport Flw-Up");
-                params.append("rowData", JSON.stringify(rowData));
+                if (insertError) throw insertError;
 
-                await fetch(`${SHEET_API_URL}`, { method: "POST", body: params });
-
-                // Update "RECEIVING-ACCOUNTS" with Next Follow-Up (Column AI) and Actual Date if Received
-                if (record.rowIndex) {
-                    const updateRow = new Array(120).fill(""); // Use 120 to be safe
-                    updateRow[34] = formData.expectedDate || ""; // Column AI (Next Follow-Up)
+                if (record._liftingId) {
+                    const updateData: any = {
+                        followup_date: formData.expectedDate || timestamp,
+                        expected_lifting_date: formData.expectedDelivery || null,
+                        remarks: formData.remarks || "",
+                    };
 
                     if (formData.status === "Received") {
-                        updateRow[89] = timestamp; // Column CL (Actual Date)
-                        updateRow[19] = timestamp; // Column T (Planned Date for Material Received)
+                        updateData.actual_lifting_date = timestamp;
+                        updateData.lifting_status = "Complete";
                     }
 
-                    const updateParams = new URLSearchParams();
-                    updateParams.append("action", "update");
-                    updateParams.append("sheetName", "RECEIVING-ACCOUNTS");
-                    updateParams.append("rowIndex", record.rowIndex.toString());
-                    updateParams.append("rowData", JSON.stringify(updateRow));
+                    if (formData.status === "Intransit") {
+                        updateData.lifting_status = "Intransit";
+                    }
 
-                    await fetch(`${SHEET_API_URL}`, { method: "POST", body: updateParams });
+                    const { error: updateError } = await supabase.from("vendor_liftings").update(updateData).eq("id", record._liftingId);
+                    if (updateError) throw updateError;
                 }
             }
 
@@ -443,7 +458,7 @@ export default function TransporterFollowUp() {
                 setSelectedRows(new Set());
                 setIsBulkMode(false);
             }
-            fetchData(); // Refresh data
+            fetchData();
 
         } catch (err: any) {
             console.error(err);

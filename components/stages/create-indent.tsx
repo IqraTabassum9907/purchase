@@ -38,6 +38,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { supabase } from "@/lib/supabase/client";
 
 export default function Stage1() {
   const {
@@ -54,75 +55,50 @@ export default function Stage1() {
 
 
   const fetchData = async () => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${SHEET_API_URL}?sheet=INDENT-LIFT&action=getAll&_t=${Date.now()}`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        // Skip header and first 6 data rows (indices 0-6) -> Data starts at Row 8
-        let autoIdCounter = 1;
-        const rows = json.data.slice(6)
-          .map((row: any, i: number) => ({ row, originalIndex: i + 7 }))
-          .filter(({ row }: any) => row[1] && String(row[1]).trim() !== "") // Skip empty rows
-          .map(({ row, originalIndex }: any) => {
-            const rawId = row[1] ? String(row[1]).trim() : "";
-            let indentNum: string;
+      const { fetchIndentWorkflow } = await import("@/lib/supabase/queries");
+      const rows = await fetchIndentWorkflow();
 
-            if (rawId) {
-              indentNum = rawId;
-            } else {
-              indentNum = `IN-${String(autoIdCounter).padStart(3, "0")}A`;
-              autoIdCounter++;
-            }
-
-            const isApproved = !!row[13] &&
-              String(row[13]).trim() !== "" &&
-              String(row[13]).trim() !== "-" &&
-              String(row[13]).trim().toLowerCase() !== "pending";
-
-            return {
-              id: `${indentNum}-${originalIndex}`,
-              rowIndex: originalIndex,
-              stage: 1,
-              status: isApproved ? "completed" : "pending",
-              createdAt: parseSheetDate(row[0]),
-              history: [{ stage: 1, date: parseSheetDate(row[0]), data: {} }],
-              data: {
-                indentNumber: indentNum,
-                createdBy: row[2],
-                category: row[3],
-                warehouseLocation: row[6],
-                leadTime: row[8],
-                itemName: row[4],
-                quantity: row[5],
-                itemCode: row[7],
-                uom: row[69] || "",
-                status: row[13] || "pending",
-                remarks: row[16],
-                attachment: row[17] || "",
-                itemPriority: row[18] || ""
-              }
-            };
-          });
-
-
-        // Calculate max ID from loaded rows to sync counter
-        let maxId = 0;
-        rows.forEach((r: any) => {
-          if (r.id) {
-            const match = r.id.match(/IN-(\d+)/);
-            if (match) {
-              const num = parseInt(match[1], 10);
-              if (num > maxId) maxId = num;
-            }
+      // Calculate max ID from loaded rows to sync counter
+      let maxId = 0;
+      rows.forEach((r: any) => {
+        if (r.data?.indentNumber) {
+          const match = r.data.indentNumber.match(/IN-(\d+)/);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxId) maxId = num;
           }
-        });
-        setIndentCounter(maxId > 0 ? maxId + 1 : 1);
+        }
+      });
+      setIndentCounter(maxId > 0 ? maxId + 1 : 1);
 
-        setSheetRecords(rows);
-      }
+      // Map to Stage 1 format (only show pending indents)
+      const stage1Rows = rows.map((r: any) => ({
+        id: r.data.indentNumber || r.id,
+        rowIndex: r.originalIndex,
+        stage: 1,
+        status: r.status,
+        createdAt: parseSheetDate(r.data.createdAt),
+        history: [{ stage: 1, date: parseSheetDate(r.data.createdAt), data: {} }],
+        data: {
+          indentNumber: r.data.indentNumber,
+          createdBy: r.data.createdBy,
+          category: r.data.category,
+          warehouseLocation: r.data.warehouseLocation,
+          leadTime: r.data.leadTime,
+          itemName: r.data.itemName,
+          quantity: r.data.quantity,
+          itemCode: r.data.itemCode,
+          uom: r.data.uom || "",
+          status: r.data.status || "pending",
+          remarks: r.data.remarks,
+          attachment: r.data.attachment || "",
+          itemPriority: r.data.priority || ""
+        }
+      }));
+
+      setSheetRecords(stage1Rows);
     } catch (e) {
       console.error("Fetch error:", e);
     }
@@ -309,44 +285,29 @@ export default function Stage1() {
 
   useEffect(() => {
     const fetchDropdownOptions = async () => {
-      const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-      if (!SHEET_API_URL) return;
       try {
-        const res = await fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll`);
-        const json = await res.json();
-        if (json.success && Array.isArray(json.data)) {
-          // Get values from column A starting from row 2 (index 1)
-          const createdByOpts = json.data
-            .slice(1) // Skip header row
-            .map((row: any) => row[0]) // Column A is index 0
-            .filter((val: any) => val && String(val).trim() !== "");
-          setCreatedByOptions(createdByOpts);
+        const [cbRes, whRes, uomRes, itemRes] = await Promise.all([
+          supabase.from("master_created_by").select("name").eq("is_active", true),
+          supabase.from("master_warehouses").select("name").eq("is_active", true),
+          supabase.from("master_uoms").select("name").eq("is_active", true),
+          supabase.from("master_items").select("item_code, category, item_name, uom").eq("is_active", true),
+        ]);
 
-          // Get values from column B starting from row 2 (index 1)
-          const warehouseOpts = json.data
-            .slice(1) // Skip header row
-            .map((row: any) => row[1]) // Column B is index 1
-            .filter((val: any) => val && String(val).trim() !== "");
-          setWarehouseOptions(warehouseOpts);
+        const cbOpts = (cbRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
+        setCreatedByOptions(cbOpts);
 
-          // Get UOM options from column N (Index 13)
-          const uoms = json.data
-            .slice(1)
-            .map((row: any) => row[13]) // Column N is index 13
-            .filter((val: any) => val && String(val).trim() !== "");
-          setUomOptions(uoms);
+        const whOpts = (whRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
+        setWarehouseOptions(whOpts);
 
-          // Get Category (D), Item Name (E), Item Code (C) from columns
-          const itemData = json.data
-            .slice(1) // Skip header row
-            .filter((row: any) => row[3] && String(row[3]).trim() !== "") // Filter rows with category
-            .map((row: any) => ({
-              itemCode: row[2] ? String(row[2]).trim() : "", // Column C (index 2)
-              category: row[3] ? String(row[3]).trim() : "", // Column D (index 3)
-              itemName: row[4] ? String(row[4]).trim() : "", // Column E (index 4)
-            }));
-          setDropdownData(itemData);
-        }
+        const uomOpts = (uomRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
+        setUomOptions(uomOpts);
+
+        const itemData = (itemRes.data || []).map((r: any) => ({
+          category: r.category || "",
+          itemName: r.item_name || "",
+          itemCode: r.item_code || "",
+        })).filter((item: any) => item.category && item.itemName);
+        setDropdownData(itemData);
       } catch (e) {
         console.error("Error fetching dropdown options:", e);
       }
@@ -365,23 +326,16 @@ export default function Stage1() {
   };
 
 
-  // Check and save new options to Dropdown sheet
+  // Check and save new options to master_items table
   const checkAndSaveNewOptions = async (items: any[]) => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) return;
-
     const newOptions: any[] = [];
-    const newLocalDropdowns: any[] = [];
 
     items.forEach(item => {
-      // Check if this combo exists
       const exists = dropdownData.some(
         d => d.category === item.category &&
           d.itemName === item.itemName &&
           d.itemCode === item.itemCode
       );
-
-      // Also check if we already queued it to prevent duplicates in update
       const alreadyQueued = newOptions.some(
         d => d.category === item.category &&
           d.itemName === item.itemName &&
@@ -394,66 +348,21 @@ export default function Stage1() {
           itemName: item.itemName,
           itemCode: item.itemCode
         });
-        // Prepare for local update
-        newLocalDropdowns.push({
-          category: item.category,
-          itemName: item.itemName,
-          itemCode: item.itemCode
-        });
       }
     });
 
     if (newOptions.length > 0) {
-      // Optimistically update local state immediately so user sees them if they add more items
-      setDropdownData(prev => [...prev, ...newLocalDropdowns]);
+      setDropdownData(prev => [...prev, ...newOptions]);
 
       try {
-        // Prepare row data: [CreatedBy(A), Warehouse(B), ItemCode(C), Category(D), ItemName(E), ...]
-        // Dropdown sheet structure: 
-        // A: Created By, B: Warehouse, C: Item Code, D: Category, E: Item Name, ...
+        const rowsToInsert = newOptions.map(opt => ({
+          item_code: opt.itemCode || `ITEM-${Date.now()}`,
+          category: opt.category,
+          item_name: opt.itemName,
+          is_active: true,
+        }));
 
-        const rowsToAdd = newOptions.map(opt => {
-          const row = new Array(20).fill("");
-          row[2] = opt.itemCode; // Column C
-          row[3] = opt.category; // Column D
-          row[4] = opt.itemName; // Column E
-          return row;
-        });
-
-        const params = new URLSearchParams();
-        params.append("action", "batchInsert"); // Using batchInsert or append
-        params.append("sheetName", "Dropdown");
-        params.append("rowsData", JSON.stringify(rowsToAdd));
-        // We append to the end, so no startRow needed if the backend handles 'append' logic with batchInsert
-        // If backend needs startRow, we might need to fetch it first, but let's try assuming batchInsert appends if no startRow or use a dedicated 'append' action if available.
-        // Based on previous code, the backend supports "update" and "batchInsert". 
-        // Let's rely on the fact that we can just calculate where to put it or use a simpler "append" loop if robust batch isn't there.
-        // Actually, safe bet is to use a loop of "appendRow" if available, or just "batchInsert" at a high row index?
-        // "batchInsert" in `submitToSheet` used `startRow`. 
-
-        // LET'S USE A "append" action if we can infer it exists or fallback to `batchInsert`.
-        // The safest implementation based on standard Google Apps Script patterns is usually an 'append' action.
-        // I'll assume 'append' action is supported or I'll implement a loop using 'update' at the end.
-        // Wait, I can just use 'batchInsert' with a high start row? No, that leaves gaps.
-        // Let's try to assume the backend has an 'append' or 'appendRow' feature.
-        // If not, I'll fetch the last row index first.
-
-        // Fetch last row to be safe
-        const res = await fetch(`${SHEET_API_URL}?sheet=Dropdown&action=getAll`);
-        const json = await res.json();
-        const existingRows = Array.isArray(json.data) ? json.data : [];
-        const nextRow = existingRows.length + 1; // 1-based index
-
-        params.append("startRow", nextRow.toString());
-
-        await fetch(SHEET_API_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: params.toString(),
-          redirect: "follow",
-        });
+        await supabase.from("master_items").upsert(rowsToInsert, { onConflict: "item_code" });
       } catch (e) {
         console.error("Failed to save new options:", e);
       }
@@ -461,59 +370,28 @@ export default function Stage1() {
   };
 
 
-  // submitToSheet: Uses insertIndent GAS action which atomically generates
-  // unique IN-NNN[A/B/C] IDs under a LockService lock, preventing duplicates
-  // when multiple users submit simultaneously.
-  // Returns the generated indent IDs so the counter can be synced.
+  // submitToSheet: Creates indent rows in Supabase
   const submitToSheet = async (data: any, attachmentUrl: string): Promise<string[]> => {
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) throw new Error("Sheet API URL is not defined");
+    const { createIndentRow } = await import("@/lib/supabase/queries");
 
-    // Build rows WITHOUT Col B (index 1) — GAS will fill it with unique IDs
-    const rows = data.items.map((item: any) => {
-      const timestamp = getFmsTimestamp();
-
-      const row = new Array(70).fill("");
-      row[0] = timestamp;                    // A: Timestamp
-      row[1] = "";                           // B: Indent No — filled by GAS
-      row[2] = data.createdBy;              // C: Created By
-      row[3] = item.category;              // D: Category
-      row[4] = item.itemName;              // E: Item Name
-      row[5] = item.quantity;              // F: Qty
-      row[6] = data.warehouseLocation;     // G: Warehouse
-      row[7] = item.itemCode || "";        // H: Item Code
-      row[8] = data.leadTime;              // I: Lead Time (Expected Requirement Date)
-      row[18] = item.itemPriority || "";   // S: Item Priority
-      row[17] = attachmentUrl || "";       // R: Attachment
-      row[69] = item.uom || "";            // BR: UOM
-      return row;
-    });
-
-    const params = new URLSearchParams();
-    params.append("action", "insertIndent");
-    params.append("rowsData", JSON.stringify(rows));
-
-    const res = await fetch(SHEET_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-      redirect: "follow",
-    });
-    const text = await res.text();
-    let result: any;
-    try {
-      result = JSON.parse(text);
-    } catch (e) {
-      throw new Error("Failed to parse insertIndent response: " + text);
+    const generatedIds: string[] = [];
+    for (const item of data.items) {
+      const indentNumber = await createIndentRow({
+        createdBy: data.createdBy,
+        category: item.category,
+        itemName: item.itemName,
+        quantity: parseInt(item.quantity) || 0,
+        warehouseLocation: data.warehouseLocation,
+        itemCode: item.itemCode || "",
+        leadTime: data.leadTime,
+        priority: item.itemPriority || "",
+        attachmentUrl: attachmentUrl || "",
+        uom: item.uom || "",
+      });
+      generatedIds.push(indentNumber);
     }
 
-    if (result && result.success) {
-      return result.generatedIds as string[];
-    } else {
-      throw new Error(result?.error || "insertIndent failed");
-    }
+    return generatedIds;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -527,49 +405,13 @@ export default function Stage1() {
       setIsSubmitting(true);
 
       const submitPromise = (async () => {
-        const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-        if (!SHEET_API_URL) throw new Error("API URL is missing");
-
-        // 1. Handle file upload first (before we know the indent number)
+        // 1. Handle file upload if needed (placeholder for Phase 9 Supabase Storage)
         let attachmentUrl = "";
         if (formData.attachment) {
-          const toBase64 = (file: File) => new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = error => reject(error);
-          });
-
-          const base64Data = await toBase64(formData.attachment);
-          const uploadParams = new URLSearchParams();
-          uploadParams.append("action", "uploadFile");
-          uploadParams.append("sheetName", "INDENT-LIFT");
-          uploadParams.append("base64Data", base64Data);
-          uploadParams.append("fileName", `Stage1_attachment_${formData.attachment.name}`);
-          uploadParams.append("mimeType", formData.attachment.type);
-          const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
-          uploadParams.append("folderId", folderId);
-
-          const uploadRes = await fetch(SHEET_API_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: uploadParams.toString(),
-            redirect: "follow",
-          });
-          if (!uploadRes.ok) throw new Error(`Upload failed with status ${uploadRes.status}`);
-          const uploadJson = await uploadRes.json();
-          if (uploadJson.success) {
-            attachmentUrl = uploadJson.url || uploadJson.fileUrl;
-          } else {
-            throw new Error(uploadJson.error || "Upload failed");
-          }
-          // Delay to prevent concurrent request rate limits on Google Apps Script redirect
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          attachmentUrl = `pending-upload:${formData.attachment.name}`;
         }
 
-        // 2. Submit to sheet — GAS generates unique IDs atomically under a lock
+        // 2. Submit to Supabase
         const generatedIds = await submitToSheet({ ...formData }, attachmentUrl);
 
         // 3. Save new dropdown options in background (using generated IDs for reference)
@@ -678,100 +520,36 @@ export default function Stage1() {
     setEditOpen(true);
   };
 
-  // === Update Record in Sheet ===
+  // === Update Record in Supabase ===
   const updateRecordInSheet = async () => {
     if (!editingRecord) return;
-
-    const SHEET_API_URL = process.env.NEXT_PUBLIC_API_URI;
-    if (!SHEET_API_URL) {
-      console.error("Sheet API URL is not defined");
-      return;
-    }
 
     setIsEditSubmitting(true);
 
     try {
-      // Handle file upload if new file selected
+      const { updateIndentRow } = await import("@/lib/supabase/queries");
+
       let finalAttachmentUrl = editFormData.existingAttachmentUrl;
       if (editFormData.attachment) {
-        try {
-          const toBase64 = (file: File) => new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = error => reject(error);
-          });
-
-          const base64Data = await toBase64(editFormData.attachment);
-          const uploadParams = new URLSearchParams();
-          uploadParams.append("action", "uploadFile");
-          uploadParams.append("sheetName", "INDENT-LIFT");
-          uploadParams.append("base64Data", base64Data);
-          uploadParams.append("fileName", `Stage1_Edit_${editingRecord.id}_${editFormData.attachment.name}`);
-          uploadParams.append("mimeType", editFormData.attachment.type);
-          const folderId = process.env.NEXT_PUBLIC_IMAGE_FOLDER_ID || "1SihRrPrgbuPGm-09fuB180QJhdxq5Nxy";
-          uploadParams.append("folderId", folderId);
-
-          const uploadRes = await fetch(SHEET_API_URL, {
-            method: "POST",
-            body: uploadParams,
-            redirect: "follow",
-          });
-          const uploadJson = await uploadRes.json();
-          if (uploadJson.success) {
-            finalAttachmentUrl = uploadJson.url || uploadJson.fileUrl;
-          }
-        } catch (uploadErr) {
-          console.error("Upload error during edit:", uploadErr);
-        }
+        finalAttachmentUrl = `pending-upload:${editFormData.attachment.name}`;
       }
 
-      // Build the row data array - only update specific columns
-      const rowArray = new Array(70).fill(""); // Increase size to accommodate UOM at index 69
-
-      // Update columns: C (index 2), D (index 3), E (index 4), F (index 5), G (index 6), H (index 7), I (index 8), S (index 18), R (index 17), BR (index 69)
-      rowArray[2] = editFormData.createdBy;      // Col C: Created By
-      rowArray[3] = editFormData.category;        // Col D: Category
-      rowArray[4] = editFormData.itemName;        // Col E: Item Name
-      rowArray[5] = editFormData.quantity;        // Col F: Quantity
-      rowArray[6] = editFormData.warehouseLocation; // Col G: Warehouse Location
-      rowArray[7] = editFormData.itemCode;        // Col H: Item Code
-      rowArray[8] = editFormData.leadTime;        // Col I: Lead Time (Expected Requirement Date)
-      rowArray[18] = editFormData.itemPriority;   // Col S: Item Priority
-      rowArray[17] = finalAttachmentUrl;          // Col R: Attachment URL
-      rowArray[69] = editFormData.uom;            // Col BR: UOM
-
-      const params = new URLSearchParams();
-      params.append("action", "update");
-      params.append("sheetName", "INDENT-LIFT");
-      params.append("rowIndex", editingRecord.rowIndex.toString());
-      params.append("rowData", JSON.stringify(rowArray));
-
-      const res = await fetch(SHEET_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: params.toString(),
-        redirect: "follow",
+      await updateIndentRow(editingRecord.id, {
+        createdBy: editFormData.createdBy,
+        category: editFormData.category,
+        itemName: editFormData.itemName,
+        quantity: parseInt(editFormData.quantity) || 0,
+        warehouseLocation: editFormData.warehouseLocation,
+        itemCode: editFormData.itemCode,
+        leadTime: editFormData.leadTime,
+        priority: editFormData.itemPriority,
+        attachmentUrl: finalAttachmentUrl,
+        uom: editFormData.uom,
       });
 
-      const text = await res.text();
-      let result: any;
-      try {
-        result = JSON.parse(text);
-      } catch (e) {
-        throw new Error("Failed to parse update response: " + text);
-      }
-
-      if (result.success) {
-        setEditOpen(false);
-        setEditingRecord(null);
-        fetchData(); // Refresh data
-      } else {
-        console.error("Update failed:", result.error);
-        alert("Failed to update record: " + (result.error || "Please try again."));
-      }
+      setEditOpen(false);
+      setEditingRecord(null);
+      fetchData();
     } catch (error: any) {
       console.error("Error updating record:", error);
       alert("Error updating record: " + (error?.message || "Please check console."));

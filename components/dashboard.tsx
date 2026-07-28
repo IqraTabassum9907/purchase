@@ -53,6 +53,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { parseSheetDate, formatDate } from "@/lib/utils";
+import { supabase } from "@/lib/supabase/client";
+import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
 import {
   DropdownMenu,
@@ -145,457 +147,260 @@ export default function PurchaseDashboard() {
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   useEffect(() => {
-    const fetchPOData = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URI}?sheet=INDENT-LIFT`);
-        const result = await response.json();
-
-        if (result.success && result.data) {
-          // Data starts from row 7, so we subtract 6 from the total rows if rows are >= 7
-          // Assuming result.data contains all rows including empty leading ones if fetched by range,
-          // OR if fetched by getDataRange(), it might exclude empty leading rows if they are truly empty.
-          // However, user said "data is count from the INDENT-LIFT sheet... count is started from the row 7"
-          // Let's assume result.data is the array of rows.
-
-          // If the sheet has headers and data starting from row 7 properly structured:
-          // We can just use result.data.length if the backend returns only the data range.
-          // But based on "entries ... started from row 7", likely we need to be careful.
-          // If the backend returns `sheet.getDataRange().getValues()`, it returns everything.
-          // If the sheet is completely empty above row 7, getDataRange might start from row 7.
-
-          // Let's use the user's specific logic: "total entries of this sheet will show and the count is started from the row 7"
-          // If we get an array of rows, and we want to count items starting from implied row 7:
-          // It's safest to assume the backend `fetchSheetData` (which I saw in the user prompt) uses `sheet.getDataRange().getDisplayValues()`.
-
-          // Actually, let's look at the backend code provided in the prompt:
-          // function fetchSheetData(sheetName) { ... var data = sheet.getDataRange().getDisplayValues(); ... }
-          // This returns a 2D array of the used range.
-
-          // If the sheet has data starting at row 7, and say row 1-6 are headers/empty... 
-          // Implementation: Just show the length of the data array?
-          // Wait, "count is started from the row 7". This implies row 1-6 are NOT query data.
-          // A simple `data.length` might include the top 6 rows if they have content (headers etc).
-          // So `Math.max(0, result.data.length - 6)` is a reasonable interpretation if the data range starts at A1.
-
-          // BUT, `getDataRange()` shrinks to the actual data. If A1:A6 is empty, it starts at A7.
-          // Given the ambiguity, I'll stick to the count of actual data rows returned, 
-          // but if the user implies there's a strict "start from row 7" rule (meaning header/meta is above),
-          // subtracting 6 is the explicit instruction derived from "count is started from the row 7".
-          // HOWEVER, looking at the provided snippet: `const data = sheet.getDataRange().getValues();`
-
-          // Let's go with the user's explicit instruction about row 7.
-          // If the sheet has headers in row 1-6, `getDataRange` returns them.
-          // So `result.data.length - 6` is the correct logic for "entries... started from row 7".
-
-          const totalRows = result.data.length;
-          const count = Math.max(0, totalRows - 6);
-          setTotalPurchaseOrders(count);
-
-          // Calculate Pending & Completed POs
-          let pendingCount = 0;
-          let completedCount = 0;
-          const parsedPurchaseItems = [];
-          const parsedOverviewItems = [];
-
-          if (totalRows > 6) {
-            for (let i = 6; i < totalRows; i++) {
-              const row = result.data[i];
-              // Skip empty rows (Indent No is in Column B, index 1)
-              if (!row || !row[1]) continue;
-
-              // Ensure row has enough columns just in case
-              if (row.length > 51) {
-                const azValue = row[51];
-                const baValue = row[52]; // Might be undefined
-
-                const isAzNotNull = azValue !== null && azValue !== undefined && String(azValue).trim() !== "";
-                const isBaNotNull = baValue !== null && baValue !== undefined && String(baValue).trim() !== "";
-                const isBaNull = !isBaNotNull;
-
-                // Pending: AZ present, BA missing (This is also the "Purchase Data" list)
-                // AZ = Index 51
-                // BA = Index 52
-
-                if (isAzNotNull && isBaNull) {
-                  pendingCount++;
-                  parsedPurchaseItems.push({
-                    erp: row[54],          // Col BC - ERP PO Number
-                    material: row[4],      // Col E - Material Name
-                    party: row[3],         // Col D - Party Name
-                    qty: row[5],           // Col F - Quantity
-                    warehouse: row[6],     // Col G - Warehouse Location
-                    leadTime: row[8],      // Col I - Lead Time
-                    expDelivery: row[7],   // Col H - Expected Delivery Date
-                  });
-                }
-
-                // Completed: AZ present AND BA present (Keeping original logic for completed count if not asked to change)
-                // User only specified Purchase Data tab logic changes, assuming Completed logic remains based on BA or should it be BZ?
-                // User said "dont change anything in other tabs like overview...", so I will leave completed logic as is (BA check).
-                if (isAzNotNull && isBaNotNull) {
-                  completedCount++;
-                }
-
-                // Overview Data: All valid rows (Unfiltered)
-                if (row[1]) {
-                  // Calculate Status based on Col J (9) and Col K (10)
-                  // J present, K missing -> Pending Indent
-                  // J present, K present -> Approved Indent
-
-                  // Re-use has/missing helpers if possible, but they are defined inside the stage loop which isn't creating these closures for this scope yet.
-                  // We'll implement inline strict checks.
-
-                  const colJ = row[9];
-                  const colK = row[10];
-
-                  const hasJ = colJ !== null && colJ !== undefined && (typeof colJ === 'string' ? colJ.trim() !== "" : colJ !== "");
-                  const hasK = colK !== null && colK !== undefined && (typeof colK === 'string' ? colK.trim() !== "" : colK !== "");
-
-                  let computedStatus = row[13] || "Pending"; // Default fallback
-
-                  if (hasJ) {
-                    if (!hasK) {
-                      computedStatus = "Pending Indent";
-                    } else {
-                      computedStatus = "Approved Indent";
-                    }
-                  }
-
-                  parsedOverviewItems.push({
-                    indent: row[1],        // Col B
-                    createdBy: row[2],     // Col C
-                    category: row[3],      // Col D
-                    item: row[4],          // Col E
-                    qty: row[5],           // Col F
-                    warehouse: row[6],     // Col G
-                    expDelivery: row[7],   // Col H
-                    leadTime: row[8],      // Col I
-                    status: computedStatus,
-                  });
-                }
-              }
-            }
-          }
-          setPendingPOs(pendingCount);
-          setCompletedPOs(completedCount);
-          setPurchaseItems(parsedPurchaseItems);
-          setOverviewItems(parsedOverviewItems);
-
-          // Calculate Pending Items by Stage (Only PO Stages)
-          const poStages = ["Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting"];
-          const counts: Record<string, number> = {};
-          const overdueCounts: Record<string, number> = {};
-          poStages.forEach(name => {
-            counts[name] = 0;
-            overdueCounts[name] = 0;
-          });
-
-          if (totalRows > 6) {
-            for (let i = 6; i < totalRows; i++) {
-              const row = result.data[i];
-              if (!row || !row[1]) continue;
-
-              const has = (idx: number) => {
-                const val = row[idx];
-                if (val === null || val === undefined) return false;
-                if (typeof val === 'string') return val.trim() !== "" && val.trim() !== "-";
-                return val !== "";
-              };
-
-              const missing = (idx: number) => !has(idx);
-
-              const check = (name: string, start: number, actual: number, delayIdx: number) => {
-                if (has(start) && missing(actual)) {
-                  counts[name]++;
-                  if (has(delayIdx)) overdueCounts[name]++;
-                }
-              };
-
-              // Indices verified against stage components
-              check("Indent Approval", 9, 10, 11);
-              check("Quotation", 45, 46, 47);
-              check("Approved Vendor", 46, 51, 46);
-              check("Make PO", 51, 52, 53);
-              check("Payment", 72, 73, 72);
-              check("Follow UP / Lifting", 60, 61, 62);
-            }
-          }
-
-          setStageCounts((prev: any) => ({ ...prev, ...counts }));
-          setStageOverdueCounts((prev: any) => ({ ...prev, ...overdueCounts }));
-
-          // Calculate Completion Rate
-          const rate = count > 0 ? (completedCount / count) * 100 : 0;
-          setCompletionRate(Math.round(rate));
-        }
-      } catch (error) {
-        console.error("Error fetching purchase orders:", error);
-      }
-    };
-
-
-
-    const fetchReceivedData = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URI}?sheet=RECEIVING-ACCOUNTS`);
-        const result = await response.json();
-
-        if (result.success && result.data) {
-          const rows = result.data;
-
-          const parsedReceived = [];
-          const parsedInTransit = [];
-          const vendorStats: Record<string, { totalCount: number; totalValue: number; products: Record<string, number> }> = {};
-
-          // Data starts from row 7 (index 6)
-          for (let i = 6; i < rows.length; i++) {
-            const row = rows[i];
-            // Safety check for row length
-            if (!row || row.length < 21) continue;
-
-            const colT = row[19]; // Index 19 = T
-            const colU = row[20]; // Index 20 = U
-
-            // Common item structure
-            const item = {
-              erp: row[4],       // Col E
-              material: row[7],  // Col H
-              party: row[3],     // Col D
-              billImage: row[18],// Col S
-              truck: row[10],    // Col K
-              date: row[16],     // Col Q
-              qty: row[8],       // Col I
-            };
-
-            // Check if column T is not null/empty
-            if (colT) {
-              if (colU) {
-                // Received: Both T and U present
-                parsedReceived.push(item);
-
-                // --- TOP RECEIVED ORDER LOGIC ---
-                // Aggregate statistics ONLY for fully received items
-                const vendorName = row[3]; // Col D
-                const productName = row[7]; // Col H
-                // Value from Col O (Index 14) - Freight Amount
-                const valStr = String(row[14] || "0").replace(/,/g, '');
-                const value = parseFloat(valStr) || 0;
-
-                if (vendorName && productName) {
-                  if (!vendorStats[vendorName]) {
-                    vendorStats[vendorName] = { totalCount: 0, totalValue: 0, products: {} };
-                  }
-                  vendorStats[vendorName].totalCount++;
-                  vendorStats[vendorName].totalValue += value;
-
-                  if (!vendorStats[vendorName].products[productName]) {
-                    vendorStats[vendorName].products[productName] = 0;
-                  }
-                  vendorStats[vendorName].products[productName]++;
-                }
-
-              } else {
-                // In-Transit: T present, U missing
-                parsedInTransit.push(item);
-              }
-            }
-          }
-          setReceivedItems(parsedReceived);
-          setInTransitItems(parsedInTransit);
-
-          // Process Top Orders
-          const processedOrders = Object.entries(vendorStats).map(([vendor, stats]) => {
-            // Find top product for this vendor
-            let topProduct = "";
-            let maxProdCount = 0;
-
-            Object.entries(stats.products).forEach(([prod, count]) => {
-              if (count > maxProdCount) {
-                maxProdCount = count;
-                topProduct = prod;
-              }
-            });
-
-            return {
-              vendor,
-              product: topProduct,
-              count: stats.products[topProduct] || 0, // Product Count
-              vendorTotalCount: stats.totalCount,     // For sorting
-              value: stats.totalValue                 // Vendor Total Value
-            };
-          });
-
-          // Sort by Vendor Total Received Count (Desc)
-          processedOrders.sort((a, b) => b.vendorTotalCount - a.vendorTotalCount);
-          setTopReceivedOrders(processedOrders.slice(0, 10));
-
-          // Calculate Pending Items by Stage (Only RA Stages)
-          const raStages = ["Transporter Follow-Up", "Material Received", "Purchase Return", "Billing"];
-          const recCounts: Record<string, number> = {};
-          const overdueRecCounts: Record<string, number> = {};
-          raStages.forEach(name => {
-            recCounts[name] = 0;
-            overdueRecCounts[name] = 0;
-          });
-
-          if (rows.length > 6) {
-            for (let i = 6; i < rows.length; i++) {
-              const r = rows[i];
-              if (!r || !r[1]) continue;
-
-              const has = (idx: number) => r[idx] !== null && r[idx] !== undefined && String(r[idx]).trim() !== "" && String(r[idx]).trim() !== "-";
-              const missing = (idx: number) => !has(idx);
-
-              const check = (name: string, start: number, actual: number, plan: number) => {
-                if (has(start) && missing(actual)) {
-                  recCounts[name]++;
-                  if (has(plan)) overdueRecCounts[name]++;
-                }
-              };
-
-              // Indices verified against specialized stage components:
-              check("Transporter Follow-Up", 88, 89, 88);
-              check("Material Received", 19, 20, 19);
-              check("Billing", 35, 36, 35);
-              check("Purchase Return", 63, 64, 63);
-            }
-          }
-
-          setStageCounts((prev: any) => ({ ...prev, ...recCounts }));
-          setStageOverdueCounts((prev: any) => ({ ...prev, ...overdueRecCounts }));
-        }
-      } catch (error) {
-        console.error("Error fetching received data:", error);
-      }
-    };
-
-    const fetchVendorPayments = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URI}?sheet=VENDOR-PAYMENTS`);
-        const result = await response.json();
-
-        if (result.success && result.data) {
-          const rows = result.data;
-          let count = 0;
-          let overdue = 0;
-
-          for (let i = 6; i < rows.length; i++) {
-            const row = rows[i];
-            if (!row || !row[1]) continue;
-            const has = (idx: number) => row[idx] !== null && row[idx] !== undefined && String(row[idx]).trim() !== "" && String(row[idx]).trim() !== "-";
-            const missing = (idx: number) => !has(idx);
-
-            if (has(13) && missing(14)) {
-              count++;
-              if (has(13)) overdue++; // Payment is usually overdue if planned exists but actual doesn't
-            }
-          }
-          setStageCounts((prev: any) => ({ ...prev, "Vendor Payment": count }));
-          setStageOverdueCounts((prev: any) => ({ ...prev, "Vendor Payment": overdue }));
-        }
-      } catch (error) {
-        console.error("Error fetching vendor payments:", error);
-      }
-    };
-
-    const fetchFreightPayments = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URI}?sheet=FREIGHT-PAYMENTS`);
-        const result = await response.json();
-
-        if (result.success && result.data) {
-          const rows = result.data;
-          let count = 0;
-          let overdue = 0;
-
-          for (let i = 6; i < rows.length; i++) {
-            const row = rows[i];
-            if (!row || !row[1]) continue;
-            const has = (idx: number) => row[idx] !== null && row[idx] !== undefined && String(row[idx]).trim() !== "" && String(row[idx]).trim() !== "-";
-            const missing = (idx: number) => !has(idx);
-
-            if (has(9) && missing(10)) {
-              count++;
-              if (has(9)) overdue++;
-            }
-          }
-          setStageCounts((prev: any) => ({ ...prev, "Freight Payments": count }));
-          setStageOverdueCounts((prev: any) => ({ ...prev, "Freight Payments": overdue }));
-        }
-      } catch (error) {
-        console.error("Error fetching freight payments:", error);
-      }
-    };
-
-    const fetchCancelledOrders = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URI}?sheet=ORDER-CANCEL`);
-        const result = await response.json();
-        if (result.success && result.data) {
-          const rows = result.data;
-          const count = Math.max(0, rows.length - 1);
-          setStageCounts((prev: any) => ({ ...prev, "Order Cancel": count }));
-          setStageOverdueCounts((prev: any) => ({ ...prev, "Order Cancel": 0 }));
-        }
-      } catch (error) {
-        console.error("Error fetching cancelled orders:", error);
-      }
-    };
-
-    const fetchWarrantyData = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URI}?sheet=Serial-Generation`);
-        const result = await response.json();
-
-        if (result.success && result.data) {
-          const rows = result.data;
-          const parsedWarranty = [];
-
-          // Data starts from row 7 (index 6)
-          for (let i = 6; i < rows.length; i++) {
-            const row = rows[i];
-            if (!row || row.length < 8) continue;
-
-            // Filter out empty rows (check Indent No and Vendor Name)
-            const indentNo = row[0] ? String(row[0]).trim() : "";
-            const vendorName = row[4] ? String(row[4]).trim() : "";
-
-            if (!indentNo && !vendorName) continue;
-
-            parsedWarranty.push({
-              indentNo: indentNo,
-              liftNo: row[1] ? String(row[1]).trim() : "",
-              serialCode: row[2] ? String(row[2]).trim() : "",
-              serialNo: row[3] ? String(row[3]).trim() : "",
-              vendorName: vendorName,
-              itemName: row[5] ? String(row[5]).trim() : "",
-              invoiceDate: row[6] ? String(row[6]).trim() : "",
-              warrantyEnd: row[7] ? String(row[7]).trim() : "",
-              // Map to common fields for filters
-              party: vendorName,
-              material: row[5] ? String(row[5]).trim() : "",
-              date: row[6] ? String(row[6]).trim() : "",
-              erp: indentNo
-            });
-          }
-          setWarrantyItems(parsedWarranty);
-        }
-      } catch (error) {
-        console.error("Error fetching warranty data:", error);
-      }
-    };
-
     const fetchAll = async () => {
       setLoading(true);
-      await Promise.all([
-        fetchPOData(),
-        fetchReceivedData(),
-        fetchVendorPayments(),
-        fetchFreightPayments(),
-        fetchWarrantyData(),
-        fetchCancelledOrders()
-      ]);
-      setLoading(false);
+      try {
+        const [
+          indentWorkflow,
+          poRes,
+          receiptsRes,
+          liftingsRes,
+          transportRes,
+          vendorPayRes,
+          cancellationsRes,
+          billingRes,
+          returnsRes,
+        ] = await Promise.all([
+          fetchIndentWorkflow(),
+          supabase.from("purchase_orders").select("*"),
+          supabase.from("material_receipts").select("*"),
+          supabase.from("vendor_liftings").select("*"),
+          supabase.from("transporter_followups").select("*"),
+          supabase.from("vendor_payments").select("*"),
+          supabase.from("order_cancellations").select("*"),
+          supabase.from("tally_billing").select("*"),
+          supabase.from("purchase_returns").select("*"),
+        ]);
+
+        const pos = poRes.data || [];
+        const receipts = receiptsRes.data || [];
+        const liftings = liftingsRes.data || [];
+        const transports = transportRes.data || [];
+        const vendorPayments = vendorPayRes.data || [];
+        const cancellations = cancellationsRes.data || [];
+        const billings = billingRes.data || [];
+        const returns = returnsRes.data || [];
+
+        const poByIndent = new Map<string, any>();
+        pos.forEach((po: any) => {
+          if (po.indent_id && !poByIndent.has(po.indent_id)) {
+            poByIndent.set(po.indent_id, po);
+          }
+        });
+
+        const paymentsByPo = new Map<string, any[]>();
+        vendorPayments.forEach((p: any) => {
+          if (p.po_id) {
+            const list = paymentsByPo.get(p.po_id) || [];
+            list.push(p);
+            paymentsByPo.set(p.po_id, list);
+          }
+        });
+
+        const liftingsByPo = new Map<string, any>();
+        liftings.forEach((l: any) => {
+          if (l.po_id && !liftingsByPo.has(l.po_id)) {
+            liftingsByPo.set(l.po_id, l);
+          }
+        });
+
+        const transportsByPo = new Map<string, any>();
+        transports.forEach((t: any) => {
+          if (t.po_id && !transportsByPo.has(t.po_id)) {
+            transportsByPo.set(t.po_id, t);
+          }
+        });
+
+        const receiptsByPo = new Map<string, any>();
+        receipts.forEach((r: any) => {
+          if (r.po_id && !receiptsByPo.has(r.po_id)) {
+            receiptsByPo.set(r.po_id, r);
+          }
+        });
+
+        const billingsByPo = new Map<string, any>();
+        billings.forEach((b: any) => {
+          if (b.po_id && !billingsByPo.has(b.po_id)) {
+            billingsByPo.set(b.po_id, b);
+          }
+        });
+
+        const totalPOs = indentWorkflow.length;
+        const completedCount = indentWorkflow.filter((r) => {
+          const po = poByIndent.get(r.id);
+          return po && (po.status === "completed" || po.status === "delivered");
+        }).length;
+        const pendingCount = totalPOs - completedCount;
+
+        setTotalPurchaseOrders(totalPOs);
+        setPendingPOs(pendingCount);
+        setCompletedPOs(completedCount);
+        setCompletionRate(totalPOs > 0 ? Math.round((completedCount / totalPOs) * 100) : 0);
+
+        const counts: Record<string, number> = {};
+        const overdueCounts: Record<string, number> = {};
+
+        counts["Indent Approval"] = indentWorkflow.filter((r) => !r.data.actual1).length;
+        overdueCounts["Indent Approval"] = 0;
+
+        counts["Quotation"] = indentWorkflow.filter((r) =>
+          r.data.actual1 &&
+          r.data.vendorType?.toLowerCase() !== "regular" &&
+          !r.data.plan3 &&
+          !r.data.plan4
+        ).length;
+        overdueCounts["Quotation"] = 0;
+
+        counts["Approved Vendor"] = indentWorkflow.filter((r) =>
+          r.data.actual3 &&
+          r.data.vendorType?.toLowerCase() !== "regular" &&
+          !r.data.plan4
+        ).length;
+        overdueCounts["Approved Vendor"] = 0;
+
+        counts["Make PO"] = indentWorkflow.filter((r) =>
+          ((r.data.vendorType?.toLowerCase() === "regular" && r.data.actual1) || r.data.plan4) &&
+          !r.data.poNumber
+        ).length;
+        overdueCounts["Make PO"] = 0;
+
+        counts["Payment"] = pos.filter((p: any) => !paymentsByPo.has(p.id)).length;
+        overdueCounts["Payment"] = 0;
+
+        counts["Follow UP / Lifting"] = pos.filter((p: any) => !liftingsByPo.has(p.id)).length;
+        overdueCounts["Follow UP / Lifting"] = 0;
+
+        counts["Transporter Follow-Up"] = liftings.filter((l: any) => l.po_id && !transportsByPo.has(l.po_id)).length;
+        overdueCounts["Transporter Follow-Up"] = 0;
+
+        counts["Material Received"] = transports.filter((t: any) =>
+          t.po_id &&
+          (t.status === "Received" || t.status === "Completed" || t.status === "Approved" || t.status === "Delivered" || t.status === "Complete") &&
+          !receiptsByPo.has(t.po_id)
+        ).length;
+        overdueCounts["Material Received"] = 0;
+
+        counts["Purchase Return"] = returns.length;
+        overdueCounts["Purchase Return"] = 0;
+
+        counts["Billing"] = receipts.filter((r: any) => r.po_id && !billingsByPo.has(r.po_id)).length;
+        overdueCounts["Billing"] = 0;
+
+        counts["Vendor Payment"] = billings.filter((b: any) => b.po_id && !paymentsByPo.has(b.po_id)).length;
+        overdueCounts["Vendor Payment"] = 0;
+
+        counts["Freight Payments"] = 0;
+        overdueCounts["Freight Payments"] = 0;
+
+        counts["Order Cancel"] = cancellations.length;
+        overdueCounts["Order Cancel"] = 0;
+
+        setStageCounts(counts);
+        setStageOverdueCounts(overdueCounts);
+
+        const parsedPurchaseItems = indentWorkflow
+          .filter((r) => r.data.plan4 && !r.data.poNumber)
+          .map((r) => ({
+            erp: r.data.poNumber || "",
+            material: r.data.itemName,
+            party: r.data.selectedVendorName || r.data.category,
+            qty: r.data.quantity,
+            warehouse: r.data.warehouseLocation,
+            leadTime: r.data.leadTime,
+            expDelivery: "",
+          }));
+        setPurchaseItems(parsedPurchaseItems);
+
+        const parsedOverviewItems = indentWorkflow.map((r) => {
+          let status = "Pending";
+          if (r.data.actual1) {
+            status = r.data.plan3 ? "Approved Indent" : "Pending Indent";
+          }
+          return {
+            indent: r.data.indentNumber,
+            createdBy: r.data.createdBy,
+            category: r.data.category,
+            item: r.data.itemName,
+            qty: r.data.quantity,
+            warehouse: r.data.warehouseLocation,
+            expDelivery: r.data.leadTime,
+            leadTime: r.data.leadTime,
+            status,
+          };
+        });
+        setOverviewItems(parsedOverviewItems);
+
+        const parsedInTransit = transports
+          .filter((t: any) => t.po_id && !receiptsByPo.has(t.po_id))
+          .map((t: any) => {
+            const po = t.po_id ? pos.find((p: any) => p.id === t.po_id) : null;
+            return {
+              erp: po?.po_number || "",
+              material: po?.item_name || "",
+              party: po?.vendor_name || "",
+              billImage: "",
+              truck: t.vehicle_number || "",
+              date: t.dispatch_date || "",
+              qty: po?.quantity || 0,
+            };
+          });
+        setInTransitItems(parsedInTransit);
+
+        const parsedReceived = receipts.map((r: any) => {
+          const po = r.po_id ? pos.find((p: any) => p.id === r.po_id) : null;
+          return {
+            erp: po?.po_number || "",
+            material: po?.item_name || "",
+            party: po?.vendor_name || "",
+            billImage: r.bilty_invoice_image_url || "",
+            truck: "",
+            date: r.received_date || "",
+            qty: r.received_quantity || 0,
+          };
+        });
+        setReceivedItems(parsedReceived);
+
+        const vendorStats: Record<string, { totalCount: number; totalValue: number; products: Record<string, number> }> = {};
+        parsedReceived.forEach((item) => {
+          if (item.party && item.material) {
+            if (!vendorStats[item.party]) {
+              vendorStats[item.party] = { totalCount: 0, totalValue: 0, products: {} };
+            }
+            vendorStats[item.party].totalCount++;
+            vendorStats[item.party].totalValue += parseFloat(String(item.qty || "0").replace(/,/g, "")) || 0;
+            if (!vendorStats[item.party].products[item.material]) {
+              vendorStats[item.party].products[item.material] = 0;
+            }
+            vendorStats[item.party].products[item.material]++;
+          }
+        });
+
+        const processedOrders = Object.entries(vendorStats).map(([vendor, stats]) => {
+          let topProduct = "";
+          let maxProdCount = 0;
+          Object.entries(stats.products).forEach(([prod, count]) => {
+            if (count > maxProdCount) {
+              maxProdCount = count;
+              topProduct = prod;
+            }
+          });
+          return {
+            vendor,
+            product: topProduct,
+            count: stats.products[topProduct] || 0,
+            vendorTotalCount: stats.totalCount,
+            value: stats.totalValue,
+          };
+        });
+        processedOrders.sort((a, b) => b.vendorTotalCount - a.vendorTotalCount);
+        setTopReceivedOrders(processedOrders.slice(0, 10));
+
+        setWarrantyItems([]);
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchAll();
@@ -769,219 +574,295 @@ export default function PurchaseDashboard() {
       const { pdf } = await import("@react-pdf/renderer");
       const { ReportDocument } = await import("./report-pdf");
 
-      const API = process.env.NEXT_PUBLIC_API_URI;
-      const [fmsRes, raRes, masterRes, warrantyRes, partialRes, vendorRes, freightRes, transportRes] = await Promise.all([
-        fetch(`${API}?sheet=INDENT-LIFT`),
-        fetch(`${API}?sheet=RECEIVING-ACCOUNTS`),
-        fetch(`${API}?sheet=Master`),
-        fetch(`${API}?sheet=Serial-Generation`),
-        fetch(`${API}?sheet=${encodeURIComponent("Partial QC")}`),
-        fetch(`${API}?sheet=VENDOR-PAYMENTS`),
-        fetch(`${API}?sheet=FREIGHT-PAYMENTS`),
-        fetch(`${API}?sheet=${encodeURIComponent("Transport Flw-Up")}`),
+      const [
+        indentWorkflow,
+        poRes,
+        receiptsRes,
+        liftingsRes,
+        transportRes,
+        vendorPayRes,
+        cancellationsRes,
+        billingRes,
+        returnsRes,
+        masterRes,
+      ] = await Promise.all([
+        fetchIndentWorkflow(),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("material_receipts").select("*"),
+        supabase.from("vendor_liftings").select("*"),
+        supabase.from("transporter_followups").select("*"),
+        supabase.from("vendor_payments").select("*"),
+        supabase.from("order_cancellations").select("*"),
+        supabase.from("tally_billing").select("*"),
+        supabase.from("purchase_returns").select("*"),
+        supabase.from("master_items").select("*"),
       ]);
-      const [fmsJson, raJson, masterJson, warrantyJson, partialJson, vendorJson, freightJson, transportJson] = await Promise.all([
-        fmsRes.json(), raRes.json(), masterRes.json(), warrantyRes.json(), partialRes.json(), vendorRes.json(), freightRes.json(), transportRes.json()
-      ]);
 
-      if (!fmsJson.success || !raJson.success || !masterJson.success || !warrantyJson.success || !partialJson.success || !vendorJson.success || !freightJson.success || !transportJson.success) {
-        throw new Error("Failed fetching comprehensive data for report");
-      }
+      const pos = poRes.data || [];
+      const receipts = receiptsRes.data || [];
+      const liftings = liftingsRes.data || [];
+      const transports = transportRes.data || [];
+      const vendorPayments = vendorPayRes.data || [];
+      const billings = billingRes.data || [];
+      const returns = returnsRes.data || [];
+      const masterData = masterRes.data || [];
 
-      const fmsRows = fmsJson.data;
-      const raRows = raJson.data;
-      const masterRows = masterJson.data;
-      const warrantyRows = warrantyJson.data;
-      const partialRows = partialJson.data;
-      const vendorRows = vendorJson.data;
-      const freightRows = freightJson.data;
+      const poByIndent = new Map<string, any>();
+      pos.forEach((po: any) => {
+        if (po.indent_id && !poByIndent.has(po.indent_id)) {
+          poByIndent.set(po.indent_id, po);
+        }
+      });
 
-      // Map Responsible Persons from Master sheet (Col G -> Stage, Col H -> Responsible)
+      const paymentsByPo = new Map<string, any[]>();
+      vendorPayments.forEach((p: any) => {
+        if (p.po_id) {
+          const list = paymentsByPo.get(p.po_id) || [];
+          list.push(p);
+          paymentsByPo.set(p.po_id, list);
+        }
+      });
+
+      const liftingsByPo = new Map<string, any>();
+      liftings.forEach((l: any) => {
+        if (l.po_id && !liftingsByPo.has(l.po_id)) {
+          liftingsByPo.set(l.po_id, l);
+        }
+      });
+
+      const transportsByPo = new Map<string, any>();
+      transports.forEach((t: any) => {
+        if (t.po_id && !transportsByPo.has(t.po_id)) {
+          transportsByPo.set(t.po_id, t);
+        }
+      });
+
+      const receiptsByPo = new Map<string, any>();
+      receipts.forEach((r: any) => {
+        if (r.po_id && !receiptsByPo.has(r.po_id)) {
+          receiptsByPo.set(r.po_id, r);
+        }
+      });
+
+      const billingsByPo = new Map<string, any>();
+      billings.forEach((b: any) => {
+        if (b.po_id && !billingsByPo.has(b.po_id)) {
+          billingsByPo.set(b.po_id, b);
+        }
+      });
+
       const respMap: Record<string, string> = {};
-      if (Array.isArray(masterRows)) {
-        masterRows.slice(1).forEach((row: any) => {
-          const stageName = row[6]; // Col G
-          const respPerson = row[7]; // Col H
-          if (stageName && respPerson) {
-            respMap[String(stageName).trim()] = String(respPerson).trim();
-          }
-        });
-      }
-
-      // Build transport lookup
-      const transportMap = new Map<string, string>();
-      if (transportJson.success && Array.isArray(transportJson.data)) {
-        transportJson.data.slice(1).forEach((row: any) => {
-          const liftNo = row[1]; // Column B
-          const exDate = row[4]; // Column E
-          if (liftNo) transportMap.set(String(liftNo).trim(), String(exDate || ""));
-        });
-      }
+      masterData.forEach((item: any) => {
+        if (item.category_type && item.item_value) {
+          respMap[String(item.category_type).trim()] = String(item.item_value).trim();
+        }
+      });
 
       const totalCounts: Record<string, number> = {};
       const overdueCounts: Record<string, number> = {};
-      purchaseStages.forEach(s => {
+      purchaseStages.forEach((s) => {
         totalCounts[s.name] = 0;
         overdueCounts[s.name] = 0;
       });
 
       const detailed: any[] = [];
-      const fmsHas = (r: any, idx: number) => r[idx] !== null && r[idx] !== undefined && String(r[idx]).trim() !== "" && String(r[idx]).trim() !== "-";
-      const fmsMiss = (r: any, idx: number) => !fmsHas(r, idx);
-
-      // Track unique POs for Lifting
       const liftingPOs = new Set<string>();
 
-      // FMS loop logic
-      for (let i = 6; i < fmsRows.length; i++) {
-        const r = fmsRows[i];
-        if (!r || !r[1]) continue;
+      indentWorkflow.forEach((r) => {
+        const po = poByIndent.get(r.id);
 
-        const checkStage = (name: string, start: number, actual: number, plan: number, delayIdx: number, mode: 'category' | 'vendor' | 'default' = 'default') => {
-          if (fmsHas(r, start) && fmsMiss(r, actual)) {
-            totalCounts[name]++;
-            if (fmsHas(r, delayIdx)) {
-              overdueCounts[name]++;
+        if (!r.data.actual1) {
+          totalCounts["Indent Approval"]++;
+          overdueCounts["Indent Approval"]++;
+          detailed.push({
+            indent: r.data.indentNumber || "-",
+            party: r.data.createdBy || "-",
+            item: r.data.itemName || "-",
+            qty: r.data.quantity || "-",
+            stage: "Indent Approval",
+            delay: "0",
+            poNumber: "-",
+          });
+        }
 
-              let party = "-";
-              if (name === "Indent Approval") {
-                party = r[2] || "-"; // Created By
-              } else if (mode === 'category') {
-                party = r[3] || "-";
-              } else if (mode === 'vendor') {
-                const awName = String(r[48] || "").trim();
-                const axName = String(r[49] || "").trim();
-                const avName = String(r[47] || "").trim();
-                const selectedId = avName.toLowerCase();
+        const isRegularVendor = r.data.vendorType?.toLowerCase() === "regular";
 
-                if (awName && awName !== "-") {
-                  party = awName;
-                } else if (selectedId.includes("vendor1") || selectedId === "1" || selectedId === "vendor 1") {
-                  party = r[21] || "-";
-                } else if (selectedId.includes("vendor2") || selectedId === "2" || selectedId === "vendor 2") {
-                  party = r[29] || "-";
-                } else if (selectedId.includes("vendor3") || selectedId === "3" || selectedId === "vendor 3") {
-                  party = r[37] || "-";
-                } else if (axName && axName !== "-" && isNaN(Date.parse(axName)) && isNaN(Number(axName))) {
-                  party = axName;
-                } else if (avName && avName !== "-" && isNaN(Date.parse(avName)) && isNaN(Number(avName))) {
-                  party = avName;
-                } else {
-                  party = r[3] || "-"; // Fallback to category
-                }
-              } else {
-                party = r[3] || "-";
-              }
+        if (r.data.actual1 && !isRegularVendor && !r.data.plan3 && !r.data.plan4) {
+          totalCounts["Quotation"]++;
+          overdueCounts["Quotation"]++;
+          detailed.push({
+            indent: r.data.indentNumber || "-",
+            party: r.data.category || "-",
+            item: r.data.itemName || "-",
+            qty: r.data.quantity || "-",
+            stage: "Quotation",
+            delay: "0",
+            poNumber: "-",
+          });
+        }
 
-              const qty = (name === "Make PO" || name === "Payment" || name === "Follow UP / Lifting" || name === "Approved Vendor" || name === "Quotation") ? (r[14] || r[5] || "-") : (r[5] || "-");
+        if (r.data.plan3 && !isRegularVendor && !r.data.plan4) {
+          totalCounts["Approved Vendor"]++;
+          overdueCounts["Approved Vendor"]++;
+          detailed.push({
+            indent: r.data.indentNumber || "-",
+            party: r.data.selectedVendorName || r.data.category || "-",
+            item: r.data.itemName || "-",
+            qty: r.data.quantity || "-",
+            stage: "Approved Vendor",
+            delay: "0",
+            poNumber: "-",
+          });
+        }
 
-              detailed.push({
-                indent: r[1] || "-",
-                party,
-                item: r[4] || "-",
-                qty: qty,
-                stage: name,
-                delay: r[delayIdx] || "0",
-                poNumber: r[54] || "-"
-              });
-            }
-          }
-        };
+        if (((isRegularVendor && r.data.actual1) || r.data.plan4) && !r.data.poNumber) {
+          totalCounts["Make PO"]++;
+          overdueCounts["Make PO"]++;
+          detailed.push({
+            indent: r.data.indentNumber || "-",
+            party: r.data.selectedVendorName || r.data.category || "-",
+            item: r.data.itemName || "-",
+            qty: r.data.quantity || "-",
+            stage: "Make PO",
+            delay: "0",
+            poNumber: "-",
+          });
+        }
 
-        checkStage("Indent Approval", 9, 10, 11, 11, 'category');
-        checkStage("Quotation", 45, 46, 45, 47, 'category');
-        checkStage("Approved Vendor", 46, 51, 46, 46, 'vendor');
-        checkStage("Make PO", 51, 52, 51, 53, 'vendor');
-        checkStage("Payment", 72, 73, 72, 72, 'vendor');
+        if (po && !paymentsByPo.has(po.id)) {
+          totalCounts["Payment"]++;
+          overdueCounts["Payment"]++;
+          detailed.push({
+            indent: r.data.indentNumber || "-",
+            party: po.vendor_name || "-",
+            item: po.item_name || "-",
+            qty: po.quantity || "-",
+            stage: "Payment",
+            delay: "0",
+            poNumber: po.po_number || "-",
+          });
+        }
 
-        // Lifting: unique PO deduplication logic
-        const fuvIsOverdue = fmsHas(r, 60) && fmsMiss(r, 61) && fmsHas(r, 62);
-        const fuvRawPo = String(r[54] || "").trim();
-        if (fuvIsOverdue && fuvRawPo && fuvRawPo !== "-") {
-          const poNumKey = fuvRawPo.toUpperCase().replace(/\s+/g, '');
+        if (po && !liftingsByPo.has(po.id)) {
           totalCounts["Follow UP / Lifting"]++;
           overdueCounts["Follow UP / Lifting"]++;
-          if (!liftingPOs.has(poNumKey)) {
+          const poNumKey = String(po.po_number || "").toUpperCase().replace(/\s+/g, "");
+          if (poNumKey && poNumKey !== "-" && !liftingPOs.has(poNumKey)) {
             liftingPOs.add(poNumKey);
-            let fuvParty = "-";
-            const awName = String(r[48] || "").trim();
-            const axName = String(r[49] || "").trim();
-            const avName = String(r[47] || "").trim();
-            const selectedId = avName.toLowerCase();
-            if (awName && awName !== "-") fuvParty = awName;
-            else if (selectedId.includes("vendor1") || selectedId === "1" || selectedId === "vendor 1") fuvParty = r[21] || "-";
-            else if (selectedId.includes("vendor2") || selectedId === "2" || selectedId === "vendor 2") fuvParty = r[29] || "-";
-            else if (selectedId.includes("vendor3") || selectedId === "3" || selectedId === "vendor 3") fuvParty = r[37] || "-";
-            else if (axName && axName !== "-" && isNaN(Date.parse(axName)) && isNaN(Number(axName))) fuvParty = axName;
-            else if (avName && avName !== "-" && isNaN(Date.parse(avName)) && isNaN(Number(avName))) fuvParty = avName;
-            else fuvParty = r[3] || "-";
             detailed.push({
-              indent: r[1] || "-",
-              party: fuvParty,
-              item: r[4] || "-",
-              qty: r[14] || r[5] || "-",
+              indent: r.data.indentNumber || "-",
+              party: po.vendor_name || r.data.selectedVendorName || "-",
+              item: po.item_name || r.data.itemName || "-",
+              qty: po.quantity || r.data.quantity || "-",
               stage: "Follow UP / Lifting",
-              delay: r[62] || "0",
-              poNumber: fuvRawPo,
-              plannedDate: r[60] || "-" // Column BI
+              delay: "0",
+              poNumber: po.po_number || "-",
+              plannedDate: "-",
             });
           }
         }
-      }
+      });
 
-      // RA loop logic
-      for (let i = 6; i < raRows.length; i++) {
-        const r = raRows[i];
-        if (!r || !r[1]) continue;
+      transports.forEach((t: any) => {
+        const po = t.po_id ? pos.find((p: any) => p.id === t.po_id) : null;
+        if (!po) return;
 
-        const checkStageRA = (name: string, start: number, actual: number, plan: number, delayIdx: number, itemIdx = 7) => {
-          if (fmsHas(r, start) && fmsMiss(r, actual)) {
-            totalCounts[name]++;
-            if (fmsHas(r, delayIdx)) {
-              overdueCounts[name]++;
-              const detail: any = {
-                indent: r[1] || "-",
-                party: r[3] || "-",
-                item: r[itemIdx] || "-",
-                qty: r[8] || "-",
-                stage: name,
-                delay: r[delayIdx] || "0",
-                poNumber: r[54] || "-"
-              };
+        if (!receiptsByPo.has(po.id)) {
+          totalCounts["Material Received"]++;
+          overdueCounts["Material Received"]++;
+          detailed.push({
+            indent: "-",
+            party: po.vendor_name || "-",
+            item: po.item_name || "-",
+            qty: po.quantity || "-",
+            stage: "Material Received",
+            delay: "0",
+            poNumber: po.po_number || "-",
+          });
+        }
+      });
 
-              if (name === "Transporter Follow-Up") {
-                const liftNo = String(r[2] || "").trim();
-                const expectedFromCP = r[93]; // Column CP
-                const hasCP = expectedFromCP && String(expectedFromCP).trim() !== "" && String(expectedFromCP).trim() !== "-";
-                const plannedDate = r[88]; // Column CK
+      receipts.forEach((r: any) => {
+        if (r.po_id && !billingsByPo.has(r.po_id)) {
+          const po = pos.find((p: any) => p.id === r.po_id);
+          totalCounts["Billing"]++;
+          overdueCounts["Billing"]++;
+          detailed.push({
+            indent: "-",
+            party: po?.vendor_name || "-",
+            item: po?.item_name || "-",
+            qty: po?.quantity || "-",
+            stage: "Billing",
+            delay: "0",
+            poNumber: po?.po_number || "-",
+          });
+        }
+      });
 
-                detail.expectedDate = hasCP ? expectedFromCP : (transportMap.get(liftNo) || plannedDate || "-");
-                detail.transporterName = r[9] || "-";
-              }
+      liftings.forEach((l: any) => {
+        const po = l.po_id ? pos.find((p: any) => p.id === l.po_id) : null;
+        if (!po) return;
 
-              detailed.push(detail);
-            }
-          }
-        };
+        if (!transportsByPo.has(po.id)) {
+          totalCounts["Transporter Follow-Up"]++;
+          overdueCounts["Transporter Follow-Up"]++;
+          detailed.push({
+            indent: "-",
+            party: po.vendor_name || "-",
+            item: po.item_name || "-",
+            qty: po.quantity || "-",
+            stage: "Transporter Follow-Up",
+            delay: "0",
+            poNumber: po.po_number || "-",
+          });
+        }
+      });
 
-        checkStageRA("Transporter Follow-Up", 88, 89, 88, 90, 7);
-        checkStageRA("Material Received", 19, 20, 19, 19, 7);
-        checkStageRA("Billing", 35, 36, 35, 35, 7);
-        checkStageRA("Purchase Return", 63, 64, 63, 63, 7);
-      }
+      billings.forEach((b: any) => {
+        if (b.po_id && !paymentsByPo.has(b.po_id)) {
+          const po = pos.find((p: any) => p.id === b.po_id);
+          totalCounts["Vendor Payment"]++;
+          overdueCounts["Vendor Payment"]++;
+          detailed.push({
+            indent: "-",
+            party: po?.vendor_name || "-",
+            item: po?.item_name || "-",
+            qty: po?.quantity || "-",
+            stage: "Vendor Payment",
+            delay: "0",
+            poNumber: po?.po_number || "-",
+          });
+        }
+      });
 
-      // Filter summary to only stages with overdueCount > 0 and only the 4 requested stages
+      returns.forEach((ret: any) => {
+        const po = ret.po_id ? pos.find((p: any) => p.id === ret.po_id) : null;
+        totalCounts["Purchase Return"]++;
+        overdueCounts["Purchase Return"]++;
+        detailed.push({
+          indent: "-",
+          party: ret.vendor_name || po?.vendor_name || "-",
+          item: po?.item_name || "-",
+          qty: ret.returned_quantity || "-",
+          stage: "Purchase Return",
+          delay: "0",
+          poNumber: po?.po_number || "-",
+        });
+      });
+
+      totalCounts["Order Cancel"] = 0;
+      overdueCounts["Order Cancel"] = 0;
+
       const allowedStages = ["Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up", "Material Received", "Purchase Return", "Billing"];
       const summaryData = purchaseStages
-        .filter(s => allowedStages.includes(s.name) && overdueCounts[s.name] > 0)
-        .map(s => ({
+        .filter((s) => allowedStages.includes(s.name) && overdueCounts[s.name] > 0)
+        .map((s) => ({
           stage: s.name,
           pending: overdueCounts[s.name],
           responsible: respMap[s.name] || "-",
-          uniquePoCount: s.name === "Follow UP / Lifting" ? liftingPOs.size : undefined
+          uniquePoCount: s.name === "Follow UP / Lifting" ? liftingPOs.size : undefined,
         }));
 
-      // Sort detailed data by stage sequence to match summary
       detailed.sort((a, b) => {
         const indexA = allowedStages.indexOf(a.stage);
         const indexB = allowedStages.indexOf(b.stage);
@@ -990,12 +871,11 @@ export default function PurchaseDashboard() {
 
       const blob = await pdf(<ReportDocument summaryData={summaryData} detailedData={detailed} />).toBlob();
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
-      link.download = `Purchase_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+      link.download = `Purchase_Report_${new Date().toISOString().split("T")[0]}.pdf`;
       link.click();
       URL.revokeObjectURL(url);
-
     } catch (e: any) {
       console.error(e);
       toast.error(e.message || "Failed to generate report");
