@@ -1286,7 +1286,7 @@ export default function UnifiedPaymentHub() {
                         </TableCell>
                         <TableCell className="p-3">{renderSafeValue(r.proof)}</TableCell>
                       </TableRow>
-                    )))
+                    ))
                   )}
                 </TableBody>
               </Table>

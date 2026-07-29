@@ -1150,8 +1150,9 @@ export default function Stage5() {
                         </TableCell>
                       </TableRow>
                     );
-                  }))}
-                </TableBody>
+                  })
+                )}
+              </tbody>
               </table>
             </div>
         </TabsContent>

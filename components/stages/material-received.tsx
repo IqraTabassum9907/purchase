@@ -1239,11 +1239,14 @@ export default function Stage7() {
                                                         })}
                                                     </TableRow>
                                                 );
-                                            }))}
+                                            })
+                                        )}
                                     </TableBody>
                                 </table>
                             </div>
                         </TabsContent>
+                    </>
+                )}
 
             {/* ==================== MODAL ==================== */}
             <Dialog open={open} onOpenChange={setOpen}>

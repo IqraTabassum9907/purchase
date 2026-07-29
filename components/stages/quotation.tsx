@@ -762,8 +762,9 @@ export default function Quotation() {
                         </TableCell>
                       </TableRow>
                     );
-                  }))}
-                </TableBody>
+                  })
+                )}
+              </tbody>
               </table>
             </div>
         </TabsContent>
