@@ -521,12 +521,12 @@ export default function Stage2() {
                             .filter((c) => selectedColumns.includes(c.key) &&
                               !["actualDate", "delay", "status", "remarks", "approvedQty"].includes(c.key))
                             .map((col) => (
-                              <TableCell key={col.key}>
-                                {col.key === "plannedDate" || col.key === "indentDate"
-                                  ? formatDateDash(record.data[col.key])
-                                  : col.key === "leadTime"
-                                  ? `${record.data[col.key] || 0} days`
-                                  : record.data[col.key] || "-"}
+                              <TableCell key={String(col.key)}>
+                                {(col.key as string) === "plannedDate" || (col.key as string) === "indentDate"
+                                  ? formatDateDash((record.data as any)[col.key])
+                                  : (col.key as string) === "leadTime"
+                                  ? `${(record.data as any)[col.key] || 0} days`
+                                  : (record.data as any)[col.key] || "-"}
                               </TableCell>
                             ))}
                         </TableRow>

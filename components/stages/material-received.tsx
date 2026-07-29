@@ -938,7 +938,7 @@ export default function Stage7() {
                         {/* ---------- PENDING ---------- */}
                         <TabsContent value="pending" className="mt-0 outline-none">
                             <div className="border rounded-lg overflow-x-auto h-[70vh] relative">
-                                <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
+                                <Table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
                                     <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                                         <TableRow className="hover:bg-transparent border-none">
                                             {activeTab === "pending" && (
@@ -1080,14 +1080,14 @@ export default function Stage7() {
                                             ))
                                         )}
                                     </TableBody>
-                                </table>
+                                </Table>
                             </div>
                         </TabsContent>
 
                         {/* ---------- HISTORY ---------- */}
                         <TabsContent value="history" className="mt-6">
                             <div className="border rounded-lg overflow-x-auto h-[70vh] relative">
-                                <table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
+                                <Table className="w-full caption-bottom text-sm border-separate border-spacing-0 min-w-max">
                                     <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                                         <TableRow className="hover:bg-transparent border-none">
                                             {HISTORY_COLUMNS.filter((c) =>
@@ -1242,11 +1242,12 @@ export default function Stage7() {
                                             })
                                         )}
                                     </TableBody>
-                                </table>
+                                </Table>
                             </div>
                         </TabsContent>
                     </>
                 )}
+            </Tabs>
 
             {/* ==================== MODAL ==================== */}
             <Dialog open={open} onOpenChange={setOpen}>

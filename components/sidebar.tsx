@@ -237,16 +237,18 @@ export default function Sidebar() {
       </div>
 
       <aside
-        className={`fixed lg:static top-0 left-0 h-full lg:h-auto w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 ease-in-out z-40 
+        className={`fixed lg:sticky top-0 left-0 h-screen w-64 bg-sidebar border-r border-sidebar-border flex flex-col transform transition-transform duration-300 ease-in-out z-40 
         ${isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
-        <div className="p-4 overflow-y-auto h-full scrollbar-hide">
-          <div className="hidden lg:flex items-center gap-3 mb-6 px-1">
-            <img src="/logo.png" alt="Purchase Logo" className="h-12 w-auto max-w-[180px] object-contain" />
-            <h1 className="text-base font-semibold text-sidebar-foreground">
-              Purchase
-            </h1>
-          </div>
+        {/* Fixed Top Logo Header */}
+        <div className="hidden lg:flex items-center gap-3 p-4 border-b border-sidebar-border/40 bg-sidebar shrink-0 sticky top-0 z-10 shadow-xs">
+          <img src="/logo.png" alt="Purchase Logo" className="h-12 w-auto max-w-[180px] object-contain" />
+          <h1 className="text-base font-semibold text-sidebar-foreground whitespace-nowrap">
+            Purchase
+          </h1>
+        </div>
+
+        <div className="p-4 overflow-y-auto flex-1 scrollbar-hide">
 
           {showDashboard && (
             <Button

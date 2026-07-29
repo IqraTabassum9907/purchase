@@ -637,7 +637,7 @@ export default function Quotation() {
             </div>
           ) : (
             <div className="flex-1 overflow-auto border rounded-xl bg-white shadow-sm scrollbar-thin scrollbar-thumb-slate-200">
-              <table className="w-full caption-bottom text-sm border-collapse">
+              <Table className="w-full caption-bottom text-sm border-collapse">
                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                   <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
                     <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider w-[50px]">
@@ -705,7 +705,7 @@ export default function Quotation() {
                     })
                   )}
                 </TableBody>
-              </table>
+              </Table>
             </div>
           )}
         </TabsContent>
@@ -718,7 +718,7 @@ export default function Quotation() {
             </div>
           ) : (
             <div className="flex-1 overflow-auto border rounded-xl bg-white shadow-sm scrollbar-thin scrollbar-thumb-slate-200">
-              <table className="w-full caption-bottom text-sm border-collapse">
+              <Table className="w-full caption-bottom text-sm border-collapse">
                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                   <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
                     {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
@@ -764,9 +764,10 @@ export default function Quotation() {
                     );
                   })
                 )}
-              </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
+          )}
         </TabsContent>
       </Tabs>
 

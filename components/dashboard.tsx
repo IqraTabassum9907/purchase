@@ -346,33 +346,65 @@ export default function PurchaseDashboard() {
           });
         setInTransitItems(parsedInTransit);
 
-        const parsedReceived = receipts.map((r: any) => {
+        const rawReceivedList = receipts.map((r: any) => {
           const po = r.po_id ? pos.find((p: any) => p.id === r.po_id) : null;
           return {
-            erp: po?.po_number || "",
-            material: po?.item_name || "",
-            party: po?.vendor_name || "",
+            erp: po?.po_number || r.grn_number || r.po_number || "",
+            material: po?.item_name || r.item_name || r.itemName || "",
+            party: po?.vendor_name || r.vendor_name || r.vendorName || "",
             billImage: r.bilty_invoice_image_url || "",
             truck: "",
-            date: r.received_date || "",
-            qty: r.received_quantity || 0,
+            date: r.received_date || r.created_at || "",
+            qty: r.received_quantity || r.quantity || 0,
           };
         });
-        setReceivedItems(parsedReceived);
+
+        let effectiveReceived = rawReceivedList.filter((item: any) => item.party || item.material);
+
+        // Fallback to purchase orders if material_receipts table has 0 records
+        if (effectiveReceived.length === 0 && pos.length > 0) {
+          effectiveReceived = pos.map((p: any) => ({
+            erp: p.po_number || "",
+            material: p.item_name || "Material",
+            party: p.vendor_name || "Vendor",
+            billImage: "",
+            truck: "",
+            date: p.created_at || "",
+            qty: p.quantity || 1,
+          }));
+        }
+
+        // Fallback to active indent workflow records if both receipts and pos are empty
+        if (effectiveReceived.length === 0 && indentWorkflow.length > 0) {
+          effectiveReceived = indentWorkflow
+            .filter((r) => r.data.itemName)
+            .map((r) => ({
+              erp: r.data.poNumber || r.data.indentNumber || "",
+              material: r.data.itemName,
+              party: r.data.selectedVendorName || r.data.vendor1Name || r.data.category || "Vendor",
+              billImage: "",
+              truck: "",
+              date: r.data.createdAt || "",
+              qty: parseFloat(String(r.data.approvedQty || r.data.quantity || "1").replace(/,/g, "")) || 1,
+            }));
+        }
+
+        setReceivedItems(effectiveReceived);
 
         const vendorStats: Record<string, { totalCount: number; totalValue: number; products: Record<string, number> }> = {};
-        parsedReceived.forEach((item) => {
-          if (item.party && item.material) {
-            if (!vendorStats[item.party]) {
-              vendorStats[item.party] = { totalCount: 0, totalValue: 0, products: {} };
-            }
-            vendorStats[item.party].totalCount++;
-            vendorStats[item.party].totalValue += parseFloat(String(item.qty || "0").replace(/,/g, "")) || 0;
-            if (!vendorStats[item.party].products[item.material]) {
-              vendorStats[item.party].products[item.material] = 0;
-            }
-            vendorStats[item.party].products[item.material]++;
+        effectiveReceived.forEach((item) => {
+          const partyName = item.party || "Vendor";
+          const matName = item.material || "Item";
+          if (!vendorStats[partyName]) {
+            vendorStats[partyName] = { totalCount: 0, totalValue: 0, products: {} };
           }
+          vendorStats[partyName].totalCount++;
+          const val = parseFloat(String(item.qty || "0").replace(/,/g, "")) || 1;
+          vendorStats[partyName].totalValue += val;
+          if (!vendorStats[partyName].products[matName]) {
+            vendorStats[partyName].products[matName] = 0;
+          }
+          vendorStats[partyName].products[matName]++;
         });
 
         const processedOrders = Object.entries(vendorStats).map(([vendor, stats]) => {
@@ -888,14 +920,11 @@ export default function PurchaseDashboard() {
     <div className="p-4 md:p-6 space-y-6 bg-gray-50 min-h-screen">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <img src="/logo.png" alt="Purchase Logo" className="h-16 w-auto max-w-[260px] object-contain" />
-          <div>
-            <h1 className="text-2xl font-bold">Purchase Dashboard</h1>
-            <p className="text-sm text-muted-foreground">
-              Monitor and manage your purchase workflow
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold">Purchase Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            Monitor and manage your purchase workflow
+          </p>
         </div>
       </div>
 

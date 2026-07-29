@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -954,7 +955,7 @@ export default function Stage5() {
             </div>
           ) : (
             <div className="border rounded-lg flex-1 overflow-auto shadow-sm relative h-full">
-              <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
+              <Table className="w-full caption-bottom text-sm border-separate border-spacing-0">
                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                   <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
                     <TableHead className="w-12 sticky top-0 z-20 bg-slate-200 border-none pl-4 py-3 ">
@@ -1022,7 +1023,7 @@ export default function Stage5() {
                     })
                   )}
                 </TableBody>
-              </table>
+              </Table>
             </div>
           )}
         </TabsContent>
@@ -1037,7 +1038,7 @@ export default function Stage5() {
             </div>
           ) : (
             <div className="border rounded-lg flex-1 overflow-auto shadow-sm relative h-full">
-              <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
+              <Table className="w-full caption-bottom text-sm border-separate border-spacing-0">
                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                   <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Item Details</TableHead>
@@ -1152,9 +1153,10 @@ export default function Stage5() {
                     );
                   })
                 )}
-              </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
+          )}
         </TabsContent>
       </Tabs>
 
