@@ -503,7 +503,22 @@ export default function UnifiedPaymentHub() {
         });
 
       setVendorHistory(vHist.reverse());
-      setFreightHistory(fHist.reverse());      const freightRows: any[] = (tfData || [])
+      setFreightHistory(fHist.reverse());
+
+      // transporter_followups gets a NEW row inserted on every status change
+      // (In Transit -> Received etc.) rather than an update, so a PO can have
+      // several rows here. Collapse to the most recently updated one per PO,
+      // otherwise every status change would show up as a duplicate freight entry.
+      const latestTfByPo = new Map<string, any>();
+      (tfData || []).forEach((tf: any) => {
+        if (!tf.po_id) return;
+        const existing = latestTfByPo.get(tf.po_id);
+        if (!existing || new Date(tf.updated_at || 0).getTime() > new Date(existing.updated_at || 0).getTime()) {
+          latestTfByPo.set(tf.po_id, tf);
+        }
+      });
+
+      const freightRows: any[] = Array.from(latestTfByPo.values())
         .map((tf: any) => {
           const po = tf.po_id ? poById.get(tf.po_id) : null;
           const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
