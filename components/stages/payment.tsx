@@ -46,7 +46,7 @@ import {
   Banknote,
   Trash2,
 } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
@@ -188,6 +188,7 @@ export default function UnifiedPaymentHub() {
   // Active sub-workflow state
   const [workflow, setWorkflow] = useState<"advance" | "vendor" | "freight">("advance");
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
+  const [tatRules, setTatRules] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -248,6 +249,7 @@ export default function UnifiedPaymentHub() {
         { data: receiptData },
         { data: paymentData },
         { data: liftingData },
+        { data: tatData },
       ] = await Promise.all([
         fetchIndentWorkflow(),
         supabase.from("purchase_orders").select("*"),
@@ -256,7 +258,9 @@ export default function UnifiedPaymentHub() {
         supabase.from("material_receipts").select("*"),
         supabase.from("vendor_payments").select("*"),
         supabase.from("vendor_liftings").select("*"),
+        supabase.from("master_tat_rules").select("*"),
       ]);
+      if (tatData) setTatRules(tatData);
 
       const poById = new Map<string, any>();
       (poData || []).forEach((po: any) => poById.set(po.id, po));
@@ -336,7 +340,7 @@ export default function UnifiedPaymentHub() {
               indentNumber: row.data.indentNumber,
               itemName: row.data.itemName,
               quantity: row.data.quantity,
-              selectedVendorName: po.vendor_name || row.data.selectedVendorName || "Regular Vendor",
+              selectedVendorName: po.vendor_name || row.data.selectedVendorName || row.data.finalVendorName || row.data.vendor1Name || "Regular Vendor",
               poNumber: po.po_number || "-",
               totalValue: po.total_amount || "-",
               advanceAmount: advanceAmount,
@@ -414,6 +418,7 @@ export default function UnifiedPaymentHub() {
             rowIndex: bill.id,
             poId: bill.po_id,
             status,
+            createdAt: indent?.data?.createdAt || null,
             data: {
               id: invNo,
               invoiceNo: invNo,
@@ -452,6 +457,7 @@ export default function UnifiedPaymentHub() {
         )
         .map((p: any) => {
           const po = p.po_id ? poById.get(p.po_id) : null;
+          const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
           const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Vendor Payment") : [];
           const plan1 = payments.length > 0 ? payments[0].created_at : null;
           const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
@@ -459,7 +465,7 @@ export default function UnifiedPaymentHub() {
           return {
             id: `VHIST_${p.id}`,
             invoiceNo: po?.po_number || "",
-            vendor: po?.vendor_name || "",
+            vendor: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.vendor1Name || "-",
             amountPaid: p.amount,
             status: p.status,
             date: toDate(p.payment_date),
@@ -467,6 +473,7 @@ export default function UnifiedPaymentHub() {
             actual: toDate(actual1),
             mode: p.payment_mode,
             proof: p.proof_url,
+            createdAt: indent?.data?.createdAt || null,
           };
         });
 
@@ -474,6 +481,8 @@ export default function UnifiedPaymentHub() {
         .filter((p: any) => p.payment_type === "Freight Payment")
         .map((p: any) => {
           const tf = tfData?.find((t: any) => t.po_id === p.po_id);
+          const po = p.po_id ? poById.get(p.po_id) : null;
+          const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
           const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Freight Payment") : [];
           const plan1 = payments.length > 0 ? payments[0].created_at : null;
           const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
@@ -489,6 +498,7 @@ export default function UnifiedPaymentHub() {
             actual: toDate(actual1),
             mode: p.payment_mode,
             proof: p.proof_url,
+            createdAt: indent?.data?.createdAt || null,
           };
         });
 
@@ -496,6 +506,7 @@ export default function UnifiedPaymentHub() {
       setFreightHistory(fHist.reverse());      const freightRows: any[] = (tfData || [])
         .map((tf: any) => {
           const po = tf.po_id ? poById.get(tf.po_id) : null;
+          const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
           const lifting = tf.po_id ? liftingByPo.get(tf.po_id) : null;
           const payments = tf.po_id ? (paymentsByPo.get(tf.po_id) || []).filter((p: any) => p.payment_type === "Freight Payment") : [];
           const receipts = tf.po_id ? (receiptsByPo.get(tf.po_id) || []) : [];
@@ -539,6 +550,7 @@ export default function UnifiedPaymentHub() {
               invoiceCopy: po?.po_copy_url || "",
               freightVal: freightAmt,
               advanceVal: advanceAmount,
+              createdAt: indent?.data?.createdAt || null,
             }
           };
         });
@@ -959,10 +971,10 @@ export default function UnifiedPaymentHub() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 p-6 space-y-6">
       {/* Upper Header Card */}
-      <div className="p-6 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
+      <div className="p-6 bg-linear-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-slate-900 rounded-lg shadow-slate-100 shadow-xl text-white">
+            <div className="p-3 bg-blue-700 rounded-lg shadow-slate-100 shadow-xl text-white">
               <CreditCard className="w-6 h-6" />
             </div>
             <div>
@@ -996,7 +1008,7 @@ export default function UnifiedPaymentHub() {
               size="icon"
               onClick={fetchData}
               disabled={isLoading}
-              className="h-10 w-10 bg-white hover:bg-slate-50 border-slate-200 flex-shrink-0 rounded-xl"
+              className="h-10 w-10 bg-white hover:bg-slate-50 border-slate-200 shrink-0 rounded-xl"
             >
               <RefreshCw className={cn("w-4 h-4 text-slate-600", isLoading && "animate-spin")} />
             </Button>
@@ -1007,7 +1019,7 @@ export default function UnifiedPaymentHub() {
       {/* Main Switcher and View */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Unified switcher tabs */}
-        <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-3 flex-shrink-0">
+        <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-3 shrink-0">
           <div className="flex items-center gap-2 bg-slate-100/80 p-1 w-fit rounded-lg">
             <Button
               variant={workflow === "advance" ? "secondary" : "ghost"}
@@ -1106,9 +1118,10 @@ export default function UnifiedPaymentHub() {
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
                     <TableHead className="font-bold p-3">Action</TableHead>
-                    <TableHead className="font-bold p-3">Indent #</TableHead>
+                    <TableHead className="font-bold p-3">Timestamp</TableHead>
+                    <TableHead className="font-bold p-3">Indent</TableHead>
                     <TableHead className="font-bold p-3">Item Details</TableHead>
-                    <TableHead className="font-bold p-3">Vendor</TableHead>
+                    <TableHead className="font-bold p-3">Supplier</TableHead>
                     <TableHead className="font-bold p-3">PO Number</TableHead>
                     <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
                     <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
@@ -1119,7 +1132,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
                         No pending advance payments found.
                       </TableCell>
                     </TableRow>
@@ -1136,6 +1149,7 @@ export default function UnifiedPaymentHub() {
                             Pay
                           </Button>
                         </TableCell>
+                        <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.createdAt)}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName} (Qty: {r.data.quantity})</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.data.selectedVendorName}</TableCell>
@@ -1143,7 +1157,9 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-slate-500">{r.data.paymentTerms}</TableCell>
-                        <TableCell className="p-3 text-slate-600 font-medium">{formatDate(r.data.plannedPayment)}</TableCell>
+                        <TableCell className="p-3 text-slate-600 font-mono text-xs">
+                          {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -1158,12 +1174,13 @@ export default function UnifiedPaymentHub() {
               <Table className="text-xs">
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
-                    <TableHead className="font-bold p-3">Indent #</TableHead>
+                    <TableHead className="font-bold p-3">Indent</TableHead>
                     <TableHead className="font-bold p-3">Item Details</TableHead>
                     <TableHead className="font-bold p-3">Vendor</TableHead>
                     <TableHead className="font-bold p-3">PO Number</TableHead>
                     <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
                     <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
+                    <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">Actual Payment Date</TableHead>
                     <TableHead className="font-bold p-3">Payment Reference</TableHead>
                   </TableRow>
@@ -1171,7 +1188,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
                         No advance payment history found.
                       </TableCell>
                     </TableRow>
@@ -1184,6 +1201,9 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
+                        <TableCell className="p-3 text-slate-500 font-mono text-xs">
+                          {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
+                        </TableCell>
                         <TableCell className="p-3 text-slate-600 font-medium">{formatDate(r.data.actualPayment)}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.data.paymentRef}</TableCell>
                       </TableRow>
@@ -1200,8 +1220,9 @@ export default function UnifiedPaymentHub() {
               <Table className="text-xs min-w-[1400px]">
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
+                    <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">Invoice No</TableHead>
-                    <TableHead className="font-bold p-3">Vendor</TableHead>
+                    <TableHead className="font-bold p-3">Supplier</TableHead>
                     <TableHead className="font-bold p-3 text-right">Total Bill Value</TableHead>
                     <TableHead className="font-bold p-3 text-right text-indigo-700">Advance Paid</TableHead>
                     <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
@@ -1216,7 +1237,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredVendorPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
                         No pending vendor invoices found.
                       </TableCell>
                     </TableRow>
@@ -1225,6 +1246,7 @@ export default function UnifiedPaymentHub() {
                       const overdue = isDueDateOverdueOrToday(r.data.dueDate);
                       return (
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
+                          <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.createdAt)}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-800">{r.data.invoiceNo}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-900">{r.data.vendor}</TableCell>
                           <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
@@ -1235,7 +1257,9 @@ export default function UnifiedPaymentHub() {
                               {r.data.dueDate}
                             </span>
                           </TableCell>
-                          <TableCell className="p-3 text-slate-500">{r.data.plan1}</TableCell>
+                          <TableCell className="p-3 text-slate-500 font-mono text-xs">
+                            {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
+                          </TableCell>
                           <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                           <TableCell className="p-3">{renderSafeValue(r.data.invoiceCopy)}</TableCell>
                           <TableCell className="p-3 text-right font-medium">{r.data.totalRcvd}</TableCell>
@@ -1261,13 +1285,14 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
                     <TableHead className="font-bold p-3">Payment Mode</TableHead>
                     <TableHead className="font-bold p-3">Status</TableHead>
+                    <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">Proof</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredVendorHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={8} className="h-32 text-center text-slate-400 font-medium">
                         No vendor payment history found.
                       </TableCell>
                     </TableRow>
@@ -1284,6 +1309,7 @@ export default function UnifiedPaymentHub() {
                             {r.status}
                           </Badge>
                         </TableCell>
+                        <TableCell className="p-3 font-mono text-xs">{getPlannedDateForRecord(r, "Payment", tatRules, r.createdAt)}</TableCell>
                         <TableCell className="p-3">{renderSafeValue(r.proof)}</TableCell>
                       </TableRow>
                     ))
@@ -1296,25 +1322,30 @@ export default function UnifiedPaymentHub() {
           {/* Workflow 3: Freight Payments Table */}
           {workflow === "freight" && activeTab === "pending" && (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {filteredFreightPending.length === 0 ? (
-                <div className="py-24 text-center text-slate-400">No pending freight payments found.</div>
-              ) : (
-                <Table className="text-xs min-w-[1250px]">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <table className="w-full caption-bottom text-xs min-w-[1250px]">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead className="font-bold p-3">Action</TableHead>
+                    <TableHead className="font-bold p-3">Timestamp</TableHead>
+                    <TableHead className="font-bold p-3">LR No.</TableHead>
+                    <TableHead className="font-bold p-3">Transporter</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Freight Amt</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
+                    <TableHead className="font-bold p-3">Vehicle No.</TableHead>
+                    <TableHead className="font-bold p-3">Contact</TableHead>
+                    <TableHead className="font-bold p-3">Planned Date</TableHead>
+                    <TableHead className="font-bold p-3">Bilty</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredFreightPending.length === 0 ? (
                     <TableRow>
-                      <TableHead className="font-bold p-3">Action</TableHead>
-                      <TableHead className="font-bold p-3">LR No.</TableHead>
-                      <TableHead className="font-bold p-3">Transporter</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Freight Amt</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
-                      <TableHead className="font-bold p-3">Vehicle No.</TableHead>
-                      <TableHead className="font-bold p-3">Contact</TableHead>
-                      <TableHead className="font-bold p-3">Planned Date</TableHead>
-                      <TableHead className="font-bold p-3">Bilty</TableHead>
+                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
+                        No pending freight payments found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredFreightPending.map((r) => (
+                  ) : (
+                    filteredFreightPending.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3">
                           <Button
@@ -1326,42 +1357,48 @@ export default function UnifiedPaymentHub() {
                             Pay
                           </Button>
                         </TableCell>
+                        <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.data.createdAt)}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.data.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.transporter}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.freightAmount)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.vehicleNo}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.data.contact}</TableCell>
-                        <TableCell className="p-3 text-slate-500">{r.data.plan1}</TableCell>
+                        <TableCell className="p-3 text-slate-500 font-mono text-xs">{getPlannedDateForRecord(r.data, "Payment", tatRules, r.data.createdAt)}</TableCell>
                         <TableCell className="p-3">{renderSafeValue(r.data.biltyImage)}</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+                    ))
+                  )}
+                </TableBody>
+              </table>
             </div>
           )}
 
           {/* Workflow 3: Freight Payments History Table */}
           {workflow === "freight" && activeTab === "history" && (
             <div className="overflow-auto flex-1 custom-scrollbar">
-              {filteredFreightHistory.length === 0 ? (
-                <div className="py-24 text-center text-slate-400">No freight payment history found.</div>
-              ) : (
-                <Table className="text-xs">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20">
+              <table className="w-full caption-bottom text-xs">
+                <TableHeader className="bg-slate-50 sticky top-0 z-20">
+                  <TableRow>
+                    <TableHead className="font-bold p-3">Payment Date</TableHead>
+                    <TableHead className="font-bold p-3">LR No.</TableHead>
+                    <TableHead className="font-bold p-3">Transporter</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
+                    <TableHead className="font-bold p-3">Payment Mode</TableHead>
+                    <TableHead className="font-bold p-3">Status</TableHead>
+                    <TableHead className="font-bold p-3">Planned Date</TableHead>
+                    <TableHead className="font-bold p-3">Proof</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredFreightHistory.length === 0 ? (
                     <TableRow>
-                      <TableHead className="font-bold p-3">Payment Date</TableHead>
-                      <TableHead className="font-bold p-3">LR No.</TableHead>
-                      <TableHead className="font-bold p-3">Transporter</TableHead>
-                      <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
-                      <TableHead className="font-bold p-3">Payment Mode</TableHead>
-                      <TableHead className="font-bold p-3">Status</TableHead>
-                      <TableHead className="font-bold p-3">Proof</TableHead>
+                      <TableCell colSpan={8} className="h-32 text-center text-slate-400 font-medium">
+                        No freight payment history found.
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredFreightHistory.map((r) => (
+                  ) : (
+                    filteredFreightHistory.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.lrNo}</TableCell>
@@ -1373,12 +1410,13 @@ export default function UnifiedPaymentHub() {
                             {r.status}
                           </Badge>
                         </TableCell>
+                        <TableCell className="p-3 font-mono text-xs">{getPlannedDateForRecord(r, "Payment", tatRules, r.createdAt)}</TableCell>
                         <TableCell className="p-3">{renderSafeValue(r.proof)}</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+                    ))
+                  )}
+                </TableBody>
+              </table>
             </div>
           )}
         </div>
@@ -1418,7 +1456,7 @@ export default function UnifiedPaymentHub() {
               <Button type="button" variant="outline" onClick={() => setAdvOpen(false)} disabled={isSubmitting}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting} className="bg-slate-900 text-white hover:bg-slate-800 font-semibold px-6 shadow-sm">
+              <Button type="submit" disabled={isSubmitting} className="bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm">
                 {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Confirm Payment"}
               </Button>
             </DialogFooter>
@@ -1429,7 +1467,7 @@ export default function UnifiedPaymentHub() {
       {/* --- Workflow 2 Dialog: Bulk Vendor Invoices Payment --- */}
       <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent className="max-w-4xl bg-white border shadow-lg rounded-2xl flex flex-col max-h-[85vh]">
-          <DialogHeader className="flex-shrink-0">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="text-lg font-bold text-slate-950">Bulk Vendor Payment</DialogTitle>
             <DialogDescription className="text-slate-500 text-xs">
               Select a vendor and invoices to process payments in batch.
@@ -1438,7 +1476,7 @@ export default function UnifiedPaymentHub() {
 
           {bulkStep === "vendor" ? (
             <div className="flex-1 overflow-hidden flex flex-col space-y-4 pt-2">
-              <div className="relative flex-shrink-0">
+              <div className="relative shrink-0">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
                 <Input
                   placeholder="Search vendor name..."
@@ -1524,7 +1562,7 @@ export default function UnifiedPaymentHub() {
               </div>
 
               {/* Terms and payments info */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4 flex-shrink-0">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4 shrink-0">
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold text-slate-700">Payment Mode</Label>
@@ -1586,11 +1624,11 @@ export default function UnifiedPaymentHub() {
                 </div>
               </div>
 
-              <DialogFooter className="pt-4 border-t flex-shrink-0">
+              <DialogFooter className="pt-4 border-t shrink-0">
                 <Button type="button" variant="outline" onClick={() => setBulkStep("vendor")} disabled={isSubmitting}>
                   Back
                 </Button>
-                <Button type="submit" disabled={isSubmitting || bulkTotalToPay <= 0 || !bulkFormData.paymentMode} className="bg-slate-900 text-white hover:bg-slate-800 font-semibold px-6 shadow-sm">
+                <Button type="submit" disabled={isSubmitting || bulkTotalToPay <= 0 || !bulkFormData.paymentMode} className="bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm">
                   {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Submit Payment"}
                 </Button>
               </DialogFooter>
@@ -1692,7 +1730,7 @@ export default function UnifiedPaymentHub() {
               <Button type="button" variant="outline" onClick={() => setFreightOpen(false)} disabled={isSubmitting}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting} className="bg-slate-900 text-white hover:bg-slate-800 font-semibold px-6 shadow-sm">
+              <Button type="submit" disabled={isSubmitting} className="bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm">
                 {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Submit Payment"}
               </Button>
             </DialogFooter>

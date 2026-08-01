@@ -943,14 +943,14 @@ export default function PurchaseDashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <div className="sm:col-span-2 lg:col-span-1">
               <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
                 <Input
                   placeholder="dd-mm-yyyy"
                   className="h-9 text-xs"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
                 />
-                <span className="text-xs text-muted-foreground flex-shrink-0">
+                <span className="text-xs text-muted-foreground shrink-0">
                   to
                 </span>
                 <Input
@@ -1037,9 +1037,6 @@ export default function PurchaseDashboard() {
           </TabsTrigger>
           <TabsTrigger value="received" className="text-xs sm:text-sm">
             Received
-          </TabsTrigger>
-          <TabsTrigger value="warranty" className="text-xs sm:text-sm">
-            Warranty
           </TabsTrigger>
         </TabsList>
 
@@ -1714,228 +1711,6 @@ export default function PurchaseDashboard() {
                       </TableCell>
                     </TableRow>
                   ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Serial-Generation TAB */}
-        <TabsContent value="warranty" className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5 text-amber-600" />
-              <h3 className="text-lg font-semibold">Serial Generation</h3>
-            </div>
-            <Badge variant="secondary" className="bg-amber-50 text-amber-700">
-              {finalWarrantyData.length} Items
-            </Badge>
-          </div>
-
-          {/* Search */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-            <Input
-              placeholder="Search by Indent, serial, or vendor..."
-              value={warrantySearch}
-              onChange={(e) => setWarrantySearch(e.target.value)}
-              className="flex-1 sm:max-w-sm"
-            />
-            <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="flex items-center gap-1">
-                    <Settings2 className="h-3 w-3" />
-                    <span>Columns</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {[
-                    { id: "indentNo", label: "Indent No." },
-                    { id: "liftNo", label: "Unit Tracking No." },
-                    { id: "serialNo", label: "Serial No." },
-                    { id: "vendorName", label: "Vendor Name" },
-                    { id: "itemName", label: "Item-Name" },
-                    { id: "invoiceDate", label: "Invoice Date" },
-                    { id: "warrantyEnd", label: "Warranty End" },
-                  ].map((col) => (
-                    <DropdownMenuCheckboxItem
-                      key={col.id}
-                      checked={warrantyVisibleColumns.includes(col.id)}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setWarrantyVisibleColumns([...warrantyVisibleColumns, col.id]);
-                        } else {
-                          setWarrantyVisibleColumns(warrantyVisibleColumns.filter(c => c !== col.id));
-                        }
-                      }}
-                    >
-                      {col.label}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  exportToCSV(finalWarrantyData, "warranty-data.csv", warrantyVisibleColumns)
-                }
-                className="flex items-center justify-center gap-1"
-              >
-                <Download className="h-3 w-3" />
-                <span className="hidden sm:inline">Export CSV</span>
-                <span className="sm:hidden">Export</span>
-              </Button>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground whitespace-nowrap">Months Left:</span>
-                <Input
-                  type="number"
-                  placeholder="e.g. 6"
-                  className="h-8 w-20 text-xs"
-                  value={warrantyMonthsFilter}
-                  onChange={(e) => setWarrantyMonthsFilter(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-
-          <Card>
-            <CardContent className="p-0 overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {warrantyVisibleColumns.includes("indentNo") && (
-                      <TableHead
-                        className="text-xs cursor-pointer hover:bg-gray-50"
-                        onClick={() =>
-                          setWarrantySort({
-                            key: "indentNo",
-                            direction:
-                              warrantySort.key === "indentNo" &&
-                                warrantySort.direction === "asc"
-                                ? "desc"
-                                : "asc",
-                          })
-                        }
-                      >
-                        Indent No.{" "}
-                        {warrantySort.key === "indentNo" &&
-                          (warrantySort.direction === "asc" ? "↑" : "↓")}
-                      </TableHead>
-                    )}
-                    {warrantyVisibleColumns.includes("liftNo") && <TableHead className="text-xs">Unit Tracking No.</TableHead>}
-                    {warrantyVisibleColumns.includes("serialNo") && (
-                      <TableHead
-                        className="text-xs cursor-pointer hover:bg-gray-50"
-                        onClick={() =>
-                          setWarrantySort({
-                            key: "serialNo",
-                            direction:
-                              warrantySort.key === "serialNo" &&
-                                warrantySort.direction === "asc"
-                                ? "desc"
-                                : "asc",
-                          })
-                        }
-                      >
-                        Serial No.{" "}
-                        {warrantySort.key === "serialNo" &&
-                          (warrantySort.direction === "asc" ? "↑" : "↓")}
-                      </TableHead>
-                    )}
-                    {warrantyVisibleColumns.includes("vendorName") && (
-                      <TableHead
-                        className="text-xs cursor-pointer hover:bg-gray-50"
-                        onClick={() =>
-                          setWarrantySort({
-                            key: "vendorName",
-                            direction:
-                              warrantySort.key === "vendorName" &&
-                                warrantySort.direction === "asc"
-                                ? "desc"
-                                : "asc",
-                          })
-                        }
-                      >
-                        Vendor Name{" "}
-                        {warrantySort.key === "vendorName" &&
-                          (warrantySort.direction === "asc" ? "↑" : "↓")}
-                      </TableHead>
-                    )}
-                    {warrantyVisibleColumns.includes("itemName") && (
-                      <TableHead
-                        className="text-xs cursor-pointer hover:bg-gray-50"
-                        onClick={() =>
-                          setWarrantySort({
-                            key: "itemName",
-                            direction:
-                              warrantySort.key === "itemName" &&
-                                warrantySort.direction === "asc"
-                                ? "desc"
-                                : "asc",
-                          })
-                        }
-                      >
-                        Item-Name{" "}
-                        {warrantySort.key === "itemName" &&
-                          (warrantySort.direction === "asc" ? "↑" : "↓")}
-                      </TableHead>
-                    )}
-                    {warrantyVisibleColumns.includes("invoiceDate") && <TableHead className="text-xs">Invoice Date</TableHead>}
-                    {warrantyVisibleColumns.includes("warrantyEnd") && <TableHead className="text-xs">Warranty End</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {finalWarrantyData.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={warrantyVisibleColumns.length} className="text-center py-8 text-muted-foreground">
-                        No warranty data available
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    finalWarrantyData.map((item: any, idx: number) => (
-                      <TableRow key={idx}>
-                        {warrantyVisibleColumns.includes("indentNo") && (
-                          <TableCell className="font-medium text-xs">
-                            {item.indentNo}
-                          </TableCell>
-                        )}
-                        {warrantyVisibleColumns.includes("liftNo") && <TableCell className="text-xs">{item.liftNo}</TableCell>}
-                        {warrantyVisibleColumns.includes("serialNo") && <TableCell className="text-xs">{item.serialNo}</TableCell>}
-                        {warrantyVisibleColumns.includes("vendorName") && <TableCell className="text-xs">{item.vendorName}</TableCell>}
-                        {warrantyVisibleColumns.includes("itemName") && <TableCell className="text-xs">{item.itemName}</TableCell>}
-                        {warrantyVisibleColumns.includes("invoiceDate") && (
-                          <TableCell className="text-xs">
-                            {formatDate(item.invoiceDate)}
-                          </TableCell>
-                        )}
-                        {warrantyVisibleColumns.includes("warrantyEnd") && (
-                          <TableCell className="text-xs">
-                            {(() => {
-                              const date = new Date(item.warrantyEnd);
-                              const today = new Date();
-                              const nextMonth = new Date();
-                              nextMonth.setMonth(today.getMonth() + 1);
-
-                              const isExpiringSoon = !isNaN(date.getTime()) && date > today && date <= nextMonth;
-                              const formattedDate = formatDate(item.warrantyEnd);
-
-                              if (isExpiringSoon) {
-                                return (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-800 border border-red-200">
-                                    {formattedDate}
-                                  </span>
-                                );
-                              }
-                              return formattedDate;
-                            })()}
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    ))
-                  )}
                 </TableBody>
               </Table>
             </CardContent>

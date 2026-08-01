@@ -32,7 +32,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Loader2, Search, CheckCircle2, ShieldCheck, Copy, ExternalLink, CheckCircle, RefreshCw } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow, selectApprovedVendor } from "@/lib/supabase/queries";
@@ -58,6 +58,7 @@ export default function ApprovedVendor() {
   const [sheetRecords, setSheetRecords] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [tatRules, setTatRules] = useState<any[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Form State
@@ -99,6 +100,9 @@ export default function ApprovedVendor() {
       if (!dropErr && dropRows) {
         setApproverList(dropRows.map((r) => r.name).filter(Boolean));
       }
+
+      const { data: tatRows } = await supabase.from("master_tat_rules").select("*");
+      if (tatRows) setTatRules(tatRows);
     } catch (e) {
       console.error("Fetch error Stage 4:", e);
     }
@@ -151,6 +155,7 @@ export default function ApprovedVendor() {
     }), [sheetRecords, searchTerm]);
 
   const baseColumns = [
+    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent" },
     { key: "itemName", label: "Item" },
     { key: "quantity", label: "Qty" },
@@ -340,10 +345,10 @@ export default function ApprovedVendor() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 p-6 space-y-6">
       {/* Header Card */}
-      <div className="p-6 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
+      <div className="p-6 bg-linear-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-slate-900 rounded-lg shadow-slate-100 shadow-xl text-white">
+            <div className="p-3 bg-blue-700 rounded-lg shadow-slate-100 shadow-xl text-white">
               <ShieldCheck className="w-6 h-6" />
             </div>
             <div>
@@ -405,6 +410,11 @@ export default function ApprovedVendor() {
                     <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                       Actions
                     </TableHead>
+                    {selectedColumns.includes("createdAtCol") && (
+                      <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
+                        Timestamp
+                      </TableHead>
+                    )}
                     {selectedColumns.includes("indentNumber") && (
                       <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                         Indent IDs
@@ -447,6 +457,11 @@ export default function ApprovedVendor() {
                             Approve
                           </Button>
                         </TableCell>
+                        {selectedColumns.includes("createdAtCol") && (
+                          <TableCell className="text-xs text-slate-700 px-4 font-mono">
+                            {formatDateTimeFull(group.records[0]?.createdAt)}
+                          </TableCell>
+                        )}
                         {selectedColumns.includes("indentNumber") && (
                           <TableCell className="text-sm font-semibold text-slate-900 font-mono px-4">
                             {group.indentNumbers}
@@ -463,8 +478,8 @@ export default function ApprovedVendor() {
                           </TableCell>
                         )}
                         {selectedColumns.includes("actual3") && (
-                          <TableCell className="text-sm text-slate-700 px-4">
-                            {formatDateDash(group.actual3)}
+                          <TableCell className="text-xs text-slate-700 px-4 font-mono">
+                            {getPlannedDateForRecord(group.records[0]?.data, "Approved Vendor", tatRules, group.records[0]?.createdAt)}
                           </TableCell>
                         )}
                       </TableRow>
@@ -522,8 +537,10 @@ export default function ApprovedVendor() {
                       <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
                         {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
                           <TableCell key={col.key} className="text-sm text-slate-700 px-4">
-                            {col.key === "actual3"
-                              ? formatDateDash(record.data[col.key])
+                            {col.key === "createdAtCol"
+                              ? formatDateTimeFull(record.createdAt)
+                              : col.key === "actual3"
+                              ? getPlannedDateForRecord(record.data, "Approved Vendor", tatRules, record.createdAt)
                               : String(record.data[col.key] ?? "-")}
                           </TableCell>
                         ))}
@@ -554,7 +571,7 @@ export default function ApprovedVendor() {
       {/* APPROVED VENDOR SUBMIT MODAL */}
       <Dialog open={open} onOpenChange={(val) => { if (!val) resetForm(); else setOpen(val); }}>
         <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-6 overflow-hidden">
-          <DialogHeader className="flex-shrink-0 border-b pb-4">
+          <DialogHeader className="shrink-0 border-b pb-4">
             <DialogTitle className="text-xl font-bold text-slate-800">Approved Vendor Decision</DialogTitle>
           </DialogHeader>
 
@@ -718,7 +735,7 @@ export default function ApprovedVendor() {
                 value={formData.remarks}
                 onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
                 placeholder="Negotiation or general approval comments..."
-                className="min-h-[80px]"
+                className="min-h-20"
               />
             </div>
 
@@ -727,11 +744,11 @@ export default function ApprovedVendor() {
             )}
           </form>
 
-          <DialogFooter className="flex-shrink-0 border-t pt-4">
+          <DialogFooter className="shrink-0 border-t pt-4">
             <Button type="button" variant="outline" onClick={resetForm} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="button" onClick={handleSubmit} disabled={isSubmitting || groupVendorOptions.length === 0} className="bg-slate-900 text-white hover:bg-slate-800">
+            <Button type="button" onClick={handleSubmit} disabled={isSubmitting || groupVendorOptions.length === 0} className="bg-blue-700 text-white hover:bg-blue-800">
               {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               Confirm & Approve
             </Button>

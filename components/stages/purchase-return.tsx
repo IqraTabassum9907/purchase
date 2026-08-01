@@ -25,13 +25,15 @@ import {
 
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
+import { getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
 
 const PENDING_COLUMNS = [
+  { key: "createdAtCol", label: "Timestamp" },
   { key: "indentNumber", label: "Indent No" },
   { key: "unitTrackingNo", label: "Unit Tracking No" },
   { key: "itemName", label: "Item" },
   { key: "rejectedQty", label: "Rejected Qty" },
-  { key: "vendor", label: "Vendor" },
+  { key: "vendor", label: "Supplier" },
   { key: "poNumber", label: "PO No" },
   { key: "remark", label: "Remark" },
   { key: "partName", label: "Part Name" },
@@ -43,7 +45,7 @@ const HISTORY_COLUMNS = [
   { key: "indentNumber", label: "Indent No" },
   { key: "unitTrackingNo", label: "Unit Tracking No" },
   { key: "itemName", label: "Item" },
-  { key: "vendor", label: "Vendor" },
+  { key: "vendor", label: "Supplier" },
   { key: "poNumber", label: "PO No" },
   { key: "remark", label: "Remark" },
   { key: "partName", label: "Part Name" },
@@ -79,53 +81,57 @@ export default function Stage12() {
   const [serialDialogOpen, setSerialDialogOpen] = useState(false);
   const [selectedSerialRecord, setSelectedSerialRecord] = useState<any>(null);
 
+  const [tatRules, setTatRules] = useState<any[]>([]);
+
   const safeValue = useCallback((record: any, key: string) => {
-    try {
-      const data = record?.data;
-      if (!data) return "-";
+    if (!record || !record.data) return "-";
 
-      const val = data[key];
-
-      if (key === "serialNoWithPhoto") {
-        const hasSerials = data.serialNo && data.serialNo !== "-" && String(data.serialNo).trim() !== "";
-        if (!hasSerials) return "-";
-        return (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedSerialRecord(record);
-              setSerialDialogOpen(true);
-            }}
-          >
-            <Eye className="w-4 h-4" />
-          </Button>
-        );
-      }
-
-      if (!val || val === "-" || val === "") return "-";
-
-      if (key.includes("Image") || key.includes("Attachment") || key.includes("Copy") || key === "returnItemImage" || key === "creditNoteImage") {
-        return (
-          <a href={String(val)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors text-xs font-medium">
-            <FileText className="w-3.5 h-3.5" />
-            View
-          </a>
-        );
-      }
-
-      const lowKey = key.toLowerCase();
-      if (lowKey.includes("plan") || lowKey.includes("actual") || lowKey.includes("date")) {
-        return formatDateDash(val);
-      }
-      return String(val);
-    } catch {
-      return "-";
+    if (key === "createdAtCol") {
+      return formatDateTimeFull(record.createdAt);
     }
-  }, []);
+
+    const val = record.data[key];
+    if (val === undefined || val === null || val === "" || val === "-") return "-";
+
+    if (key === "plan6") {
+      return getPlannedDateForRecord(record.data, "Purchase Return", tatRules, record.createdAt);
+    }
+
+    if (key === "serialNoWithPhoto") {
+      const hasSerials = record.data.serialNo && record.data.serialNo !== "-" && String(record.data.serialNo).trim() !== "";
+      if (!hasSerials) return "-";
+      return (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedSerialRecord(record);
+            setSerialDialogOpen(true);
+          }}
+        >
+          <Eye className="w-4 h-4" />
+        </Button>
+      );
+    }
+
+    if (key.includes("Image") || key.includes("Attachment") || key.includes("Copy") || key === "returnItemImage" || key === "creditNoteImage") {
+      return (
+        <a href={String(val)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors text-xs font-medium">
+          <FileText className="w-3.5 h-3.5" />
+          View
+        </a>
+      );
+    }
+
+    const lowKey = key.toLowerCase();
+    if (lowKey.includes("plan") || lowKey.includes("actual") || lowKey.includes("date")) {
+      return formatDateDash(val);
+    }
+    return String(val);
+  }, [tatRules]);
 
   const [formData, setFormData] = useState({
     returnedQty: "",
@@ -155,14 +161,16 @@ export default function Stage12() {
 
       const poIds = (poData || []).map((po: any) => po.id);
 
-      const [receiptRes, returnRes] = await Promise.all([
+      const [receiptRes, returnRes, tatRes] = await Promise.all([
         poIds.length > 0
           ? supabase.from("material_receipts").select("*").in("po_id", poIds)
-          : Promise.resolve({ data: [], error: null }),
+          : Promise.resolve({ data: [] as any[] }),
         poIds.length > 0
           ? supabase.from("purchase_returns").select("*").in("po_id", poIds)
-          : Promise.resolve({ data: [], error: null }),
+          : Promise.resolve({ data: [] as any[] }),
+        supabase.from("master_tat_rules").select("*")
       ]);
+      if (tatRes.data) setTatRules(tatRes.data);
 
       const receiptData = (receiptRes.data || []) as any[];
       const returnData = (returnRes.data || []) as any[];
@@ -206,7 +214,7 @@ export default function Stage12() {
           rejectQty: qc?.failed_quantity ?? receipt.rejected_quantity ?? 0,
           receivedQty: receipt.received_quantity || 0,
           acceptedQty: receipt.accepted_quantity || receipt.received_quantity || 0,
-          vendor: po.vendor_name || "",
+          vendor: po.vendor_name || parentData.selectedVendorName || parentData.finalVendorName || parentData.vendor1Name || "-",
           poNumber: po.po_number || "",
           remark: qc?.rejection_reason || "-",
           partName: parentData.itemName || "-",
@@ -224,6 +232,7 @@ export default function Stage12() {
         const record = {
           id: receipt.id,
           data: recordData,
+          createdAt: parentData.createdAt,
           _qcInspectionId: qc?.id || null,
           _materialReceiptId: receipt.id,
           _poId: po.id,
@@ -417,7 +426,7 @@ export default function Stage12() {
             <div className="p-4 md:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-4">
-                  <div className="p-3 bg-slate-900 rounded-lg text-white shadow-xl">
+                  <div className="p-3 bg-blue-700 rounded-lg text-white shadow-xl">
                     <CornerUpLeft className="w-6 h-6" />
                   </div>
                   <div>

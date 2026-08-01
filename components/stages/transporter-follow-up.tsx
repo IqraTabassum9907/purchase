@@ -30,7 +30,7 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { getFmsTimestamp } from "@/lib/utils";
+import { getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
@@ -81,15 +81,20 @@ export default function TransporterFollowUp() {
     // -----------------------------------------------------------------
     // FETCH DATA
     // -----------------------------------------------------------------
+    const [tatRules, setTatRules] = useState<any[]>([]);
+
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [indentRows, poResult, liftingResult, transporterResult] = await Promise.all([
+            const [indentRows, poResult, liftingResult, transporterResult, tatResult] = await Promise.all([
                 fetchIndentWorkflow(),
                 supabase.from("purchase_orders").select("*").order("created_at", { ascending: true }),
                 supabase.from("vendor_liftings").select("*"),
                 supabase.from("transporter_followups").select("*"),
+                supabase.from("master_tat_rules").select("*"),
             ]);
+
+            if (tatResult.data) setTatRules(tatResult.data);
 
             const poData = poResult.data || [];
             const liftingData = liftingResult.data || [];
@@ -114,13 +119,24 @@ export default function TransporterFollowUp() {
             });
 
             const transportersByPo = new Map<string, any[]>();
+            const transportersByLifting = new Map<string, any[]>();
             transporterData.forEach((tf: any) => {
                 if (tf.po_id) {
                     const list = transportersByPo.get(tf.po_id) || [];
                     list.push(tf);
                     transportersByPo.set(tf.po_id, list);
                 }
+                if (tf.lifting_id) {
+                    const list = transportersByLifting.get(tf.lifting_id) || [];
+                    list.push(tf);
+                    transportersByLifting.set(tf.lifting_id, list);
+                }
             });
+
+            const pickLatestTransporter = (candidates: any[]) =>
+                candidates.length > 0
+                    ? [...candidates].sort((a: any, b: any) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime())[0]
+                    : null;
 
             const rows: any[] = [];
 
@@ -148,11 +164,12 @@ export default function TransporterFollowUp() {
                         id: `${indentRow.data.indentNumber}_${po.po_number}`,
                         _poId: po.id,
                         _liftingId: null,
+                        createdAt: indentRow.data.createdAt,
                         status,
                         data: {
                             indentNumber: indentRow.data.indentNumber,
                             liftNo: po.po_number,
-                            vendorName: po.vendor_name,
+                            vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
                             poNumber: po.po_number,
                             invoiceNumber: "",
                             itemName: indentRow.data.itemName,
@@ -171,10 +188,25 @@ export default function TransporterFollowUp() {
                         }
                     });
                 } else {
+                    // Legacy transporter_followups rows predate the lifting_id column and only
+                    // carry po_id — keep them as a shared fallback for POs whose dispatches
+                    // haven't been touched since the migration.
+                    const legacyPoTransporters = poTransporters.filter((t: any) => !t.lifting_id);
+
                     for (const lifting of actualDispatchedLiftings) {
                         const liftTrackingNo = String(lifting.id).substring(0, 8);
-                        const isDeliveredOrReceived = (latestTransporter && ["received", "delivered", "completed", "complete"].includes(String(latestTransporter.status || "").toLowerCase())) ||
-                                                      ["received", "delivered", "completed", "complete", "complete_delivered"].includes(String(lifting.lifting_status || "").toLowerCase());
+                        const liftingTransporters = transportersByLifting.get(lifting.id) || [];
+                        const latestLiftingTransporter = pickLatestTransporter(
+                            liftingTransporters.length > 0 ? liftingTransporters : legacyPoTransporters
+                        );
+                        const liftingIntransitCount = liftingTransporters.filter((t: any) => t.status === "Intransit").length;
+
+                        // NOTE: vendor_liftings.lifting_status "Complete" only means the material
+                        // was lifted/dispatched from the vendor — it has nothing to do with the
+                        // transporter having delivered it. Delivery state comes only from this
+                        // dispatch's own transporter_followups.status (Intransit/Received).
+                        const isDeliveredOrReceived = !!latestLiftingTransporter &&
+                            ["received", "delivered", "completed", "complete"].includes(String(latestLiftingTransporter.status || "").toLowerCase());
 
                         const status = isDeliveredOrReceived ? "history" : "pending";
 
@@ -182,26 +214,27 @@ export default function TransporterFollowUp() {
                             id: `${indentRow.data.indentNumber}_${liftTrackingNo}`,
                             _poId: po.id,
                             _liftingId: lifting.id,
+                            createdAt: indentRow.data.createdAt,
                             status,
                             data: {
                                 indentNumber: indentRow.data.indentNumber,
                                 liftNo: liftTrackingNo,
-                                vendorName: po.vendor_name,
+                                vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
                                 poNumber: po.po_number,
                                 invoiceNumber: "",
                                 itemName: indentRow.data.itemName,
                                 liftingQty: String(lifting.quantity || po.quantity || indentRow.data.quantity || ""),
-                                transporterName: latestTransporter?.transporter_name || lifting.contact_person || "",
-                                vehicleNo: lifting.vehicle_number || latestTransporter?.vehicle_number || "",
+                                transporterName: latestLiftingTransporter?.transporter_name || lifting.contact_person || "",
+                                vehicleNo: lifting.vehicle_number || latestLiftingTransporter?.vehicle_number || "",
                                 contactNo: lifting.driver_contact || "",
                                 freightAmt: "",
                                 plannedDate: lifting.expected_lifting_date || po.delivery_date || "",
                                 actualDate: lifting.actual_lifting_date || "",
                                 expectedDate: lifting.followup_date || "",
                                 remarks: lifting.remarks || "",
-                                totalFollowUps: totalIntransit,
-                                lrNo: latestTransporter?.bilty_number || "",
-                                lrCopy: latestTransporter?.bilty_copy_url || "",
+                                totalFollowUps: liftingIntransitCount,
+                                lrNo: latestLiftingTransporter?.bilty_number || "",
+                                lrCopy: latestLiftingTransporter?.bilty_copy_url || "",
                             }
                         });
                     }
@@ -286,6 +319,7 @@ export default function TransporterFollowUp() {
     const pending = sortedPending; // Use sorted list for display
 
     const pendingColumns = [
+        { key: "createdAtCol", label: "Timestamp" },
         { key: "indentNumber", label: "Indent No" },
         { key: "itemName", label: "Item Name" },
         { key: "plannedDate", label: "Expected Date" },
@@ -293,7 +327,7 @@ export default function TransporterFollowUp() {
         { key: "expectedDate", label: "Last Follow-Up Date" },
         { key: "remarks", label: "Remarks" },
         { key: "liftNo", label: "Unit Tracking No." },
-        { key: "vendorName", label: "Vendor Name" },
+        { key: "vendorName", label: "Supplier" },
         { key: "poNumber", label: "PO Number" },
         { key: "liftingQty", label: "Dispatch Qty" },
         { key: "transporterName", label: "Transporter Name" },
@@ -311,7 +345,7 @@ export default function TransporterFollowUp() {
         { key: "expectedDate", label: "Last Follow-Up Date" },
         { key: "remarks", label: "Remarks" },
         { key: "liftNo", label: "Unit Tracking No." },
-        { key: "vendorName", label: "Vendor Name" },
+        { key: "vendorName", label: "Supplier" },
         { key: "poNumber", label: "PO Number" },
         { key: "liftingQty", label: "Dispatch Qty" },
         { key: "transporterName", label: "Transporter Name" },
@@ -420,6 +454,7 @@ export default function TransporterFollowUp() {
             for (const record of recordsToProcess) {
                 const { error: insertError } = await supabase.from("transporter_followups").insert({
                     po_id: record._poId,
+                    lifting_id: record._liftingId || null,
                     transporter_name: record.data.transporterName || "",
                     vehicle_number: record.data.vehicleNo || "",
                     bilty_number: record.data.lrNo || null,
@@ -550,7 +585,7 @@ export default function TransporterFollowUp() {
             <div className="mb-6 p-6 bg-linear-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
                 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
-                        <div className="p-3 bg-slate-900 rounded-lg shadow-slate-100 shadow-xl text-white">
+                        <div className="p-3 bg-blue-700 rounded-lg shadow-slate-100 shadow-xl text-white">
                             <Truck className="w-6 h-6" />
                         </div>
                         <div>
@@ -687,9 +722,28 @@ export default function TransporterFollowUp() {
                                                 {pendingColumns.map((c) => {
                                                     const val = rec.data[c.key];
 
-                                                    // Planned & Expected Date Logic
-                                                    if (c.key === "plannedDate" || c.key === "expectedDate") {
-                                                        return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{formatDateDash(val)}</TableCell>;
+                                                    if (c.key === "vendorName") {
+                                                        return (
+                                                            <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 font-semibold">
+                                                                {safeValue(val)}
+                                                            </TableCell>
+                                                        );
+                                                    }
+
+                                                    if (c.key === "createdAtCol") {
+                                                        return (
+                                                            <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 font-mono text-xs">
+                                                                {formatDateTimeFull(rec.createdAt)}
+                                                            </TableCell>
+                                                        );
+                                                    }
+
+                                                    if (c.key === "plannedDate") {
+                                                        return (
+                                                            <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 font-mono text-xs">
+                                                                {getPlannedDateForRecord(rec.data, "Transporter Follow-Up", tatRules, rec.createdAt)}
+                                                            </TableCell>
+                                                        );
                                                     }
 
                                                     // Default Logic
@@ -726,9 +780,12 @@ export default function TransporterFollowUp() {
                                             {historyColumns.map((c) => {
                                                 const val = rec.data[c.key];
 
+                                                if (c.key === "plannedDate") {
+                                                    return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 font-mono text-xs">{getPlannedDateForRecord(rec.data, "Transporter Follow-Up", tatRules, rec.createdAt)}</TableCell>;
+                                                }
 
-                                                // Planned, Actual & Expected Date Logic
-                                                if (c.key === "plannedDate" || c.key === "actualDate" || c.key === "expectedDate") {
+                                                // Actual & Expected Date Logic
+                                                if (c.key === "actualDate" || c.key === "expectedDate") {
                                                     return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{formatDateDash(val)}</TableCell>;
                                                 }
 

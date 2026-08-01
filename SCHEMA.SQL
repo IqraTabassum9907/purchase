@@ -99,7 +99,7 @@ CREATE TABLE public.approved_vendors (
 
 CREATE TABLE public.purchase_orders (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  po_number character varying NOT NULL UNIQUE,
+  po_number character varying NOT NULL,
   indent_id uuid,
   vendor_name character varying NOT NULL,
   po_date date NOT NULL,
@@ -117,6 +117,7 @@ CREATE TABLE public.purchase_orders (
   status character varying DEFAULT 'PO Issued'::character varying,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT purchase_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT purchase_orders_po_indent_unique UNIQUE (po_number, indent_id),
   CONSTRAINT purchase_orders_indent_id_fkey FOREIGN KEY (indent_id) REFERENCES public.indents(id)
 );
 
@@ -158,6 +159,7 @@ CREATE TABLE public.vendor_liftings (
 CREATE TABLE public.transporter_followups (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   po_id uuid,
+  lifting_id uuid,
   transporter_name character varying NOT NULL,
   bilty_number character varying,
   vehicle_number character varying,
@@ -170,7 +172,8 @@ CREATE TABLE public.transporter_followups (
   status character varying DEFAULT 'In Transit'::character varying,
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT transporter_followups_pkey PRIMARY KEY (id),
-  CONSTRAINT transporter_followups_po_id_fkey FOREIGN KEY (po_id) REFERENCES public.purchase_orders(id)
+  CONSTRAINT transporter_followups_po_id_fkey FOREIGN KEY (po_id) REFERENCES public.purchase_orders(id),
+  CONSTRAINT transporter_followups_lifting_id_fkey FOREIGN KEY (lifting_id) REFERENCES public.vendor_liftings(id)
 );
 
 CREATE TABLE public.material_receipts (

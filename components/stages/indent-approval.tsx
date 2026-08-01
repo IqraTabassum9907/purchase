@@ -34,15 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2,
   XCircle,
-  Package,
-  Calendar,
-  Warehouse,
-  User,
-  FileText,
-  Hash,
-  Clock,
   UserCheck,
-  Tag,
   Upload,
   X,
   Loader2,
@@ -62,7 +54,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { cn, formatDate, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { cn, formatDate, parseSheetDate, getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
 
@@ -115,13 +107,19 @@ export default function Stage2() {
 
 
   const [historyRecords, setHistoryRecords] = useState<any[]>([]);
+  const [tatRules, setTatRules] = useState<any[]>([]);
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
       const { fetchIndentWorkflow } = await import("@/lib/supabase/queries");
       const { supabase } = await import("@/lib/supabase/client");
-      const rows = await fetchIndentWorkflow();
+      const [rows, tatRes] = await Promise.all([
+        fetchIndentWorkflow(),
+        supabase.from("master_tat_rules").select("*")
+      ]);
+
+      if (tatRes.data) setTatRules(tatRes.data);
 
       const stage2Rows = rows
         .map((r: any) => {
@@ -208,20 +206,22 @@ export default function Stage2() {
     }), [sheetRecords, searchTerm]);
 
   const columns = [
-    { key: "indentNumber", label: "Indent", icon: Hash },
-    { key: "createdBy", label: "Created By", icon: User },
-    { key: "category", label: "Category", icon: FileText },
-    { key: "itemName", label: "Item", icon: Package },
-    { key: "indentQty", label: "Indent Qty", icon: Package },
-    { key: "totalApprovedQty", label: "Total Approved", icon: CheckCircle2 },
-    { key: "rejectedQty", label: "Rejected Qty", icon: XCircle },
-    { key: "warehouseLocation", label: "Warehouse", icon: Warehouse },
-    { key: "itemCode", label: "Item Code", icon: Hash },
-    { key: "leadTime", label: "Expected Requirement Date", icon: Calendar },
-    { key: "actualDate", label: "Actual", icon: Calendar },
-    { key: "delay", label: "Delay", icon: Clock },
-    { key: "status", label: "Status", icon: Tag },
-    { key: "remarks", label: "Remarks", icon: FileText },
+    { key: "createdAtCol", label: "Timestamp" },
+    { key: "indentNumber", label: "Indent" },
+    { key: "createdBy", label: "Created By" },
+    { key: "category", label: "Category" },
+    { key: "itemName", label: "Item" },
+    { key: "indentQty", label: "Indent Qty" },
+    { key: "totalApprovedQty", label: "Total Approved" },
+    { key: "rejectedQty", label: "Rejected Qty" },
+    { key: "warehouseLocation", label: "Warehouse" },
+    { key: "itemCode", label: "Item Code" },
+    { key: "leadTime", label: "Expected Requirement Date" },
+    { key: "plannedDate", label: "Planned Date" },
+    { key: "actualDate", label: "Actual" },
+    { key: "delay", label: "Delay" },
+    { key: "status", label: "Status" },
+    { key: "remarks", label: "Remarks" },
   ] as const;
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>(
@@ -382,10 +382,10 @@ export default function Stage2() {
   return (
     <div className="p-6 h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
       {/* Header Card */}
-      <div className="mb-6 p-6 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
+      <div className="mb-6 p-6 bg-linear-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-slate-900 rounded-lg shadow-slate-100 shadow-xl text-white">
+            <div className="p-3 bg-blue-700 rounded-lg shadow-slate-100 shadow-xl text-white">
               <CheckCircle2 className="w-6 h-6" />
             </div>
             <div>
@@ -450,7 +450,7 @@ export default function Stage2() {
           {selectedRecords.length > 0 && activeTab === "pending" && (
             <Button
               onClick={() => setIsModalOpen(true)}
-              className="bg-slate-900 hover:bg-slate-800 text-white flex items-center gap-3 px-6 h-[60px] rounded-xl shadow-md transition-all hover:scale-[1.01] active:scale-[0.99]"
+              className="bg-blue-700 hover:bg-blue-800 text-white flex items-center gap-3 px-6 h-[60px] rounded-xl shadow-md transition-all hover:scale-[1.01] active:scale-[0.99]"
             >
               <Send className="w-4 h-4" />
               <span className="text-base font-semibold">Submit Approval ({selectedRecords.length})</span>
@@ -485,7 +485,6 @@ export default function Stage2() {
                       .map((col) => (
                         <TableHead key={col.key} className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">
                           <div className="flex items-center gap-2">
-                            {col.icon && <col.icon className="w-4 h-4" />}
                             {col.label}
                           </div>
                         </TableHead>
@@ -521,12 +520,16 @@ export default function Stage2() {
                             .filter((c) => selectedColumns.includes(c.key) &&
                               !["actualDate", "delay", "status", "remarks", "approvedQty"].includes(c.key))
                             .map((col) => (
-                              <TableCell key={String(col.key)}>
-                                {(col.key as string) === "plannedDate" || (col.key as string) === "indentDate"
-                                  ? formatDateDash((record.data as any)[col.key])
-                                  : (col.key as string) === "leadTime"
-                                  ? `${(record.data as any)[col.key] || 0} days`
-                                  : (record.data as any)[col.key] || "-"}
+                              <TableCell key={String(col.key)} className="font-mono text-xs">
+                                {(col.key as string) === "createdAtCol"
+                                   ? formatDateTimeFull(record.createdAt)
+                                   : (col.key as string) === "plannedDate"
+                                   ? getPlannedDateForRecord(record.data, "Indent Approval", tatRules, record.createdAt)
+                                   : (col.key as string) === "indentDate"
+                                   ? formatDateDash((record.data as any)[col.key])
+                                   : (col.key as string) === "leadTime"
+                                   ? `${(record.data as any)[col.key] || 0} days`
+                                   : (record.data as any)[col.key] || "-"}
                               </TableCell>
                             ))}
                         </TableRow>
@@ -557,7 +560,6 @@ export default function Stage2() {
                       .map((col) => (
                         <TableHead key={col.key} className="sticky top-0 z-20 bg-slate-200 border-none">
                           <div className="flex items-center gap-2 text-sm font-bold text-slate-600">
-                            {col.icon && <col.icon className="w-4 h-4" />}
                             {col.label}
                           </div>
                         </TableHead>
@@ -581,7 +583,11 @@ export default function Stage2() {
                           .filter((c) => selectedColumns.includes(c.key) && c.key !== "delay")
                           .map((col) => (
                             <TableCell key={col.key} className="text-sm text-slate-700">
-                              {col.key === "leadTime"
+                              {(col.key as string) === "createdAtCol"
+                                ? formatDateTimeFull(record.createdAt)
+                                : (col.key as string) === "plannedDate"
+                                ? getPlannedDateForRecord(record.data, "Indent Approval", tatRules, record.createdAt)
+                                : col.key === "leadTime"
                                 ? `${record.data[col.key] || 0} days`
                                 : col.key === "actualDate"
                                   ? formatDateDash(record.data[col.key])
@@ -601,7 +607,7 @@ export default function Stage2() {
       {/* ------------------- APPROVAL MODAL ------------------- */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <DialogContent className="max-w-[90vw] w-full p-0 overflow-hidden border-none shadow-2xl border-2 border-green-500">
-          <div className="bg-slate-900 px-6 py-4 flex items-center justify-between ">
+          <div className="bg-blue-700 px-6 py-4 flex items-center justify-between ">
             <div className="flex items-center gap-3 ">
               <div className="p-2 bg-white/10 rounded-lg">
                 <UserCheck className="w-5 h-5 text-white" />
@@ -639,9 +645,9 @@ export default function Stage2() {
                     <TableHeader className="bg-slate-50 sticky top-0 z-10">
                       <TableRow className="hover:bg-transparent border-b border-slate-200">
                         <TableHead className="w-[120px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Indent ID</TableHead>
-                        <TableHead className="min-w-[160px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Item Description</TableHead>
-                        <TableHead className="w-[80px] h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Indent Qty</TableHead>
-                        <TableHead className="w-[80px] h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Prev. Approved</TableHead>
+                        <TableHead className="min-w-40 h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest">Item Description</TableHead>
+                        <TableHead className="w-20 h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Indent Qty</TableHead>
+                        <TableHead className="w-20 h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Prev. Approved</TableHead>
                         <TableHead className="w-[100px] h-10 px-3 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Approve Qty</TableHead>
                         <TableHead className="w-[120px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Status</TableHead>
                         <TableHead className="w-[120px] h-10 px-4 text-[10px] font-extrabold text-slate-500 uppercase tracking-widest text-center">Vendor Type</TableHead>
@@ -768,7 +774,7 @@ export default function Stage2() {
                   type="submit"
                   className={`px-10 h-11 rounded-lg font-bold shadow-xl transition-all active:scale-[0.98] ${approvalForm.status === "rejected"
                     ? "bg-rose-600 hover:bg-rose-700 shadow-rose-200/50"
-                    : "bg-slate-900 hover:bg-slate-800 shadow-slate-200/50"
+                    : "bg-blue-700 hover:bg-blue-800 shadow-slate-200/50"
                     }`}
                   disabled={!isFormValid || isSubmitting}
                 >

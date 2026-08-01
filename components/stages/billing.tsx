@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Loader2, FileText, Search, RefreshCw, Calendar, MessageSquare, User, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react";
-import { cn, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { cn, parseSheetDate, getFmsTimestamp, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
 
@@ -38,6 +38,7 @@ export default function Stage9() {
   const [warehouseFilter, setWarehouseFilter] = useState("All");
   const [accountantList, setAccountantList] = useState<string[]>([]);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [tatRules, setTatRules] = useState<any[]>([]);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -214,10 +215,11 @@ export default function Stage9() {
               rowIndex: rows.length + 7,
               stage: 8,
               status,
+              createdAt: indentRow.data.createdAt,
               data: {
                 indentNumber: indentRow.data.indentNumber || "",
                 liftNumber: receipt.grn_number || "",
-                vendorName: po.vendor_name || indentRow.data.selectedVendorName || "-",
+                vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
                 poNumber: po.po_number || "-",
                 nextFollowUpDate: "",
                 remarksStage6: "",
@@ -276,6 +278,9 @@ export default function Stage9() {
         .select("name")
         .eq("is_active", true);
 
+      const { data: tatData } = await supabase.from("master_tat_rules").select("*");
+      if (tatData) setTatRules(tatData);
+
       if (dropRows) {
         setAccountantList(dropRows.map((r) => r.name).filter(Boolean));
       }
@@ -326,13 +331,14 @@ export default function Stage9() {
 
   // Pending columns
   const pendingColumns = [
+    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent No." },
     { key: "createdBy", label: "Created By" },
     { key: "category", label: "Category" },
     { key: "itemName", label: "Item" },
     { key: "indentQty", label: "Qty" },
     { key: "warehouse", label: "Warehouse" },
-    { key: "vendorName", label: "Vendor" },
+    { key: "vendorName", label: "Supplier" },
     { key: "poNumber", label: "PO Number" },
     { key: "basicValue", label: "Basic Value" },
     { key: "totalWithTax", label: "Total w/Tax" },
@@ -464,6 +470,15 @@ export default function Stage9() {
         return String(val).charAt(0).toUpperCase() + String(val).slice(1);
       }
 
+      // Timestamp and Planned Date are derived from the indent's own timestamp, not stored fields
+      if (key === "createdAtCol") {
+        return formatDateTimeFull(record.createdAt);
+      }
+
+      if (key === "plan8") {
+        return getPlannedDateForRecord(data, "Billing", tatRules, record.createdAt);
+      }
+
       const val = data[key];
       if (val === undefined || val === null || String(val).trim() === "") return "-";
 
@@ -486,7 +501,7 @@ export default function Stage9() {
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <DialogContent className="p-0 overflow-hidden border-0 rounded-3xl shadow-2xl bg-white" style={{ maxWidth: "360px", width: "90%" }}>
           {/* Header Banner */}
-          <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-slate-950 text-white px-6 py-5 flex items-center justify-between">
+          <div className="bg-linear-to-r from-indigo-950 via-slate-900 to-slate-950 text-white px-6 py-5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20">
                 <FileText className="w-5.5 h-5.5" />
@@ -643,7 +658,7 @@ export default function Stage9() {
                 "h-9 px-4 rounded-xl text-xs font-semibold shadow-md transition-all duration-200",
                 formData.checkedStatus === "Yes"
                   ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/10"
-                  : "bg-slate-900 hover:bg-slate-800 text-white shadow-slate-950/10"
+                  : "bg-blue-700 hover:bg-blue-800 text-white shadow-slate-950/10"
               )}
             >
               {isSubmitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
@@ -664,7 +679,7 @@ export default function Stage9() {
           <div className="mb-4 md:mb-6 p-4 md:p-6 bg-white border rounded-lg shadow-sm">
             <div className="flex items-start justify-between flex-wrap gap-4">
               <div className="flex items-center gap-4">
-                <div className="p-3 bg-slate-900 rounded-lg text-white shadow-xl">
+                <div className="p-3 bg-blue-700 rounded-lg text-white shadow-xl">
                   <FileText className="w-6 h-6" />
                 </div>
                 <div>
@@ -771,7 +786,7 @@ export default function Stage9() {
 
                 {/* Warehouse Filter */}
                 <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
-                  <SelectTrigger className="w-[160px] bg-white border-slate-200 h-9 text-slate-900">
+                  <SelectTrigger className="w-40 bg-white border-slate-200 h-9 text-slate-900">
                     <SelectValue placeholder="Warehouse" />
                   </SelectTrigger>
                   <SelectContent className="bg-white">
@@ -850,7 +865,7 @@ export default function Stage9() {
                         pending.length > 0
                       }
                       onCheckedChange={toggleAll}
-                      className="translate-y-[2px]"
+                      className="translate-y-0.5"
                     />
                   </th>
                   {pendingColumns
@@ -897,19 +912,25 @@ export default function Stage9() {
                         <Checkbox
                           checked={selectedRows.has(record.id)}
                           onCheckedChange={() => toggleRow(record.id)}
-                          className="translate-y-[2px]"
+                          className="translate-y-0.5"
                         />
                       </td>
                       {pendingColumns
                         .filter((c) => selectedPendingColumns.includes(c.key))
-                        .map((col) => (
-                          <td
-                            key={col.key}
-                            className="border-b px-4 py-2 text-center text-slate-700"
-                          >
-                            {safeValue(record, col.key)}
-                          </td>
-                        ))}
+                        .map((col) => {
+                          if (col.key === "plan8") {
+                            return (
+                              <td key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
+                                {getPlannedDateForRecord(record.data, "Billing", tatRules, record.createdAt)}
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={col.key} className="border-b px-4 py-2 text-center text-slate-700">
+                              {record.data[col.key] || "-"}
+                            </td>
+                          );
+                        })}
                     </tr>
                   ))
                 )}

@@ -11,6 +11,7 @@ import { usePathname } from "next/navigation";
 import { STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
+import { cn } from "@/lib/utils";
 
 export default function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
@@ -52,28 +53,37 @@ export default function Sidebar() {
       );
       const needsPurchaseReturn = activeStageNames.includes("Purchase Return");
 
-      const queries: PromiseLike<{ k: string; d: any; e: any }>[] = [];
+      const queries: Promise<{ k: string; d: any; e: any }>[] = [];
+
+      const safeQuery = async (queryPromise: PromiseLike<any>, key: string) => {
+        try {
+          const res = await queryPromise;
+          return { k: key, d: res?.data ?? res, e: res?.error ?? null };
+        } catch (err) {
+          return { k: key, d: null, e: err };
+        }
+      };
 
       if (needsIndentData) {
-        queries.push(fetchIndentWorkflow().then(d => ({ k: "indents", d, e: null })));
+        queries.push(safeQuery(fetchIndentWorkflow(), "indents"));
       }
       if (needsPayment || needsReceivingData) {
-        queries.push(supabase.from("purchase_orders").select("id, payment_type").then(r => ({ k: "pos", d: r.data, e: r.error })));
+        queries.push(safeQuery(supabase.from("purchase_orders").select("id, payment_type"), "pos"));
       }
       if (needsPayment) {
-        queries.push(supabase.from("vendor_payments").select("po_id, payment_type, status, transaction_utr, payment_mode, paid_by").then(r => ({ k: "vp", d: r.data, e: r.error })));
+        queries.push(safeQuery(supabase.from("vendor_payments").select("po_id, payment_type, status, transaction_utr, payment_mode, paid_by"), "vp"));
       }
       if (needsFollowUp) {
-        queries.push(supabase.from("vendor_liftings").select("po_id, lifting_status, actual_lifting_date").then(r => ({ k: "vl", d: r.data, e: r.error })));
+        queries.push(safeQuery(supabase.from("vendor_liftings").select("po_id, lifting_status, actual_lifting_date"), "vl"));
       }
       if (needsReceivingData) {
-        queries.push(supabase.from("transporter_followups").select("po_id, status, freight_amount, bilty_number, transporter_name, vehicle_number").then(r => ({ k: "tf", d: r.data, e: r.error })));
-        queries.push(supabase.from("material_receipts").select("po_id").then(r => ({ k: "mr", d: r.data, e: r.error })));
-        queries.push(supabase.from("tally_billing").select("po_id, verification_status, accountant_name").then(r => ({ k: "tb", d: r.data, e: r.error })));
+        queries.push(safeQuery(supabase.from("transporter_followups").select("po_id, status, freight_amount, bilty_number, transporter_name, vehicle_number"), "tf"));
+        queries.push(safeQuery(supabase.from("material_receipts").select("po_id"), "mr"));
+        queries.push(safeQuery(supabase.from("tally_billing").select("po_id, verification_status, accountant_name"), "tb"));
       }
       if (needsPurchaseReturn) {
-        queries.push(supabase.from("material_receipts").select("id, rejected_quantity").then(r => ({ k: "mr_pr", d: r.data, e: r.error })));
-        queries.push(supabase.from("purchase_returns").select("material_receipt_id").then(r => ({ k: "pr", d: r.data, e: r.error })));
+        queries.push(safeQuery(supabase.from("material_receipts").select("id, rejected_quantity"), "mr_pr"));
+        queries.push(safeQuery(supabase.from("purchase_returns").select("material_receipt_id"), "pr"));
       }
 
       const results = await Promise.all(queries);
@@ -162,8 +172,8 @@ export default function Sidebar() {
         // 2. Pending Verified Vendor Bills
         const paidVendorPoIds = new Set(
           (g.vp || [])
-            .filter((v: any) => 
-              v.payment_type === "Vendor Payment" && 
+            .filter((v: any) =>
+              v.payment_type === "Vendor Payment" &&
               (!!v.transaction_utr || !!v.payment_mode || (v.status === "Paid" && !v.paid_by))
             )
             .map((v: any) => v.po_id)
@@ -193,8 +203,8 @@ export default function Sidebar() {
       }
 
       setCounts(newCounts);
-    } catch (e) {
-      console.error("Failed to fetch sidebar counts:", e);
+    } catch (e: any) {
+      console.warn("Sidebar count update skipped:", e?.message || e);
     }
   }, [filteredStages]);
 
@@ -220,16 +230,13 @@ export default function Sidebar() {
 
   return (
     <>
-      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-sidebar border-b border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <img src="/logo.png" alt="Purchase Logo" className="h-10 w-auto max-w-[150px] object-contain" />
-          <h1 className="text-sm font-semibold text-sidebar-foreground">
-            Purchase
-          </h1>
+      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-3 py-2 bg-white border-b border-slate-200">
+        <div className="flex items-center gap-2">
+          <img src="/logo.png" alt="NuTech Logo" className="h-10 w-auto max-w-[170px] object-contain" />
         </div>
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="text-sidebar-foreground focus:outline-none"
+          className="text-slate-700 focus:outline-none"
           aria-label="Toggle menu"
         >
           {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
@@ -237,15 +244,12 @@ export default function Sidebar() {
       </div>
 
       <aside
-        className={`fixed lg:sticky top-0 left-0 h-screen w-64 bg-sidebar border-r border-sidebar-border flex flex-col transform transition-transform duration-300 ease-in-out z-40 
+        className={`fixed lg:sticky top-0 left-0 h-screen w-64 bg-white border-r border-slate-200 flex flex-col transform transition-transform duration-300 ease-in-out z-40 
         ${isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
         {/* Fixed Top Logo Header */}
-        <div className="hidden lg:flex items-center gap-3 p-4 border-b border-sidebar-border/40 bg-sidebar shrink-0 sticky top-0 z-10 shadow-xs">
-          <img src="/logo.png" alt="Purchase Logo" className="h-12 w-auto max-w-[180px] object-contain" />
-          <h1 className="text-base font-semibold text-sidebar-foreground whitespace-nowrap">
-            Purchase
-          </h1>
+        <div className="hidden lg:flex items-center justify-center py-2.5 px-2 border-b border-slate-200 bg-white shrink-0 sticky top-0 z-10 shadow-2xs overflow-hidden">
+          <img src="/logo.png" alt="NuTech Logo" className="h-15 w-auto max-w-[230px] scale-200 object-contain" />
         </div>
 
         <div className="p-4 overflow-y-auto flex-1 scrollbar-hide">
@@ -253,12 +257,17 @@ export default function Sidebar() {
           {showDashboard && (
             <Button
               variant={pathname === "/" ? "default" : "ghost"}
-              className="w-full justify-start mb-4"
+              className={cn(
+                "w-full justify-start mb-4 text-sm font-medium transition-all duration-200",
+                pathname === "/"
+                  ? "bg-linear-to-r from-sky-600 to-blue-600 text-white shadow-md shadow-sky-600/20 hover:from-sky-700 hover:to-blue-700"
+                  : "text-slate-700 hover:bg-sky-50 hover:text-sky-700"
+              )}
               asChild
               onClick={() => setIsOpen(false)}
             >
               <Link href="/">
-                <LayoutDashboard className="w-5 h-5 mr-3" />
+                <LayoutDashboard className={cn("w-5 h-5 mr-3", pathname === "/" ? "text-white" : "text-sky-600")} />
                 Dashboard
               </Link>
             </Button>
@@ -269,23 +278,28 @@ export default function Sidebar() {
               const stagePath = `/stages/${stage.slug}`;
               const Icon = stage.icon;
               const count = stage.name === "Create Indent" ? 0 : (counts[stage.name] || 0);
+              const active = isActive(stagePath);
               return (
                 <Button
                   key={stage.num}
-                  variant={isActive(stagePath) ? "default" : "ghost"}
-                  className="w-full justify-start text-sm transition-colors duration-200"
+                  variant="ghost"
+                  className={cn(
+                    "w-full justify-start text-sm font-medium transition-all duration-200",
+                    active
+                      ? "bg-linear-to-r from-sky-600 to-blue-600 text-white font-semibold shadow-md shadow-sky-600/20 hover:from-sky-700 hover:to-blue-700"
+                      : "text-slate-700 hover:bg-sky-50 hover:text-sky-700"
+                  )}
                   asChild
                   onClick={() => setIsOpen(false)}
                 >
                   <Link href={stagePath} className="flex items-center w-full">
-                    <Icon className="w-5 h-5 mr-3 flex-shrink-0" />
-                    <span className="truncate flex-grow text-left">{stage.name}</span>
+                    <Icon className={cn("w-5 h-5 mr-3 shrink-0 transition-colors", active ? "text-white" : "text-sky-600")} />
+                    <span className="truncate grow text-left">{stage.name}</span>
                     {count > 0 && (
-                      <span className={`ml-auto text-[10px] rounded-full px-2 py-0.5 font-bold leading-none min-w-[20px] text-center flex-shrink-0 transition-all ${
-                        isActive(stagePath)
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "bg-blue-500 text-white shadow-sm"
-                      }`}>
+                      <span className={`ml-auto text-[10px] rounded-full px-2 py-0.5 font-bold leading-none min-w-5 text-center shrink-0 transition-all ${active
+                        ? "bg-white text-sky-700 shadow-2xs font-extrabold"
+                        : "bg-sky-100 text-sky-800"
+                        }`}>
                         {count}
                       </span>
                     )}

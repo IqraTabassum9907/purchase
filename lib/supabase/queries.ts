@@ -94,7 +94,7 @@ export async function fetchIndentWorkflow(): Promise<FlatIndentRow[]> {
     supabase.from("indent_approvals").select("*").in("indent_id", indentIds),
     supabase.from("quotation_submissions").select("*").in("indent_id", indentIds),
     supabase.from("approved_vendors").select("*").in("indent_id", indentIds),
-    supabase.from("purchase_orders").select("indent_id, po_number, status").in("indent_id", indentIds),
+    supabase.from("purchase_orders").select("indent_id, po_number, status, vendor_name").in("indent_id", indentIds),
   ]);
 
   const approvals = approvalRes.data || [];
@@ -218,7 +218,7 @@ export async function fetchIndentWorkflow(): Promise<FlatIndentRow[]> {
         plan3: vendorQuots.length > 0 ? formatDate(vendorQuots[0].created_at) : "",
         actual3: submittedQuots.length > 0 ? formatDate(submittedQuots[submittedQuots.length - 1].created_at) : "",
         selectedVendor: av ? `vendor${vendorQuots.findIndex((q) => q.id === av.selected_quotation_id) + 1}` : "",
-        selectedVendorName: av?.vendor_name || "",
+        selectedVendorName: po?.vendor_name || av?.vendor_name || "",
         finalApprovedBy: av?.approved_by || "",
         negotiationRemarks: av?.approval_remarks || "",
         plan4: av ? formatDate(av.approved_at) : "",

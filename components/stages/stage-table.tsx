@@ -11,6 +11,9 @@ import {
 } from "@/components/ui/table";
 import { Clock, ClipboardList } from "lucide-react";
 import type { WorkflowRecord } from "@/lib/workflow-context";
+import { getPlannedDateForRecord } from "@/lib/utils";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase/client";
 
 interface StageTableProps {
   title: string;
@@ -34,6 +37,13 @@ export function StageTable({
   showPending = true,
   hideTableTitle = false,
 }: StageTableProps) {
+  const [tatRules, setTatRules] = useState<any[]>([]);
+
+  useEffect(() => {
+    supabase.from("master_tat_rules").select("*").then(({ data }) => {
+      if (data) setTatRules(data);
+    });
+  }, []);
   // Get timestamp when THIS stage was completed
   const getStageTimestamp = (record: WorkflowRecord) => {
     try {
@@ -185,6 +195,9 @@ export function StageTable({
                           <TableHead className="min-w-[120px] font-bold text-slate-900 border-b border-slate-300 sticky top-0 z-30 bg-slate-200 px-4 py-3 whitespace-nowrap">
                             Date
                           </TableHead>
+                          <TableHead className="min-w-[140px] font-bold text-slate-900 border-b border-slate-300 sticky top-0 z-30 bg-slate-200 px-4 py-3 whitespace-nowrap">
+                            Planned Date
+                          </TableHead>
                           {columns.slice(1).map((col) => (
                             <TableHead key={col.key} className="min-w-[120px] font-bold text-slate-900 border-b border-slate-300 sticky top-0 z-30 bg-slate-200 px-4 py-3 whitespace-nowrap">
                               {col.label}
@@ -203,7 +216,7 @@ export function StageTable({
                                 variant="outline"
                                 size="sm"
                                 onClick={() => onSelectRecord(record)}
-                                className="h-8 border-slate-200 hover:bg-slate-900 hover:text-white transition-all"
+                                className="h-8 border-slate-200 hover:bg-blue-700 hover:text-white transition-all"
                               >
                                 Edit
                               </Button>
@@ -213,6 +226,9 @@ export function StageTable({
                             </TableCell>
                             <TableCell className="text-sm text-slate-600 border-b border-slate-100 px-4">
                               {getStageTimestamp(record)}
+                            </TableCell>
+                            <TableCell className="text-xs font-mono text-slate-600 border-b border-slate-100 px-4">
+                              {getPlannedDateForRecord(record.data, "Create Indent", tatRules, record.createdAt)}
                             </TableCell>
                             {columns.slice(1).map((col) => (
                               <TableCell key={col.key} className="text-sm text-slate-600 border-b border-slate-100 px-4">

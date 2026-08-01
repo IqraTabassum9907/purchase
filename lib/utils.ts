@@ -64,6 +64,125 @@ export function getFmsTimestamp(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 /**
+ * Formats a date to DD/MM/YYYY, HH:mm:ss for display.
+ */
+export function formatDateTimeFull(date?: Date | string | null): string {
+  if (!date || date === "-" || date === "—") return "-";
+  const d = date instanceof Date ? date : parseSheetDate(date);
+  if (!d || isNaN(d.getTime())) {
+    if (typeof date === "string") {
+      const parsed = new Date(date);
+      if (!isNaN(parsed.getTime())) {
+        const dd = String(parsed.getDate()).padStart(2, "0");
+        const mm = String(parsed.getMonth() + 1).padStart(2, "0");
+        const yyyy = parsed.getFullYear();
+        const hh = String(parsed.getHours()).padStart(2, "0");
+        const min = String(parsed.getMinutes()).padStart(2, "0");
+        const ss = String(parsed.getSeconds()).padStart(2, "0");
+        return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+      }
+      return date;
+    }
+    return "-";
+  }
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+}
+
+/**
+ * Calculates Planned Date according to TAT rule and returns DD/MM/YYYY, HH:mm:ss.
+ */
+export function calculatePlannedDate(
+  createdAtStr: string | Date | null | undefined,
+  tatRule?: { completion_time?: number; time_unit?: string } | null,
+  defaultHours: number = 24
+): string {
+  const baseDate = parseSheetDate(createdAtStr) || (createdAtStr ? new Date(createdAtStr) : null);
+  if (!baseDate || isNaN(baseDate.getTime())) return "-";
+
+  const compTime = Number(tatRule?.completion_time) || defaultHours;
+  const timeUnit = String(tatRule?.time_unit || "Hours").toLowerCase();
+
+  const planned = new Date(baseDate.getTime());
+  if (timeUnit.includes("min")) {
+    planned.setMinutes(planned.getMinutes() + compTime);
+  } else if (timeUnit.includes("day")) {
+    planned.setDate(planned.getDate() + compTime);
+  } else {
+    planned.setHours(planned.getHours() + compTime);
+  }
+
+  return formatDateTimeFull(planned);
+}
+
+/**
+ * Gets cumulative formatted planned date (dd/mm/yyyy, hh:mm:ss) for a record based on configured TAT rules up to stageName.
+ */
+export function getPlannedDateForRecord(
+  recordData: any,
+  stageName: string,
+  tatRules?: any[],
+  createdAtFallback?: any
+): string {
+  const rawDate = recordData?.createdAt || recordData?.timestamp || recordData?.indentDate || createdAtFallback;
+  const baseDate = parseSheetDate(rawDate) || (rawDate ? new Date(rawDate) : null);
+  
+  if (!baseDate || isNaN(baseDate.getTime())) return "-";
+
+  // Must mirror STAGES in lib/constants.ts (the actual workflow/sidebar order) —
+  // Purchase Return (rejected-qty handling straight off Material Received) always
+  // resolves before Billing, so its TAT has to accrue first in the cumulative sum.
+  const stageOrder = [
+    "Create Indent",
+    "Indent Approval",
+    "Quotation",
+    "Approved Vendor",
+    "Make PO",
+    "Payment",
+    "Follow UP / Lifting",
+    "Transporter Follow-Up",
+    "Material Received",
+    "Purchase Return",
+    "Billing",
+    "Order Cancel"
+  ];
+
+  const targetIndex = stageOrder.findIndex(
+    (s) => s.toLowerCase().trim() === String(stageName).toLowerCase().trim()
+  );
+
+  let currentDate = new Date(baseDate.getTime());
+  const maxIdx = targetIndex >= 0 ? targetIndex : 0;
+
+  for (let i = 0; i <= maxIdx; i++) {
+    const sName = stageOrder[i];
+    const rule = tatRules?.find(
+      (r) => String(r.section_name || "").toLowerCase().trim() === sName.toLowerCase().trim()
+    );
+
+    if (rule && rule.completion_time && !isNaN(Number(rule.completion_time))) {
+      const compTime = Number(rule.completion_time);
+      const timeUnit = String(rule.time_unit || "Hours").toLowerCase();
+
+      if (timeUnit.includes("min")) {
+        currentDate.setMinutes(currentDate.getMinutes() + compTime);
+      } else if (timeUnit.includes("day")) {
+        currentDate.setDate(currentDate.getDate() + compTime);
+      } else {
+        currentDate.setHours(currentDate.getHours() + compTime);
+      }
+    }
+  }
+
+  return formatDateTimeFull(currentDate);
+}
+
+/**
  * Checks if a warranty expiry date is within one month from today.
  */
 export function isWarrantyExpiringSoon(expiryDate: string | Date | null | undefined): boolean {

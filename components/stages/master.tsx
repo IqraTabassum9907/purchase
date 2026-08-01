@@ -680,7 +680,7 @@ export default function MasterPage() {
   return (
     <div className="flex flex-col h-full w-full bg-slate-50 overflow-hidden">
       {/* Top Banner Header */}
-      <div className="bg-slate-900 text-white p-6 shadow-md flex-shrink-0 flex items-center justify-between">
+      <div className="bg-slate-900 text-white p-6 shadow-md shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-lg">
             <Settings className="w-6 h-6 animate-spin-slow" />
@@ -709,12 +709,12 @@ export default function MasterPage() {
       </div>
 
       {/* View Switcher Header */}
-      <div className="bg-white border-b border-slate-200 px-6 py-3 flex gap-2 flex-shrink-0">
+      <div className="bg-white border-b border-slate-200 px-6 py-3 flex gap-2 shrink-0">
         <Button
           onClick={() => setCurrentView("config")}
           variant={currentView === "config" ? "default" : "outline"}
           className={`h-9 px-5 rounded-xl text-xs font-semibold ${
-            currentView === "config" ? "bg-slate-900 text-white" : ""
+            currentView === "config" ? "bg-blue-700 text-white" : ""
           }`}
         >
           Configurations
@@ -723,7 +723,7 @@ export default function MasterPage() {
           onClick={() => setCurrentView("tat")}
           variant={currentView === "tat" ? "default" : "outline"}
           className={`h-9 px-5 rounded-xl text-xs font-semibold ${
-            currentView === "tat" ? "bg-slate-900 text-white" : ""
+            currentView === "tat" ? "bg-blue-700 text-white" : ""
           }`}
         >
           TAT Manager
@@ -824,7 +824,7 @@ export default function MasterPage() {
                 <div className="col-span-2 flex gap-2 pt-2">
                   <Button
                     type="submit"
-                    className="flex-1 h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition-all shadow-md"
+                    className="flex-1 h-10 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs transition-all shadow-md"
                   >
                     {editingTatIndex !== null ? "Update Rule" : "Add Rule"}
                   </Button>
@@ -914,7 +914,7 @@ export default function MasterPage() {
           /* CONFIGURATIONS VIEW WITH HORIZONTAL SELECTOR */
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Horizontal config tabs selector */}
-            <div onWheel={handleWheel} className="bg-white border-b border-slate-200 px-6 py-3 flex gap-2 overflow-x-auto flex-shrink-0 scrollbar-hide">
+            <div onWheel={handleWheel} className="bg-white border-b border-slate-200 px-6 py-3 flex gap-2 overflow-x-auto shrink-0 scrollbar-hide">
               {tabsConfig.map(t => {
                 const TabIcon = t.icon;
                 const isSelected = activeTab === t.id;
@@ -927,11 +927,11 @@ export default function MasterPage() {
                     }}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                       isSelected
-                        ? "bg-slate-900 text-white shadow-sm"
+                        ? "bg-blue-700 text-white shadow-sm"
                         : "bg-slate-50 text-slate-655 hover:bg-slate-100 border border-slate-250/20"
                     }`}
                   >
-                    <TabIcon className="w-4 h-4 flex-shrink-0" />
+                    <TabIcon className="w-4 h-4 shrink-0" />
                     {t.label}
                   </button>
                 );
@@ -1016,7 +1016,7 @@ export default function MasterPage() {
                           <Button
                             type="submit"
                             disabled={isSubmitting}
-                            className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
+                            className="w-full h-10 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
                           >
                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                             Save Transporter
@@ -1046,7 +1046,7 @@ export default function MasterPage() {
                                 <TableHead className="text-xs font-bold text-slate-660">Contact Person</TableHead>
                                 <TableHead className="text-xs font-bold text-slate-660">Phone</TableHead>
                                 <TableHead className="text-xs font-bold text-slate-660">Vehicle Type</TableHead>
-                                <TableHead className="w-[80px] text-xs font-bold text-slate-660 text-center">Action</TableHead>
+                                <TableHead className="w-20 text-xs font-bold text-slate-660 text-center">Action</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1144,7 +1144,7 @@ export default function MasterPage() {
                           <Button
                             type="submit"
                             disabled={isSubmitting}
-                            className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
+                            className="w-full h-10 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
                           >
                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                             Add to Catalog
@@ -1170,11 +1170,11 @@ export default function MasterPage() {
                           <Table>
                             <TableHeader className="bg-slate-50/50">
                               <TableRow>
-                                <TableHead className="w-[100px] text-xs font-bold text-slate-660">Code</TableHead>
-                                <TableHead className="w-[120px] text-xs font-bold text-slate-660">Category</TableHead>
-                                <TableHead className="text-xs font-bold text-slate-660">Item Name</TableHead>
-                                <TableHead className="w-[80px] text-xs font-bold text-slate-660">UOM</TableHead>
-                                <TableHead className="w-[80px] text-xs font-bold text-slate-660 text-center">Action</TableHead>
+                                <TableHead className="w-[100px] text-xs font-bold text-slate-600">Code</TableHead>
+                                <TableHead className="w-[120px] text-xs font-bold text-slate-600">Category</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Item Name</TableHead>
+                                <TableHead className="w-20 text-xs font-bold text-slate-600">UOM</TableHead>
+                                <TableHead className="w-20 text-xs font-bold text-slate-600 text-center">Action</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1198,7 +1198,7 @@ export default function MasterPage() {
                                         disabled={isSubmitting}
                                         variant="ghost"
                                         size="icon"
-                                        className="h-8 w-8 hover:text-red-655 rounded-lg hover:bg-red-50 text-slate-400 transition-colors"
+                                        className="h-8 w-8 hover:text-red-600 rounded-lg hover:bg-red-50 text-slate-400 transition-colors"
                                       >
                                         <Trash2 className="w-4 h-4" />
                                       </Button>
@@ -1275,7 +1275,7 @@ export default function MasterPage() {
                           <Button
                             type="submit"
                             disabled={isSubmitting}
-                            className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
+                            className="w-full h-10 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
                           >
                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                             Save Vendor
@@ -1301,12 +1301,12 @@ export default function MasterPage() {
                           <Table>
                             <TableHeader className="bg-slate-50/50">
                               <TableRow>
-                                <TableHead className="text-xs font-bold text-slate-660">Name</TableHead>
-                                <TableHead className="text-xs font-bold text-slate-660">Contact Person</TableHead>
-                                <TableHead className="text-xs font-bold text-slate-660">Phone</TableHead>
-                                <TableHead className="text-xs font-bold text-slate-660">Email</TableHead>
-                                <TableHead className="text-xs font-bold text-slate-660">Address</TableHead>
-                                <TableHead className="w-[80px] text-xs font-bold text-slate-660 text-center">Action</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Name</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Contact Person</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Phone</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Email</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Address</TableHead>
+                                <TableHead className="w-20 text-xs font-bold text-slate-600 text-center">Action</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1349,12 +1349,12 @@ export default function MasterPage() {
                       {/* Option Add panel */}
                       <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4 xl:col-span-1">
                         <div className="flex items-center gap-2 border-b pb-2">
-                          <Plus className="w-4 h-4 text-indigo-655" />
+                          <Plus className="w-4 h-4 text-indigo-600" />
                           <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Add Option Value</h4>
                         </div>
                         <form onSubmit={handleAddSimple} className="space-y-4">
                           <div className="space-y-1.5">
-                            <Label className="text-xs text-slate-650 font-semibold">Value Name</Label>
+                            <Label className="text-xs text-slate-600 font-semibold">Value Name</Label>
                             <Input
                               placeholder={`Enter new ${activeTabConfig?.label.toLowerCase() || "option"}...`}
                               value={newSimpleVal}
@@ -1366,7 +1366,7 @@ export default function MasterPage() {
                           <Button
                             type="submit"
                             disabled={isSubmitting}
-                            className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
+                            className="w-full h-10 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
                           >
                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                             Add Value
@@ -1429,7 +1429,7 @@ export default function MasterPage() {
                                     disabled={isSubmitting}
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 hover:text-red-650 hover:bg-red-50 text-slate-400 rounded-lg transition-colors flex-shrink-0"
+                                    className="h-7 w-7 hover:text-red-600 hover:bg-red-50 text-slate-400 rounded-lg transition-colors shrink-0"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </Button>

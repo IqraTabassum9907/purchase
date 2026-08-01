@@ -36,7 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatDate, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { formatDate, parseSheetDate, getFmsTimestamp, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
 import { useMemo } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
@@ -164,15 +164,19 @@ export default function Stage5() {
 
 
   const [historyRecords, setHistoryRecords] = useState<any[]>([]);
+  const [tatRules, setTatRules] = useState<any[]>([]);
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const workflow = await fetchIndentWorkflow();
+      const [workflow, poResult, tatResult] = await Promise.all([
+        fetchIndentWorkflow(),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("master_tat_rules").select("*"),
+      ]);
 
-      const { data: poData } = await supabase
-        .from("purchase_orders")
-        .select("*");
+      const poData = poResult.data || [];
+      if (tatResult.data) setTatRules(tatResult.data);
 
       const posByIndentId = new Map<string, any[]>();
       if (poData) {
@@ -276,8 +280,21 @@ export default function Stage5() {
     setIsLoading(false);
   };
 
+  const [dbVendors, setDbVendors] = useState<Array<{ vendor_name: string; email?: string; address?: string }>>([]);
+
   React.useEffect(() => {
     fetchData();
+    async function loadMasterVendors() {
+      try {
+        const { data } = await supabase.from("master_vendors").select("*").eq("is_active", true);
+        if (data && data.length > 0) {
+          setDbVendors(data);
+        }
+      } catch (err) {
+        console.error("Error loading master vendors in PO entry:", err);
+      }
+    }
+    loadMasterVendors();
   }, []);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -328,6 +345,7 @@ export default function Stage5() {
   }, [completed]);
 
   const baseColumns = [
+    { key: "createdAt", label: "Timestamp", icon: null },
     { key: "indentNumber", label: "Indent-No", icon: null },
     { key: "itemName", label: "Item", icon: null },
     { key: "quantity", label: "Qty", icon: null },
@@ -354,7 +372,7 @@ export default function Stage5() {
     "All disputes subject to Mumbai jurisdiction.",
   ];
 
-  const defaultSuppliers = [
+  const fallbackSuppliers = [
     "INFOSYS TECH",
     "KOTAK MAHINDRA",
     "Vendor A",
@@ -364,6 +382,33 @@ export default function Stage5() {
     "Express Logistics",
     "DHL Express"
   ];
+
+  const defaultSuppliers = useMemo(() => {
+    if (dbVendors.length > 0) {
+      return dbVendors.map((v) => v.vendor_name);
+    }
+    return fallbackSuppliers;
+  }, [dbVendors]);
+
+  const vendorEmailMap: Record<string, string> = useMemo(() => {
+    const map: Record<string, string> = { ...VENDOR_EMAILS };
+    dbVendors.forEach((v) => {
+      if (v.vendor_name && v.email) {
+        map[v.vendor_name] = v.email;
+      }
+    });
+    return map;
+  }, [dbVendors]);
+
+  const vendorAddressMap: Record<string, string> = useMemo(() => {
+    const map: Record<string, string> = { ...VENDOR_ADDRESSES };
+    dbVendors.forEach((v) => {
+      if (v.vendor_name && v.address) {
+        map[v.vendor_name] = v.address;
+      }
+    });
+    return map;
+  }, [dbVendors]);
 
   const defaultPOForm = {
     firmName: "Botivate",
@@ -424,8 +469,8 @@ export default function Stage5() {
     setPoForm({
       firmName: "Botivate",
       supplierName: v.name !== "-" ? v.name : "",
-      supplierEmail: v.name ? (VENDOR_EMAILS[v.name] || "") : "",
-      supplierAddress: v.name ? (VENDOR_ADDRESSES[v.name] || "") : "",
+      supplierEmail: v.name ? (vendorEmailMap[v.name] || "") : "",
+      supplierAddress: v.name ? (vendorAddressMap[v.name] || "") : "",
       poDate: formatInputDate(firstRec.data.actual4),
       deliveryDate: v.delivery ? formatInputDate(v.delivery) : "",
       paymentTerms: normalizePaymentTerms(v.terms),
@@ -564,8 +609,8 @@ export default function Stage5() {
     setPoForm({
       ...defaultPOForm,
       supplierName: firstVendor?.name && firstVendor.name !== "-" ? firstVendor.name : "",
-      supplierEmail: firstVendor?.name ? (VENDOR_EMAILS[firstVendor.name] || "") : "",
-      supplierAddress: firstVendor?.name ? (VENDOR_ADDRESSES[firstVendor.name] || "") : "",
+      supplierEmail: firstVendor?.name ? (vendorEmailMap[firstVendor.name] || "") : "",
+      supplierAddress: firstVendor?.name ? (vendorAddressMap[firstVendor.name] || "") : "",
       deliveryDate: firstVendor?.delivery ? formatInputDate(firstVendor.delivery) : "",
       paymentTerms: normalizePaymentTerms(firstVendor?.terms),
       advanceAmount: extractAdvanceAmount(firstVendor?.terms),
@@ -587,13 +632,13 @@ export default function Stage5() {
     let allValid = true;
     selectedRecordIds.forEach((id) => {
       const data = bulkFormData[id];
-      if (!data || !data.basicValue || !data.totalWithTax || !data.hsn || !data.gst) {
+      if (!data || !data.basicValue || !data.totalWithTax || !data.gst) {
         allValid = false;
       }
     });
 
     if (!allValid) {
-      toast.error("Please fill all required fields for selected records.");
+      toast.error("Please fill all required fields (Rate, GST, etc.) for selected records.");
       return;
     }
 
@@ -663,6 +708,9 @@ export default function Stage5() {
             const finalTotalWithTax = (basicVal + existingTax + perItemPkgTotal).toFixed(2);
 
             const vendorData = getVendorData(record);
+            const chosenSupplier = (poForm.supplierName && poForm.supplierName.trim() !== "" && poForm.supplierName.trim() !== "-")
+              ? poForm.supplierName
+              : (vendorData.name !== "-" ? vendorData.name : "");
 
             const isAdv = (poForm.advancePayment || "yes") === "yes";
             const pTerm = poForm.paymentTerms || vendorData.terms || "advance";
@@ -672,7 +720,7 @@ export default function Stage5() {
             const poPayload = {
               po_number: commonPONumber,
               indent_id: record.id,
-              vendor_name: vendorData.name !== "-" ? vendorData.name : "",
+              vendor_name: chosenSupplier,
               po_date: poForm.poDate || new Date().toISOString().split("T")[0],
               item_code: record.data.itemCode || "",
               item_name: record.data.itemName || "",
@@ -719,13 +767,28 @@ export default function Stage5() {
                   .insert(fallbackPayload);
                 error = retryRes.error;
               }
-              if (error) throw error;
+              if (error) {
+                // If UNIQUE violation on (po_number, indent_id), try upsert
+                if (error.code === "23505" || error.message?.includes("unique") || error.message?.includes("duplicate")) {
+                  const upsertRes = await supabase
+                    .from("purchase_orders")
+                    .upsert(poPayload, { onConflict: "po_number,indent_id" });
+                  if (upsertRes.error) throw upsertRes.error;
+                } else {
+                  throw error;
+                }
+              }
+            }
+
+            if (chosenSupplier) {
+              await supabase.from("approved_vendors").update({ vendor_name: chosenSupplier }).eq("indent_id", record.id);
             }
 
             successCount++;
           } catch (err: any) {
+            const errMsg = err?.message || err?.details || err?.hint || JSON.stringify(err) || "Unknown error";
             console.error(`Error processing record ${record.id}:`, err);
-            throw new Error(`Record ${record.id}: ${err.message}`);
+            throw new Error(`Record ${record.data?.indentNumber || record.id}: ${errMsg}`);
           }
         }
 
@@ -868,10 +931,10 @@ export default function Stage5() {
   return (
     <div className="p-6 h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="mb-6 p-6 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
+      <div className="mb-6 p-6 bg-linear-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-slate-900 rounded-lg shadow-slate-100 shadow-xl text-white">
+            <div className="p-3 bg-blue-700 rounded-lg shadow-slate-100 shadow-xl text-white">
               <FileEdit className="w-6 h-6" />
             </div>
             <div>
@@ -939,7 +1002,7 @@ export default function Stage5() {
           {selectedRecordIds.length > 0 && activeTab === "pending" && (
             <Button
               onClick={handleOpenBulkForm}
-              className="animate-in fade-in zoom-in duration-200 shadow-md shadow-slate-200 bg-slate-900 hover:bg-slate-800 text-white px-6 py-3 h-auto text-sm font-bold rounded-lg"
+              className="animate-in fade-in zoom-in duration-200 shadow-md shadow-slate-200 bg-blue-700 hover:bg-blue-800 text-white px-6 py-3 h-auto text-sm font-bold rounded-lg"
             >
               Create PO ({selectedRecordIds.length})
             </Button>
@@ -1004,9 +1067,11 @@ export default function Stage5() {
                           {baseColumns
                             .filter((c) => selectedColumns.includes(c.key))
                             .map((col) => (
-                              <TableCell key={col.key} className="px-4 whitespace-nowrap">
+                              <TableCell key={col.key} className="px-4 whitespace-nowrap font-mono text-xs">
                                 {col.key === "planned4"
-                                  ? formatDateDash(record.data[col.key])
+                                  ? getPlannedDateForRecord(record.data, "Make PO", tatRules, record.createdAt)
+                                  : col.key === "createdAt"
+                                  ? formatDateTimeFull(record.createdAt)
                                   : (record.data[col.key] || "-")}
                               </TableCell>
                             ))}
@@ -1041,6 +1106,7 @@ export default function Stage5() {
               <Table className="w-full caption-bottom text-sm border-separate border-spacing-0">
                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                   <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Timestamp</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Item Details</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Planned</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Actual</TableHead>
@@ -1055,7 +1121,7 @@ export default function Stage5() {
                 <TableBody>
                   {completed.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={10} className="h-32 text-center text-gray-500 font-medium">
                         No completed PO entries found.
                       </TableCell>
                     </TableRow>
@@ -1064,6 +1130,9 @@ export default function Stage5() {
                     const v = getVendorData(record);
                     return (
                       <TableRow key={record.id} className="bg-green-50/50 hover:bg-green-100/50">
+                        <TableCell className="px-4 text-slate-700 whitespace-nowrap font-mono text-xs">
+                          {formatDateTimeFull(record.createdAt)}
+                        </TableCell>
                         <TableCell className="max-w-[200px] px-4">
                           <div className="space-y-1">
                             <div className="font-semibold text-blue-900">{record.data.indentNumber || "-"}</div>
@@ -1071,8 +1140,8 @@ export default function Stage5() {
                             <div className="text-xs text-gray-500">Qty: {record.data.quantity}</div>
                           </div>
                         </TableCell>
-                        <TableCell className="px-4 text-slate-700 whitespace-nowrap">
-                          {formatDateDash(record.data.planned4)}
+                        <TableCell className="px-4 text-slate-700 whitespace-nowrap font-mono text-xs">
+                          {getPlannedDateForRecord(record.data, "Make PO", tatRules, record.createdAt)}
                         </TableCell>
                         <TableCell className="px-4 text-slate-700 whitespace-nowrap">
                           {formatDateDash(record.data.actual4)}
@@ -1124,7 +1193,7 @@ export default function Stage5() {
                               <span className="font-medium">₹{record.data.basicValue || "-"}</span>
                             </div>
                             <div className="flex justify-between gap-4 border-t pt-1">
-                              <span className="text-xs text-gray-500 font-semibold text-green-700">GST: {formatGSTDisplay(record.data.gst)}</span>
+                               <span className="text-xs text-green-700 font-semibold">GST: {formatGSTDisplay(record.data.gst)}</span>
                               <span className="font-bold text-green-800">Total: ₹{record.data.totalWithTax || "-"}</span>
                             </div>
                           </div>
@@ -1233,8 +1302,8 @@ export default function Stage5() {
                       onValueChange={(value) => setPoForm((prev) => ({
                         ...prev,
                         supplierName: value,
-                        supplierEmail: VENDOR_EMAILS[value] || `${value.toLowerCase().replace(/\s+/g, "")}@example.com`,
-                        supplierAddress: VENDOR_ADDRESSES[value] || `${value} Business Park, Mumbai`
+                        supplierEmail: vendorEmailMap[value] || `${value.toLowerCase().replace(/\s+/g, "")}@example.com`,
+                        supplierAddress: vendorAddressMap[value] || `${value} Business Park, Mumbai`
                       }))}
                     >
                       <SelectTrigger><SelectValue placeholder="Select Supplier" /></SelectTrigger>
@@ -1305,7 +1374,7 @@ export default function Stage5() {
                     <Input type="date" value={poForm.quotationDate || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, quotationDate: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700 font-extrabold">Advance Payment *</Label>
+                     <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">Advance Payment *</Label>
                     <Select
                       value={poForm.advancePayment || "yes"}
                       onValueChange={(val) => setPoForm((prev) => ({
@@ -1325,7 +1394,7 @@ export default function Stage5() {
                   </div>
                   {(poForm.advancePayment || "yes") === "yes" && (
                     <div className="space-y-1.5">
-                      <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700 font-extrabold">Advance Amount (₹) *</Label>
+                      <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">Advance Amount (₹) *</Label>
                       <Input
                         type="number"
                         step="0.01"
@@ -1559,7 +1628,7 @@ export default function Stage5() {
                 !commonPONumber.trim() ||
                 !selectedRecordIds.every((id) => {
                   const d = bulkFormData[id];
-                  return d?.basicValue && d?.totalWithTax && d?.hsn && d?.gst;
+                  return d?.basicValue && d?.totalWithTax && d?.gst;
                 })
               }
               className="bg-indigo-500 text-white hover:bg-indigo-600"
@@ -1579,7 +1648,7 @@ export default function Stage5() {
           </DialogFooter>
 
           <div className="hidden">
-            <DialogHeader className="flex-shrink-0">
+            <DialogHeader className="shrink-0">
               <DialogTitle>Bulk PO Creation ({selectedRecordIds.length} items)</DialogTitle>
               <p className="text-sm text-gray-600">Fill PO details for all selected items</p>
               {selectedRecordIds.length > 1 && (
@@ -1859,7 +1928,7 @@ export default function Stage5() {
               </div>
             </form>
 
-            <DialogFooter className="flex-shrink-0 border-t pt-4">
+            <DialogFooter className="shrink-0 border-t pt-4">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
@@ -1892,7 +1961,7 @@ export default function Stage5() {
       {/* PO DRAFT PREVIEW MODAL */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden bg-slate-900 border-none">
-          <DialogHeader className="p-4 bg-slate-800 text-white flex-shrink-0 flex flex-row items-center justify-between border-b border-slate-700">
+          <DialogHeader className="p-4 bg-slate-800 text-white shrink-0 flex flex-row items-center justify-between border-b border-slate-700">
             <DialogTitle className="text-lg font-bold flex items-center gap-2">
               <Eye className="w-5 h-5 text-indigo-400" />
               <span>Purchase Order Document Preview</span>
@@ -2058,7 +2127,7 @@ export default function Stage5() {
             </div>
           </div>
 
-          <DialogFooter className="p-4 bg-slate-800 flex-shrink-0 border-t border-slate-700">
+          <DialogFooter className="p-4 bg-slate-800 shrink-0 border-t border-slate-700">
             <Button type="button" variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700" onClick={() => setPreviewOpen(false)}>
               Close Preview
             </Button>

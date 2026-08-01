@@ -562,7 +562,7 @@ export default function Stage1() {
     <div className="p-6 overflow-y-auto space-y-6 bg-slate-50/50 min-h-screen">
       {/* Header */}
       <div className="flex items-center gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm max-w-4xl mx-auto">
-        <div className="p-3 bg-slate-900 rounded-lg text-white shadow-xl">
+        <div className="p-3 bg-blue-700 rounded-lg text-white shadow-xl">
           <PlusCircle className="w-6 h-6" />
         </div>
         <div>
@@ -859,7 +859,7 @@ export default function Stage1() {
                 isSubmitting
               }
               onClick={handleSubmit}
-              className="w-full sm:w-80 bg-slate-900 text-white hover:bg-slate-800 h-11 text-sm font-semibold tracking-wide shadow-lg shadow-slate-150 transition-all rounded-lg"
+              className="w-full sm:w-80 bg-blue-700 text-white hover:bg-blue-800 h-11 text-sm font-semibold tracking-wide shadow-lg shadow-slate-150 transition-all rounded-lg"
             >
               {isSubmitting ? (
                 <>
@@ -880,7 +880,7 @@ export default function Stage1() {
       {/* === EDIT RECORD MODAL === */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-4 sm:p-6">
-          <DialogHeader className="flex-shrink-0">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Edit Indent Record</DialogTitle>
             <p className="text-sm text-gray-600">
               {editingRecord ? `Editing: ${editingRecord.data.indentNumber}` : ""}

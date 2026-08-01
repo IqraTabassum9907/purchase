@@ -32,7 +32,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Loader2, Search, Link as LinkIcon, Mail, CheckCircle, ExternalLink, Copy, MessagesSquare } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchIndentWorkflow, submitQuotation } from "@/lib/supabase/queries";
 import { supabase } from "@/lib/supabase/client";
@@ -67,6 +67,7 @@ export default function Quotation() {
   const [sheetRecords, setSheetRecords] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [tatRules, setTatRules] = useState<any[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Email flow details
@@ -79,7 +80,23 @@ export default function Quotation() {
 
   const [searchTerm, setSearchTerm] = useState("");
 
-  const vendorOptions = [
+  const [dbVendors, setDbVendors] = useState<Array<{ vendor_name: string; email?: string }>>([]);
+
+  useEffect(() => {
+    async function loadMasterVendors() {
+      try {
+        const { data } = await supabase.from("master_vendors").select("*").eq("is_active", true);
+        if (data && data.length > 0) {
+          setDbVendors(data);
+        }
+      } catch (err) {
+        console.error("Error loading master vendors:", err);
+      }
+    }
+    loadMasterVendors();
+  }, []);
+
+  const defaultVendorOptions = [
     "INFOSYS TECH",
     "KOTAK MAHINDRA",
     "Vendor A",
@@ -90,16 +107,31 @@ export default function Quotation() {
     "DHL Express"
   ];
 
-  const VENDOR_EMAILS: Record<string, string> = {
-    "INFOSYS TECH": "infosys@company.com",
-    "KOTAK MAHINDRA": "kotak@company.com",
-    "Vendor A": "vendorA@company.com",
-    "Vendor B": "vendorB@company.com",
-    "Vendor C": "vendorC@company.com",
-    "Vendor IT": "vendorit@company.com",
-    "Express Logistics": "express@logistics.com",
-    "DHL Express": "dhl@express.com"
-  };
+  const vendorOptions = useMemo(() => {
+    if (dbVendors.length > 0) {
+      return dbVendors.map((v) => v.vendor_name);
+    }
+    return defaultVendorOptions;
+  }, [dbVendors]);
+
+  const VENDOR_EMAILS: Record<string, string> = useMemo(() => {
+    const map: Record<string, string> = {
+      "INFOSYS TECH": "infosys@company.com",
+      "KOTAK MAHINDRA": "kotak@company.com",
+      "Vendor A": "vendorA@company.com",
+      "Vendor B": "vendorB@company.com",
+      "Vendor C": "vendorC@company.com",
+      "Vendor IT": "vendorit@company.com",
+      "Express Logistics": "express@logistics.com",
+      "DHL Express": "dhl@express.com"
+    };
+    dbVendors.forEach((v) => {
+      if (v.vendor_name && v.email) {
+        map[v.vendor_name] = v.email;
+      }
+    });
+    return map;
+  }, [dbVendors]);
 
   const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
 
@@ -152,6 +184,7 @@ export default function Quotation() {
         return {
           id: row.id,
           status,
+          createdAt: row.data.createdAt,
           data: {
             indentNumber: row.data.indentNumber,
             createdBy: row.data.createdBy,
@@ -183,6 +216,9 @@ export default function Quotation() {
         };
       });
       setSheetRecords(rows);
+
+      const { data: tatRows } = await supabase.from("master_tat_rules").select("*");
+      if (tatRows) setTatRules(tatRows);
     } catch (e) {
       console.error("Fetch error Stage 3:", e);
     }
@@ -264,10 +300,11 @@ export default function Quotation() {
     }), [sheetRecords, searchTerm]);
 
   const baseColumns = [
+    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent" },
     { key: "itemName", label: "Item" },
     { key: "quantity", label: "Qty" },
-    { key: "planned3", label: "Planned" },
+    { key: "planned3", label: "Planned Date" },
   ];
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>(
@@ -577,10 +614,10 @@ export default function Quotation() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 p-6 space-y-6">
       {/* Header Card */}
-      <div className="p-6 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
+      <div className="p-6 bg-linear-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-slate-900 rounded-lg shadow-slate-100 shadow-xl text-white">
+            <div className="p-3 bg-blue-700 rounded-lg shadow-slate-100 shadow-xl text-white">
               <MessagesSquare className="w-6 h-6" />
             </div>
             <div>
@@ -691,9 +728,11 @@ export default function Quotation() {
                             </Button>
                           </TableCell>
                           {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
-                            <TableCell key={col.key} className="text-sm text-slate-700 px-4">
-                              {col.key === "planned3"
-                                ? formatDateDash(record.data[col.key])
+                            <TableCell key={col.key} className="text-xs text-slate-700 px-4 font-mono">
+                              {col.key === "createdAtCol"
+                                ? formatDateTimeFull(record.createdAt)
+                                : col.key === "planned3"
+                                ? getPlannedDateForRecord(record.data, "Quotation", tatRules, record.createdAt)
                                 : String(record.data[col.key] ?? "-")}
                             </TableCell>
                           ))}
@@ -749,8 +788,10 @@ export default function Quotation() {
                       <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
                         {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
                           <TableCell key={col.key} className="text-sm text-slate-700 px-4">
-                            {col.key === "planned3"
-                              ? formatDateDash(record.data[col.key])
+                            {col.key === "createdAtCol"
+                              ? formatDateTimeFull(record.createdAt)
+                              : col.key === "planned3"
+                              ? getPlannedDateForRecord(record.data, "Quotation", tatRules, record.createdAt)
                               : String(record.data[col.key] ?? "-")}
                           </TableCell>
                         ))}
@@ -774,7 +815,7 @@ export default function Quotation() {
       {/* DETAILED FORM MODAL */}
       <Dialog open={open} onOpenChange={(val) => { if (!val) resetForm(); else setOpen(val); }}>
         <DialogContent className="max-w-4xl max-h-[95vh] flex flex-col p-6 overflow-hidden">
-          <DialogHeader className="flex-shrink-0 flex flex-row items-center justify-between border-b pb-4">
+          <DialogHeader className="shrink-0 flex flex-row items-center justify-between border-b pb-4">
             <DialogTitle className="text-xl font-bold text-slate-800">Quotation Dispatch & Response Tracking</DialogTitle>
           </DialogHeader>
 
@@ -883,7 +924,7 @@ export default function Quotation() {
                         className="text-slate-400 hover:text-slate-700 transition-colors"
                       >
                         {isEditingBilling ? (
-                          <span className="text-xs text-slate-900 font-semibold font-semibold">Done</span>
+                          <span className="text-xs text-slate-900 font-semibold">Done</span>
                         ) : (
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -927,7 +968,7 @@ export default function Quotation() {
                         className="text-slate-400 hover:text-slate-700 transition-colors"
                       >
                         {isEditingDest ? (
-                          <span className="text-xs text-slate-900 font-semibold font-semibold">Done</span>
+                          <span className="text-xs text-slate-900 font-semibold">Done</span>
                         ) : (
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -969,7 +1010,7 @@ export default function Quotation() {
                     placeholder="Enter enquiry specific message details..."
                     value={descriptionNote || ""}
                     onChange={(e) => setDescriptionNote(e.target.value)}
-                    className="min-h-[80px] border-slate-200 text-sm focus-visible:ring-slate-500"
+                    className="min-h-20 border-slate-200 text-sm focus-visible:ring-slate-500"
                   />
                 </div>
 
@@ -1057,7 +1098,7 @@ export default function Quotation() {
                             setNewTerm("");
                           }
                         }}
-                        className="h-8 bg-slate-900 text-white hover:bg-slate-800"
+                        className="h-8 bg-blue-700 text-white hover:bg-blue-800"
                       >
                         +
                       </Button>
@@ -1100,7 +1141,7 @@ export default function Quotation() {
                       type="button"
                       disabled={isSubmitting || selectedVendors.length === 0 || !itemSelected}
                       onClick={() => handleSendEmails()}
-                      className="bg-slate-900 text-white hover:bg-slate-800 font-semibold px-6 shadow-sm shadow-slate-100"
+                      className="bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm shadow-slate-100"
                     >
                       {isSubmitting ? (
                         <>
@@ -1232,7 +1273,7 @@ export default function Quotation() {
                     type="button"
                     onClick={() => handleProceedToApproval()}
                     disabled={isSubmitting}
-                    className="w-full bg-slate-900 text-white hover:bg-slate-800"
+                    className="w-full bg-blue-700 text-white hover:bg-blue-800"
                   >
                     {isSubmitting ? (
                       <>
@@ -1248,7 +1289,7 @@ export default function Quotation() {
             )}
           </div>
 
-          <DialogFooter className="flex-shrink-0 border-t pt-4">
+          <DialogFooter className="shrink-0 border-t pt-4">
             <Button type="button" variant="outline" onClick={resetForm} disabled={isSubmitting}>
               Close
             </Button>

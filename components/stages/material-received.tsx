@@ -33,7 +33,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { FileText, Upload, X, Loader2, Search, Eye, Package, CheckCircle2, AlertCircle, Info, ClipboardList } from "lucide-react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
-import { parseSheetDate } from "@/lib/utils";
+import { parseSheetDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
@@ -92,10 +92,11 @@ const generateGRN = async (): Promise<string> => {
 /*  COLUMNS FOR PENDING TAB (Same as Follow-Up Vendor History)     */
 /* --------------------------------------------------------------- */
 const PENDING_COLUMNS = [
+    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent No." },
     { key: "liftNo", label: "Unit Tracking No." },
     { key: "warehouse", label: "Warehouse" },
-    { key: "vendorName", label: "Vendor Name" },
+    { key: "vendorName", label: "Supplier" },
     { key: "itemName", label: "Item Name" },
     { key: "poNumber", label: "PO Number" },
     { key: "poQty", label: "PO Qty" },
@@ -119,9 +120,9 @@ const PENDING_COLUMNS = [
 
 // ─── COLUMNS FOR HISTORY TAB (SHOW ALL) ─────────────────────────────────────
 const HISTORY_COLUMNS = [
-    ...PENDING_COLUMNS.slice(0, 6),
+    ...PENDING_COLUMNS.slice(0, 7),
     { key: "actual6", label: "Actual" },
-    ...PENDING_COLUMNS.slice(6),
+    ...PENDING_COLUMNS.slice(7),
     { key: "invoiceType", label: "Invoice Type" },
     { key: "receiptLiftNumber", label: "Receipt Unit Tracking No." },
     { key: "receivedQty", label: "Received Qty" },
@@ -153,6 +154,7 @@ export default function Stage7() {
     const [itemCodeMap, setItemCodeMap] = useState<Record<string, string>>({});
     const [searchTerm, setSearchTerm] = useState("");
     const [warehouseFilter, setWarehouseFilter] = useState("All");
+    const [tatRules, setTatRules] = useState<any[]>([]);
 
     // Bulk State
     const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
@@ -192,10 +194,13 @@ export default function Stage7() {
         try {
             const indentRows = await fetchIndentWorkflow();
 
-            const { data: poRows } = await supabase
-                .from("purchase_orders")
-                .select("*")
-                .order("created_at", { ascending: true });
+            const [poRes, tatRes] = await Promise.all([
+                supabase.from("purchase_orders").select("*").order("created_at", { ascending: true }),
+                supabase.from("master_tat_rules").select("*")
+            ]);
+
+            const poRows = poRes.data || [];
+            setTatRules(tatRes.data || []);
 
             const posByIndent = new Map<string, any[]>();
             (poRows || []).forEach((po: any) => {
@@ -281,11 +286,12 @@ export default function Stage7() {
                         rowIndex: rows.length,
                         stage: 7,
                         status,
+                        createdAt: indentRow.data.createdAt,
                         data: {
                             indentNumber: indentRow.data.indentNumber,
                             liftNo: po.po_number,
                             warehouse: indentRow.data.warehouseLocation,
-                            vendorName: po.vendor_name,
+                            vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
                             itemName: indentRow.data.itemName,
                             poNumber: po.po_number,
                             poQty: String(totalPOQty),
@@ -347,11 +353,12 @@ export default function Stage7() {
                             rowIndex: rows.length,
                             stage: 7,
                             status,
+                            createdAt: indentRow.data.createdAt,
                             data: {
                                 indentNumber: indentRow.data.indentNumber,
                                 liftNo: liftTrackingNo,
                                 warehouse: indentRow.data.warehouseLocation,
-                                vendorName: po.vendor_name,
+                                vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
                                 itemName: indentRow.data.itemName,
                                 poNumber: po.po_number,
                                 poQty: String(totalPOQty),
@@ -456,6 +463,20 @@ export default function Stage7() {
         [sheetRecords]
     );
 
+    // Any other PENDING row sharing the same PO Number as `recordId` (a PO can
+    // span multiple indents when entered together in PO Entry), so the user
+    // never has to hunt down and manually tick every row for that PO.
+    const getSamePORecordIds = useCallback((recordId: string) => {
+        const rec = recordMap.get(recordId);
+        if (!rec) return [recordId];
+        const poNum = String(rec.data?.poNumber || "").trim();
+        if (!poNum || poNum === "-") return [recordId];
+
+        return sheetRecords
+            .filter((r) => r.status === "pending" && String(r.data?.poNumber || "").trim() === poNum)
+            .map((r) => r.id);
+    }, [sheetRecords, recordMap]);
+
     // Check Vendor/PO Match
     const checkVendorPOMatch = useCallback((ids: string[]) => {
         if (ids.length === 0) return { match: false, vendor: "", po: "" };
@@ -473,18 +494,23 @@ export default function Stage7() {
 
     const handleBulkOpen = useCallback(() => {
         if (selectedRecordIds.length === 0) return;
-        const { match } = checkVendorPOMatch(selectedRecordIds);
-        if (selectedRecordIds.length > 1 && !match) {
+        const expanded = new Set<string>();
+        selectedRecordIds.forEach((id) => getSamePORecordIds(id).forEach((gid) => expanded.add(gid)));
+        const ids = Array.from(expanded);
+
+        const { match } = checkVendorPOMatch(ids);
+        if (ids.length > 1 && !match) {
             toast.error("All selected items must have the same Vendor and PO Number.", {
                 style: { background: "red", color: "white", border: "none" }
             });
             return;
         }
+        setSelectedRecordIds(ids);
         setIsBulkMode(true);
         setCommonData({
             remarks: "",
         });
-        const items = selectedRecordIds.map(id => {
+        const items = ids.map(id => {
             const rec = recordMap.get(id);
             return {
                 recordId: id,
@@ -502,7 +528,7 @@ export default function Stage7() {
         });
         setBulkItems(items);
         setOpen(true);
-    }, [selectedRecordIds, checkVendorPOMatch, recordMap]);
+    }, [selectedRecordIds, checkVendorPOMatch, recordMap, getSamePORecordIds]);
 
     const handleBulkSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
@@ -607,6 +633,35 @@ export default function Stage7() {
             toast.error("Record not found locally. Please refresh.");
             return;
         }
+
+        // If this PO has other pending rows too, jump straight into bulk mode
+        // with all of them pre-selected instead of making the user tick each one.
+        const groupIds = getSamePORecordIds(recordId);
+        if (groupIds.length > 1) {
+            setSelectedRecordIds(groupIds);
+            setIsBulkMode(true);
+            setCommonData({ remarks: "" });
+            const items = groupIds.map((id) => {
+                const r = recordMap.get(id);
+                return {
+                    recordId: id,
+                    indentNumber: r?.data?.indentNumber || "",
+                    liftNumber: r?.data?.liftNo || "",
+                    itemName: r?.data?.itemName || "",
+                    receivedQty: "",
+                    receivedItemImage: null,
+                    damageReceived: "no",
+                    damagedQty: "",
+                    damageReason: "",
+                    damageImage: null,
+                    index: r?.rowIndex || 0,
+                };
+            });
+            setBulkItems(items);
+            setOpen(true);
+            return;
+        }
+
         setSelectedRecordIds([]);
         setIsBulkMode(false);
         setSelectedRecordId(recordId);
@@ -634,7 +689,7 @@ export default function Stage7() {
             damageImage: null,
         });
         setOpen(true);
-    }, [recordMap]);
+    }, [recordMap, getSamePORecordIds]);
 
     /* --------------------------------------------------------------- */
     /*  Submit                                                         */
@@ -792,7 +847,7 @@ export default function Stage7() {
                     <div className="p-4 md:p-6 bg-white border rounded-lg shadow-sm mb-4 md:mb-6">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
-                                <div className="p-3 bg-slate-900 rounded-lg text-white shadow-xl">
+                                <div className="p-3 bg-blue-700 rounded-lg text-white shadow-xl">
                                     <Package className="w-6 h-6" />
                                 </div>
                                 <div>
@@ -981,11 +1036,14 @@ export default function Stage7() {
                                                             <Checkbox
                                                                 checked={selectedRecordIds.includes(rec.id)}
                                                                 onCheckedChange={(checked) => {
-                                                                    setSelectedRecordIds((prev) =>
-                                                                        checked
-                                                                            ? [...prev, rec.id]
-                                                                            : prev.filter((id) => id !== rec.id)
-                                                                    );
+                                                                    setSelectedRecordIds((prev) => {
+                                                                        const groupIds = getSamePORecordIds(rec.id);
+                                                                        if (checked) {
+                                                                            return Array.from(new Set([...prev, ...groupIds]));
+                                                                        }
+                                                                        const groupSet = new Set(groupIds);
+                                                                        return prev.filter((id) => !groupSet.has(id));
+                                                                    });
                                                                 }}
                                                             />
                                                         </TableCell>
@@ -1054,7 +1112,23 @@ export default function Stage7() {
                                                             );
                                                         }
 
-                                                        if (col.key === "nextFollowUpDate" || col.key === "dispatchDate" || col.key === "paymentDate" || col.key === "planned6") {
+                                                        if (col.key === "createdAtCol") {
+                                                            return (
+                                                                <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
+                                                                    {formatDateTimeFull(rec.createdAt)}
+                                                                </TableCell>
+                                                            );
+                                                        }
+
+                                                        if (col.key === "planned6") {
+                                                            return (
+                                                                <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
+                                                                    {getPlannedDateForRecord(rec.data, "Material Received", tatRules, rec.createdAt)}
+                                                                </TableCell>
+                                                            );
+                                                        }
+
+                                                        if (col.key === "nextFollowUpDate" || col.key === "dispatchDate" || col.key === "paymentDate") {
                                                             return (
                                                                 <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700">
                                                                     {val ? formatDateDash(val) : "-"}
@@ -1119,14 +1193,30 @@ export default function Stage7() {
                                                                 ? historyData[col.key]
                                                                 : record.data[col.key];
 
+                                                            if (col.key === "createdAtCol") {
+                                                                return (
+                                                                    <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
+                                                                        {formatDateTimeFull(record.createdAt)}
+                                                                    </TableCell>
+                                                                );
+                                                            }
+
+                                                            // Planned Date is TAT-calculated, not a stored field
+                                                            if (col.key === "planned6") {
+                                                                return (
+                                                                    <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
+                                                                        {getPlannedDateForRecord(record.data, "Material Received", tatRules, record.createdAt)}
+                                                                    </TableCell>
+                                                                );
+                                                            }
+
                                                             // Handle date fields (dispatchDate, paymentDate, etc.)
                                                             if (
                                                                 col.key === "dispatchDate" ||
                                                                 col.key === "paymentDate" ||
                                                                 col.key === "nextFollowUpDate" ||
                                                                 col.key === "invoiceDate" ||
-                                                                col.key === "actual6" ||
-                                                                col.key === "planned6"
+                                                                col.key === "actual6"
                                                             ) {
                                                                 return (
                                                                     <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700">
@@ -1252,7 +1342,7 @@ export default function Stage7() {
             {/* ==================== MODAL ==================== */}
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-4xl max-h-[95vh] sm:max-h-[90vh] flex flex-col p-0 overflow-hidden rounded-2xl border-none shadow-2xl">
-                    <DialogHeader className="flex-shrink-0 bg-slate-900 text-white p-5 flex flex-row items-center gap-3">
+                    <DialogHeader className="shrink-0 bg-blue-700 text-white p-5 flex flex-row items-center gap-3">
                         <div className="p-2 bg-white/10 rounded-lg">
                             <Package className="w-5 h-5 text-blue-400" />
                         </div>
@@ -1635,7 +1725,7 @@ export default function Stage7() {
                                             />
                                         </div>
                                         <div className="space-y-1.5">
-                                            <Label className="text-xs text-red-900 font-semibold font-medium">Damage Image</Label>
+                                            <Label className="text-xs text-red-900 font-semibold">Damage Image</Label>
                                             <input
                                                 id="damageImage"
                                                 type="file"
@@ -1681,7 +1771,7 @@ export default function Stage7() {
                                     />
                                     <label
                                         htmlFor="receivedItemImage"
-                                        className="flex flex-col items-center justify-center w-full p-4 border-2 border-dashed border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 rounded-xl cursor-pointer transition-all h-[96px] text-center"
+                                        className="flex flex-col items-center justify-center w-full p-4 border-2 border-dashed border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 rounded-xl cursor-pointer transition-all h-24 text-center"
                                     >
                                         <Upload className="w-5 h-5 text-slate-400 mb-1" />
                                         <span className="text-[11px] text-slate-600 font-bold">Drop item image here or click</span>
@@ -1690,7 +1780,7 @@ export default function Stage7() {
                                     {form.receivedItemImage && (
                                         <div className="mt-2 px-3 py-1.5 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-between shadow-sm">
                                             <div className="flex items-center min-w-0 mr-2">
-                                                <FileText className="w-4 h-4 text-slate-500 mr-2 flex-shrink-0" />
+                                                <FileText className="w-4 h-4 text-slate-500 mr-2 shrink-0" />
                                                 <span className="text-xs text-slate-700 font-medium truncate">
                                                     {form.receivedItemImage.name}
                                                 </span>
@@ -1711,7 +1801,7 @@ export default function Stage7() {
                                     <textarea
                                         value={form.remarks}
                                         onChange={(e) => setForm({ ...form, remarks: e.target.value })}
-                                        className="w-full h-[96px] px-3 py-2 text-sm border border-slate-250 rounded-xl focus:border-blue-500 focus:ring-blue-500 resize-none placeholder:text-slate-400 shadow-sm"
+                                        className="w-full h-24 px-3 py-2 text-sm border border-slate-250 rounded-xl focus:border-blue-500 focus:ring-blue-500 resize-none placeholder:text-slate-400 shadow-sm"
                                         placeholder="Add any internal receiving notes or comments..."
                                         rows={3}
                                     />
@@ -1720,7 +1810,7 @@ export default function Stage7() {
                         </form>
                     )}
 
-                    <DialogFooter className="flex-shrink-0 border-t p-4 bg-slate-50 flex sm:justify-end items-center gap-2">
+                    <DialogFooter className="shrink-0 border-t p-4 bg-slate-50 flex sm:justify-end items-center gap-2">
                         <Button
                             type="button"
                             variant="outline"

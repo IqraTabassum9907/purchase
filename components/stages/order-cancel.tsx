@@ -17,6 +17,7 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { supabase } from "@/lib/supabase/client"
 import { fetchIndentWorkflow } from "@/lib/supabase/queries"
+import { getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils"
 
 const ItemCombobox = ({
   value,
@@ -93,7 +94,8 @@ export default function OrderCancelPage() {
   const [cancelQuantities, setCancelQuantities] = useState<Record<string, string>>({})
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [cancelledOrders, setCancelledOrders] = useState<any[]>([])
-  const [stageOptions, setStageOptions] = useState<string[]>([])
+  const [cancellationStageOptions, setCancellationStageOptions] = useState<string[]>([])
+  const [tatRules, setTatRules] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -156,12 +158,16 @@ export default function OrderCancelPage() {
         { data: poData },
         { data: receiptData },
         indentRows,
+        tatRes,
       ] = await Promise.all([
         supabase.from("order_cancellations").select("*").order("cancellation_date", { ascending: false }),
         supabase.from("purchase_orders").select("*"),
         supabase.from("material_receipts").select("*"),
         fetchIndentWorkflow(),
+        supabase.from("master_tat_rules").select("*"),
       ])
+
+      if (tatRes.data) setTatRules(tatRes.data)
 
       if (cancelErr) throw cancelErr
 
@@ -201,8 +207,10 @@ export default function OrderCancelPage() {
           id: cancel.id,
           rowIndex: index + 2,
           timestamp: cancel.cancellation_date || "",
+          createdAt: indent?.data?.createdAt || "",
           indentNo: indent?.data?.indentNumber || "",
           poNumber: po?.po_number || "",
+          supplierName: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.finalVendorName || indent?.data?.vendor1Name || "-",
           itemName: indent?.data?.itemName || "",
           cancelStage: cancel.cancelled_by || "",
           cancelReason: cancel.cancellation_reason || "",
@@ -250,7 +258,7 @@ export default function OrderCancelPage() {
           "Order Cancel"
         ]
       }
-      setStageOptions(uniqueOptions)
+      setCancellationStageOptions(uniqueOptions)
     } catch (err) {
       console.error("Error fetching cancel stages:", err)
     }
@@ -506,7 +514,7 @@ export default function OrderCancelPage() {
       {/* Header Section */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="p-3 bg-slate-900 rounded-lg text-white shadow-xl">
+          <div className="p-3 bg-blue-700 rounded-lg text-white shadow-xl">
             <XCircle className="w-6 h-6" />
           </div>
           <div>
@@ -554,13 +562,16 @@ export default function OrderCancelPage() {
             <Table>
               <TableHeader className="bg-white sticky top-0 z-20">
                 <TableRow className="hover:bg-transparent border-b border-slate-200">
+                  <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Timestamp</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Cancelled At</TableHead>
+                  <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Planned Date</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Indent-No.</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">PO Number</TableHead>
+                  <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Supplier</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Item-Name</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Cancel Stage</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Cancel Reason</TableHead>
-                  <TableHead className="w-[80px] text-center font-bold text-slate-700 uppercase text-[10px]">PO Qty</TableHead>
+                  <TableHead className="w-20 text-center font-bold text-slate-700 uppercase text-[10px]">PO Qty</TableHead>
                   <TableHead className="w-[100px] text-center font-bold text-slate-700 uppercase text-[10px]">Total Lifted Qty</TableHead>
                   <TableHead className="w-[100px] text-center font-bold text-slate-700 uppercase text-[10px]">Received Qty</TableHead>
                   <TableHead className="w-[100px] text-center font-bold text-slate-700 uppercase text-[10px]">Canceled Qty</TableHead>
@@ -570,7 +581,7 @@ export default function OrderCancelPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="h-48 text-center">
+                    <TableCell colSpan={13} className="h-48 text-center">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Loader2 className="w-8 h-8 animate-spin text-red-600" />
                         <span className="text-slate-500 font-medium">Loading cancelled orders...</span>
@@ -579,7 +590,7 @@ export default function OrderCancelPage() {
                   </TableRow>
                 ) : filteredCancelledOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                    <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
                       No cancelled orders found.
                     </TableCell>
                   </TableRow>
@@ -587,13 +598,22 @@ export default function OrderCancelPage() {
                   filteredCancelledOrders.map((order) => (
                     <TableRow key={order.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 group">
                       <TableCell className="text-[11px] text-slate-500 font-mono py-4">
+                        {formatDateTimeFull(order.createdAt)}
+                      </TableCell>
+                      <TableCell className="text-[11px] text-slate-500 font-mono py-4">
                         {parseGoogleSheetsDate(order.timestamp)}
+                      </TableCell>
+                      <TableCell className="text-[11px] text-slate-600 font-mono py-4">
+                        {getPlannedDateForRecord(order, "Order Cancel", tatRules, order.timestamp)}
                       </TableCell>
                       <TableCell className="font-medium text-slate-900 py-4">
                         {order.indentNo}
                       </TableCell>
                       <TableCell className="font-mono text-[12px] text-slate-600 py-4">
                         {order.poNumber}
+                      </TableCell>
+                      <TableCell className="font-semibold text-slate-800 text-[12px] py-4">
+                        {order.supplierName}
                       </TableCell>
                       <TableCell className="text-slate-700 py-4 max-w-[200px] truncate" title={order.itemName}>
                         {order.itemName}
@@ -708,7 +728,7 @@ export default function OrderCancelPage() {
                 <Button
                   onClick={handleSearch}
                   disabled={searchLoading || !searchQuery.trim()}
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium flex items-center justify-center gap-2 h-10"
+                  className="w-full bg-blue-700 hover:bg-blue-800 text-white font-medium flex items-center justify-center gap-2 h-10"
                 >
                   {searchLoading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -846,7 +866,7 @@ export default function OrderCancelPage() {
                         <SelectValue placeholder="Select cancel stage" />
                       </SelectTrigger>
                       <SelectContent className="bg-white border shadow-md">
-                        {stageOptions.map((option) => (
+                        {cancellationStageOptions.map((option) => (
                           <SelectItem key={option} value={option}>
                             {option}
                           </SelectItem>

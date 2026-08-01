@@ -63,7 +63,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Check, ChevronsUpDown } from "lucide-react";
-import { cn, parseSheetDate, formatDate } from "@/lib/utils";
+import { cn, parseSheetDate, formatDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 
@@ -254,9 +254,12 @@ export default function FollowUpLifting() {
   };
 
   const baseColumns = [
+    { key: "createdAtCol", label: "Timestamp", icon: null },
     { key: "indentNumber", label: "Indent No.", icon: null },
     { key: "itemName", label: "Item", icon: null },
+    { key: "supplierName", label: "Supplier", icon: null },
     { key: "quantity", label: "Qty", icon: null },
+    { key: "plannedDate", label: "Planned Date", icon: null },
     { key: "lastFollowUpDate", label: "Last Follow Up Date", icon: null },
     { key: "totalLifted", label: "Total Dispatch Qty", icon: null },
     { key: "pendingLifted", label: "Pending Dispatch Qty", icon: null },
@@ -271,17 +274,21 @@ export default function FollowUpLifting() {
   const [transporterList, setTransporterList] = useState<string[]>([]);
   const [areaList, setAreaList] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [tatRules, setTatRules] = useState<any[]>([]);
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [workflow, poResult, liftingResult, transResult, whResult] = await Promise.all([
+      const [workflow, poResult, liftingResult, transResult, whResult, tatResult] = await Promise.all([
         fetchIndentWorkflow(),
         supabase.from("purchase_orders").select("*"),
         supabase.from("vendor_liftings").select("*"),
         supabase.from("master_transporters").select("transporter_name").eq("is_active", true),
         supabase.from("master_warehouses").select("name").eq("is_active", true),
+        supabase.from("master_tat_rules").select("*"),
       ]);
+
+      if (tatResult.data) setTatRules(tatResult.data);
 
       const poData = poResult.data || [];
       const liftingData = liftingResult.data || [];
@@ -293,9 +300,14 @@ export default function FollowUpLifting() {
         setAreaList(whResult.data.map((r: any) => r.name).filter(Boolean));
       }
 
-      const poByIndentId = new Map<string, any>();
+      // Group all POs by indent_id (one indent can have multiple POs)
+      const posByIndentId = new Map<string, any[]>();
       poData.forEach((po) => {
-        if (po.indent_id) poByIndentId.set(po.indent_id, po);
+        if (po.indent_id) {
+          const list = posByIndentId.get(po.indent_id) || [];
+          list.push(po);
+          posByIndentId.set(po.indent_id, list);
+        }
       });
 
       const liftingsByPoId = new Map<string, any[]>();
@@ -312,6 +324,7 @@ export default function FollowUpLifting() {
         const indent = workflow.find((w) => w.id === po?.indent_id);
         return {
           id: lift.id,
+          createdAt: indent?.data.createdAt || "",
           indentNumber: indent?.data.indentNumber || "",
           liftNo: `LIFT-${String(i + 1).padStart(3, "0")}`,
           vendorName: po?.vendor_name || "",
@@ -334,72 +347,115 @@ export default function FollowUpLifting() {
       });
       setReceivingAccountsData(historyRows);
 
-      const rows = workflow
+      // Create ONE ROW per PO (not per indent)
+      // This ensures all POs for same indent are separately visible and processable
+      const rows: any[] = [];
+      workflow
         .filter((row) => row.data.indentNumber && row.data.indentNumber.trim() !== "")
-        .map((row) => {
-          const po = poByIndentId.get(row.id);
-          const poLiftings = po ? (liftingsByPoId.get(po.id) || []) : [];
+        .forEach((row) => {
+          const posForThisIndent = posByIndentId.get(row.id) || [];
 
-          const totalQty = parseFloat(String(row.data.quantity || "0").replace(/,/g, "")) || 0;
-          const totalLiftedSoFar = poLiftings.reduce((sum, l) => sum + (parseFloat(String(l.lifting_qty || "0").replace(/,/g, "")) || 0), 0);
-          const pendingLiftQty = Math.max(0, totalQty - totalLiftedSoFar);
-
-          let status = "not_ready";
-          if (po) {
-            if (totalLiftedSoFar >= totalQty && totalQty > 0) {
-              status = "completed";
-            } else {
-              status = "pending";
-            }
+          if (posForThisIndent.length === 0) {
+            // No PO yet — show one "not_ready" row
+            rows.push({
+              id: row.id,
+              rowIndex: row.originalIndex,
+              stage: 5,
+              status: "not_ready",
+              createdAt: row.data.createdAt,
+              history: [],
+              data: {
+                indentNumber: row.data.indentNumber,
+                itemName: row.data.itemName,
+                supplierName: row.data.selectedVendorName || row.data.vendor1Name || "-",
+                vendorType: row.data.vendorType || "",
+                quantity: row.data.quantity,
+                selectedVendor: row.data.selectedVendor,
+                vendor1Name: row.data.vendor1Name,
+                vendor1PoNumber: "",
+                vendor2Name: row.data.vendor2Name,
+                vendor2PoNumber: "",
+                vendor3Name: row.data.vendor3Name,
+                vendor3PoNumber: "",
+                finalVendorName: row.data.selectedVendorName,
+                estimatedDate: "",
+                remarksFollowUp: "",
+                lastFollowUpDate: "",
+                totalLifted: "0",
+                pendingLifted: String(row.data.quantity || 0),
+                liftingData: { liftingQty: String(row.data.quantity || 0) },
+              },
+              basicValue: 0,
+              _poId: null,
+            });
+            return;
           }
 
-          const latestLifting = poLiftings.length > 0 ? poLiftings[poLiftings.length - 1] : null;
+          // One row per PO
+          posForThisIndent.forEach((po) => {
+            const poLiftings = liftingsByPoId.get(po.id) || [];
+            const totalQty = parseFloat(String(po.quantity || row.data.quantity || "0").replace(/,/g, "")) || 0;
+            const totalLiftedSoFar = poLiftings.reduce((sum: number, l: any) => sum + (parseFloat(String(l.lifting_qty || "0").replace(/,/g, "")) || 0), 0);
+            const pendingLiftQty = Math.max(0, totalQty - totalLiftedSoFar);
 
-          return {
-            id: row.id,
-            rowIndex: row.originalIndex,
-            stage: 5,
-            status,
-            createdAt: row.data.createdAt,
-            history: status === "completed"
-              ? [{ stage: 5, date: latestLifting?.actual_lifting_date || row.data.createdAt, data: {} }]
-              : [],
-            data: {
-              indentNumber: row.data.indentNumber,
-              itemName: row.data.itemName,
-              quantity: row.data.quantity,
-              selectedVendor: row.data.selectedVendor,
-              vendor1Name: row.data.vendor1Name,
-              vendor1PoNumber: po?.po_number || "",
-              vendor2Name: row.data.vendor2Name,
-              vendor2PoNumber: po?.po_number || "",
-              vendor3Name: row.data.vendor3Name,
-              vendor3PoNumber: po?.po_number || "",
-              finalVendorName: row.data.selectedVendorName,
-              estimatedDate: latestLifting?.expected_lifting_date || "",
-              remarksFollowUp: latestLifting?.remarks || "",
-              lastFollowUpDate: latestLifting?.followup_date || "",
-              totalLifted: String(totalLiftedSoFar),
-              pendingLifted: String(pendingLiftQty),
-              liftingData: latestLifting && latestLifting.lifting_status === "Complete"
-                ? {
-                    liftNumber: latestLifting.id?.slice(0, 8) || "",
-                    liftingQty: String(pendingLiftQty),
-                    transporterName: "",
-                    vehicleNumber: latestLifting.vehicle_number || "",
-                    contactNumber: latestLifting.driver_contact || "",
-                    dispatchDate: latestLifting.actual_lifting_date || "",
-                  }
-                : {
-                    liftingQty: String(pendingLiftQty),
-                  },
-            },
-            basicValue: po?.total_amount || 0,
-            _poId: po?.id,
-          };
+            let status = "pending";
+            if (totalLiftedSoFar >= totalQty && totalQty > 0) {
+              status = "completed";
+            }
+
+            const latestLifting = poLiftings.length > 0 ? poLiftings[poLiftings.length - 1] : null;
+
+            rows.push({
+              id: `${row.id}__${po.id}`,   // unique id per PO row
+              rowIndex: row.originalIndex,
+              stage: 5,
+              status,
+              createdAt: row.data.createdAt,
+              history: status === "completed"
+                ? [{ stage: 5, date: latestLifting?.actual_lifting_date || row.data.createdAt, data: {} }]
+                : [],
+              data: {
+                indentNumber: row.data.indentNumber,
+                itemName: po.item_name || row.data.itemName,
+                supplierName: po.vendor_name || row.data.selectedVendorName || row.data.vendor1Name || "-",
+                vendorType: row.data.vendorType || "",
+                quantity: String(po.quantity || row.data.quantity),
+                selectedVendor: row.data.selectedVendor,
+                vendor1Name: row.data.vendor1Name,
+                vendor1PoNumber: po.po_number,
+                vendor2Name: row.data.vendor2Name,
+                vendor2PoNumber: po.po_number,
+                vendor3Name: row.data.vendor3Name,
+                vendor3PoNumber: po.po_number,
+                finalVendorName: po.vendor_name || row.data.selectedVendorName,
+                estimatedDate: latestLifting?.expected_lifting_date || "",
+                remarksFollowUp: latestLifting?.remarks || "",
+                lastFollowUpDate: latestLifting?.followup_date || "",
+                totalLifted: String(totalLiftedSoFar),
+                pendingLifted: String(pendingLiftQty),
+                poNumber: po.po_number,
+                liftingData: latestLifting && latestLifting.lifting_status === "Complete"
+                  ? {
+                      liftNumber: latestLifting.id?.slice(0, 8) || "",
+                      liftingQty: String(pendingLiftQty),
+                      transporterName: "",
+                      vehicleNumber: latestLifting.vehicle_number || "",
+                      contactNumber: latestLifting.driver_contact || "",
+                      dispatchDate: latestLifting.actual_lifting_date || "",
+                    }
+                  : {
+                      liftingQty: String(pendingLiftQty),
+                    },
+              },
+              basicValue: po.total_amount || 0,
+              _poId: po.id,
+              _indentId: row.id,
+            });
+          });
         });
 
       setSheetRecords(rows);
+
     } catch (error) {
       console.error("Fetch error:", error);
     }
@@ -411,23 +467,50 @@ export default function FollowUpLifting() {
   }, []);
 
   const getVendorData = (record: any) => {
-    if (!record) return { name: "", poNumber: "" };
-    const sel = String(record.data.selectedVendor || "").trim();
-    const po = record.data.vendor1PoNumber || record.data.vendor2PoNumber || record.data.vendor3PoNumber || "-";
+    if (!record) return { name: "-", poNumber: "-" };
+    const sel = String(record.data?.selectedVendor || "").trim();
+    const po = record.data?.vendor1PoNumber || record.data?.vendor2PoNumber || record.data?.vendor3PoNumber || record.data?.poNumber || "-";
 
-    // Resolve vendor name by checking finalVendorName first, then falls back to vendor indices
-    let name = String(record.data.finalVendorName || "").trim();
-    if (!name || name === "-") {
-      if (sel === "vendor1") {
-        name = record.data.vendor1Name || "";
-      } else if (sel === "vendor2") {
-        name = record.data.vendor2Name || "";
-      } else if (sel === "vendor3") {
-        name = record.data.vendor3Name || "";
+    let name = String(
+      record.data?.supplierName ||
+      record.data?.vendorName ||
+      ""
+    ).trim();
+
+    if (!name || name === "-" || name.toLowerCase() === "regular vendor") {
+      const candidates = [
+        record.data?.finalVendorName,
+        record.data?.selectedVendorName,
+        record.data?.vendor1Name,
+        record.data?.vendor2Name,
+        record.data?.vendor3Name,
+        record.vendorName
+      ].filter((n) => n && String(n).trim() !== "" && String(n).trim() !== "-" && String(n).toLowerCase() !== "regular vendor");
+
+      if (candidates.length > 0) {
+        name = String(candidates[0]);
       }
     }
 
+    if (!name || name === "-") {
+      name = record.data?.supplierName || record.data?.vendorName || record.data?.selectedVendorName || "Regular Vendor";
+    }
+
     return { name: name || "-", poNumber: po };
+  };
+
+  // Any other PENDING row sharing the same PO Number as `recordId` (a PO can
+  // span multiple indents when entered together in PO Entry), so the user
+  // never has to hunt down and manually tick every row for that PO.
+  const getSamePORecordIds = (recordId: string) => {
+    const record = sheetRecords.find((r) => r.id === recordId);
+    if (!record) return [recordId];
+    const poNum = String(getVendorData(record).poNumber || "").trim();
+    if (!poNum || poNum === "-") return [recordId];
+
+    return sheetRecords
+      .filter((r) => r.status === "pending" && String(getVendorData(r).poNumber || "").trim() === poNum)
+      .map((r) => r.id);
   };
 
   const checkVendorPOMatch = (ids: string[]) => {
@@ -451,38 +534,21 @@ export default function FollowUpLifting() {
     return { isMatched: true, vendor, poNumber };
   };
 
-  const handleProcessDirect = (recordId: string) => {
-    setSelectedRecordIds([recordId]);
+  // Shared entry point for both single-row "Process" clicks and the
+  // "Process Selected" bulk button — always operates on the full PO group.
+  const beginProcessing = (ids: string[]) => {
+    if (ids.length === 0) return;
+    setSelectedRecordIds(ids);
     setProcessMode("follow-up");
-    setIsUnifiedMode(false);
     setVendorPOMismatchError(null);
-    setCommonVendorPO(null);
-    setUnifiedFormData(null);
+    setIsUnifiedMode(ids.length > 1);
 
-    const record = sheetRecords.find((r) => r.id === recordId)!;
-    const existLift = record.data.liftingData || {};
-
-    const initialData = [
-      {
-        recordId: recordId,
-        status: "follow-up",
-        followUpDate: "",
-        remarks: "",
-        liftingData: defaultLiftingData(existLift, String(record.data.quantity || 0)),
-        indentNumber: record.data.indentNumber,
-        quantity: record.data.quantity,
-      }
-    ];
-    setBulkFormData(initialData);
-    setOpen(true);
-  };
-
-  const handleBulkProcessDirect = () => {
-    if (selectedRecordIds.length === 0) return;
-    setProcessMode("follow-up");
-    setIsUnifiedMode(selectedRecordIds.length > 1);
-    setVendorPOMismatchError(null);
-    setCommonVendorPO(null);
+    if (ids.length > 1) {
+      const vInfo = getVendorData(sheetRecords.find((r) => r.id === ids[0]));
+      setCommonVendorPO({ vendor: vInfo.name, poNumber: vInfo.poNumber });
+    } else {
+      setCommonVendorPO(null);
+    }
 
     setUnifiedFormData({
       status: "follow-up",
@@ -491,7 +557,7 @@ export default function FollowUpLifting() {
       liftingData: defaultLiftingData(),
     });
 
-    const initialData = selectedRecordIds.map((id) => {
+    const initialData = ids.map((id) => {
       const record = sheetRecords.find((r) => r.id === id)!;
       const existLift = record.data.liftingData || {};
 
@@ -509,13 +575,30 @@ export default function FollowUpLifting() {
     setOpen(true);
   };
 
+  const handleProcessDirect = (recordId: string) => {
+    beginProcessing(getSamePORecordIds(recordId));
+  };
+
+  const handleBulkProcessDirect = () => {
+    if (selectedRecordIds.length === 0) return;
+    // Expand the manual selection to include any same-PO rows not yet ticked.
+    const expanded = new Set<string>();
+    selectedRecordIds.forEach((id) => getSamePORecordIds(id).forEach((gid) => expanded.add(gid)));
+    beginProcessing(Array.from(expanded));
+  };
+
   const toggleDialogMode = (newMode: "follow-up" | "lift-material") => {
     if (newMode === processMode) return;
     setProcessMode(newMode);
 
     if (newMode === "follow-up") {
       setVendorPOMismatchError(null);
-      setUnifiedFormData(null);
+      setUnifiedFormData(prev => ({
+        status: "follow-up",
+        followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
+        remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
+        liftingData: defaultLiftingData(),
+      }));
       setBulkFormData(prev => prev.map(item => ({
         ...item,
         status: "follow-up",
@@ -550,19 +633,30 @@ export default function FollowUpLifting() {
 
       const qtys: Record<string, string> = {};
       selectedRecordIds.forEach(id => {
-        qtys[id] = "";
+        const record = sheetRecords.find(r => r.id === id);
+        if (record) {
+          const totalQty = parseFloat(String(record.data.quantity || 0).replace(/,/g, "")) || 0;
+          const totalLiftedQty = parseFloat(String(record.data.totalLifted || 0).replace(/,/g, "")) || 0;
+          const pendingQty = Math.max(0, totalQty - totalLiftedQty);
+          qtys[id] = String(pendingQty);
+        } else {
+          qtys[id] = "0";
+        }
       });
       setUnifiedLiftingQtys(qtys);
 
       setBulkFormData(prev => prev.map(item => {
         const record = sheetRecords.find(r => r.id === item.recordId)!;
-        const existLift = record.data.liftingData || {};
+        const existLift = record?.data?.liftingData || {};
+        const totalQty = parseFloat(String(record?.data?.quantity || 0).replace(/,/g, "")) || 0;
+        const totalLiftedQty = parseFloat(String(record?.data?.totalLifted || 0).replace(/,/g, "")) || 0;
+        const pendingQty = Math.max(0, totalQty - totalLiftedQty);
         return {
           ...item,
           status: "lift-material",
           liftingData: {
-            ...defaultLiftingData(existLift, ""),
-            liftingQty: ""
+            ...defaultLiftingData(existLift, String(pendingQty)),
+            liftingQty: String(pendingQty)
           },
         };
       }));
@@ -666,7 +760,7 @@ export default function FollowUpLifting() {
           expected_lifting_date: expectedDeliveryDateFormatted || null,
           vehicle_number: lift.vehicleNumber || "",
           driver_contact: lift.contactNumber || "",
-          lifting_status: "Pending",
+          lifting_status: record.status === "lift-material" ? "Complete" : "Pending",
           lifting_qty: parseFloat(lift.liftingQty || unifiedLiftingQtys[record.recordId] || "0") || null,
           freight_amount: parseFloat(lift.freightAmount) || null,
           transport_rate: lift.transportRateType || null,
@@ -677,28 +771,32 @@ export default function FollowUpLifting() {
           liftingRecord.actual_lifting_date = toYMD(new Date().toISOString()) || null;
         }
 
-        const { error: insertError } = await supabase
+        const { data: insertedLifting, error: insertError } = await supabase
           .from("vendor_liftings")
-          .insert(liftingRecord);
+          .insert(liftingRecord)
+          .select("id")
+          .single();
 
         if (insertError) {
           console.error("Failed to insert lifting record:", insertError);
           toast.error("Failed to save lifting record");
         }
 
-        if (sheetRecord._poId && (lift.transporterName || lift.freightAmount || lift.biltyNumber)) {
+        if (sheetRecord._poId && (lift.transporterName || lift.vehicleNumber || lift.freightAmount || lift.biltyNumber)) {
           await supabase.from("transporter_followups").insert({
             po_id: sheetRecord._poId,
+            lifting_id: insertedLifting?.id || null,
             transporter_name: lift.transporterName || "",
             vehicle_number: lift.vehicleNumber || "",
             bilty_number: lift.biltyNumber || null,
             freight_amount: parseFloat(lift.freightAmount) || null,
-            status: "In Transit",
+            status: "Intransit",
             dispatch_date: toYMD(new Date().toISOString()),
           });
         }
       }
 
+      toast.success("Processed successfully!");
       setOpen(false);
       resetBulk();
       await fetchData();
@@ -723,9 +821,14 @@ export default function FollowUpLifting() {
   };
 
   const toggleSelect = (id: string) => {
-    setSelectedRecordIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setSelectedRecordIds((prev) => {
+      const groupIds = getSamePORecordIds(id);
+      if (prev.includes(id)) {
+        const groupSet = new Set(groupIds);
+        return prev.filter((x) => !groupSet.has(x));
+      }
+      return Array.from(new Set([...prev, ...groupIds]));
+    });
   };
 
   const selectAll = () => {
@@ -740,35 +843,21 @@ export default function FollowUpLifting() {
     if (vendorPOMismatchError) return false;
 
     if (processMode === "follow-up") {
-      if (isUnifiedMode) {
-        return !!(unifiedFormData && unifiedFormData.followUpDate);
-      }
-      return bulkFormData.length > 0 && !!bulkFormData[0].followUpDate;
+      const followUpDate = (isUnifiedMode ? unifiedFormData?.followUpDate : null) || bulkFormData[0]?.followUpDate;
+      return !!(followUpDate && String(followUpDate).trim() !== "");
     }
 
     if (isUnifiedMode && unifiedFormData) {
       if (!unifiedFormData.status) return false;
       if (unifiedFormData.status === "lift-material") {
         const e = unifiedFormData.liftingData;
-        const allQtysValid = selectedRecordIds.every(id => {
-          const val = parseFloat(unifiedLiftingQtys[id]) || 0;
-          const record = sheetRecords.find(r => r.id === id);
-          const totalQty = parseFloat(String(record?.data.quantity || 0)) || 0;
-          const totalLiftedQty = parseFloat(String(record?.data.totalLifted || 0)) || 0;
-          const pendingQty = Math.max(0, totalQty - totalLiftedQty);
-          return val > 0 && val <= pendingQty;
+        const allQtysValid = selectedRecordIds.length > 0 && selectedRecordIds.every(id => {
+          const val = parseFloat(unifiedLiftingQtys[id] || "0") || 0;
+          return val > 0;
         });
 
         return !!(
-          e.transporterName &&
-          e.vehicleNumber &&
-          e.contactNumber &&
-          e.billNo &&
-          e.billDate &&
-          e.expectedDeliveryDate &&
-          e.areaLifting &&
-          e.freightAmount &&
-          (e.hasBilty === "No" || (e.hasBilty === "Yes" && e.biltyNumber && e.biltyCopy)) &&
+          (e.transporterName || e.vehicleNumber) &&
           allQtysValid
         );
       }
@@ -780,16 +869,10 @@ export default function FollowUpLifting() {
         if (!item.status) return false;
         if (item.status === "lift-material") {
           const e = item.liftingData;
+          const qty = parseFloat(e.liftingQty || "0") || 0;
           return !!(
-            e.transporterName &&
-            e.vehicleNumber &&
-            e.contactNumber &&
-            e.billNo &&
-            e.billDate &&
-            e.areaLifting &&
-            e.freightAmount &&
-            e.liftingQty &&
-            (e.hasBilty === "No" || (e.hasBilty === "Yes" && e.biltyNumber && e.biltyCopy))
+            (e.transporterName || e.vehicleNumber) &&
+            qty > 0
           );
         }
         return false;
@@ -887,11 +970,11 @@ export default function FollowUpLifting() {
   const renderItemDetailsCard = () => {
     if (isUnifiedMode) {
       return (
-        <div className="bg-gradient-to-r from-slate-50 to-slate-100/50 border border-slate-200 rounded-xl p-5 mb-6 shadow-sm shrink-0">
+        <div className="bg-linear-to-r from-slate-50 to-slate-100/50 border border-slate-200 rounded-xl p-5 mb-6 shadow-sm shrink-0">
           {processMode === "follow-up" && (
             <>
               <h4 className="font-bold text-slate-900 text-xs mb-3 flex items-center gap-2">
-                <span className="p-1.5 bg-slate-900 text-white rounded text-[10px] font-bold">Selected Items</span>
+                <span className="p-1.5 bg-blue-700 text-white rounded text-[10px] font-bold">Selected Items</span>
                 <span>Batch Details ({bulkFormData.length} Indents)</span>
               </h4>
               <div className="flex flex-wrap gap-2 mb-4">
@@ -928,7 +1011,7 @@ export default function FollowUpLifting() {
       const record = sheetRecords.find((r) => r.id === bulkFormData[0].recordId);
       const v = getVendorData(record);
       return (
-        <div className="bg-gradient-to-r from-slate-50 to-slate-100/50 border border-slate-200 rounded-xl p-5 mb-6 shadow-sm shrink-0 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+        <div className="bg-linear-to-r from-slate-50 to-slate-100/50 border border-slate-200 rounded-xl p-5 mb-6 shadow-sm shrink-0 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
           <div>
             <span className="block text-[10px] uppercase font-bold text-slate-400">Indent Number</span>
             <span className="font-bold text-slate-900 text-sm">{record?.data.indentNumber}</span>
@@ -955,10 +1038,10 @@ export default function FollowUpLifting() {
   return (
     <div className="p-6 h-[calc(100vh-4.5rem)] flex flex-col overflow-hidden">
       {/* Header Card */}
-      <div className="mb-6 p-6 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
+      <div className="mb-6 p-6 bg-linear-to-br from-slate-50 to-white border border-slate-200 rounded-xl shadow-sm shrink-0">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-slate-900 rounded-lg shadow-slate-100 shadow-xl text-white">
+            <div className="p-3 bg-blue-700 rounded-lg shadow-slate-100 shadow-xl text-white">
               <Phone className="w-6 h-6" />
             </div>
             <div>
@@ -1012,7 +1095,7 @@ export default function FollowUpLifting() {
             <TabsTrigger value="pending" className="px-4 py-1.5 text-xs font-semibold rounded-md flex items-center gap-2">
               <ClipboardList className="w-3.5 h-3.5" />
               <span>Pending</span>
-              <Badge variant="secondary" className="bg-slate-900 text-white px-2">
+              <Badge variant="secondary" className="bg-blue-700 text-white px-2">
                 {pending.length}
               </Badge>
             </TabsTrigger>
@@ -1031,7 +1114,7 @@ export default function FollowUpLifting() {
                 disabled={selectedRecordIds.length === 0}
                 size="sm"
                 onClick={handleBulkProcessDirect}
-                className="bg-slate-900 hover:bg-slate-800 text-white"
+                className="bg-blue-700 hover:bg-blue-800 text-white"
               >
                 Process Selected ({selectedRecordIds.length})
               </Button>
@@ -1078,7 +1161,6 @@ export default function FollowUpLifting() {
                           {c.label}
                         </TableHead>
                       ))}
-                    <TableHead>Vendor</TableHead>
                     <TableHead>PO Number</TableHead>
                     <TableHead className="text-right">Basic Value</TableHead>
                   </TableRow>
@@ -1086,7 +1168,7 @@ export default function FollowUpLifting() {
                 <TableBody>
                   {pending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={selectedColumns.length + 5} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={selectedColumns.length + 4} className="h-32 text-center text-slate-400 font-medium">
                         No pending follow-up indents found.
                       </TableCell>
                     </TableRow>
@@ -1114,13 +1196,20 @@ export default function FollowUpLifting() {
                             .filter((c) => selectedColumns.includes(c.key))
                             .map((col) => (
                               <TableCell key={col.key} className={cn((col.key === "totalLifted" || col.key === "pendingLifted") && "text-center")}>
-                                {col.key === "lastFollowUpDate" || col.key === "estimatedDate"
+                                {col.key === "supplierName" ? (
+                                  <span className="font-semibold text-slate-800">{record.data.supplierName || v.name}</span>
+                                ) : col.key === "createdAtCol" ? (
+                                  <span className="font-mono text-xs text-slate-700">{formatDateTimeFull(record.createdAt)}</span>
+                                ) : col.key === "plannedDate" ? (
+                                  <span className="font-mono text-xs text-slate-700">
+                                    {getPlannedDateForRecord(record.data, "Follow UP / Lifting", tatRules, record.createdAt)}
+                                  </span>
+                                ) : col.key === "lastFollowUpDate" || col.key === "estimatedDate"
                                   ? formatDateDash(record.data[col.key])
                                   : record.data[col.key] || "-"}
                               </TableCell>
                             ))}
-                          <TableCell className="font-semibold text-slate-800">{v.name}</TableCell>
-                          <TableCell className="font-mono text-slate-600">{v.poNumber}</TableCell>
+                          <TableCell className="font-mono text-slate-600">{record.data.poNumber || record.data.vendor1PoNumber || "-"}</TableCell>
                           <TableCell className="text-right font-medium text-slate-800">
                             {record.basicValue ? `₹ ${parseFloat(String(record.basicValue).replace(/,/g, '')).toLocaleString()}` : "-"}
                           </TableCell>
@@ -1146,6 +1235,7 @@ export default function FollowUpLifting() {
                     <TableHead>Vendor</TableHead>
                     <TableHead>PO Number</TableHead>
                     <TableHead className="text-center">Lifting Qty</TableHead>
+                    <TableHead>Planned Date</TableHead>
                     <TableHead>Transporter</TableHead>
                     <TableHead>Vehicle No</TableHead>
                     <TableHead>LR / Bilty</TableHead>
@@ -1156,7 +1246,7 @@ export default function FollowUpLifting() {
                 <TableBody>
                   {history.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
                         No material lifting history logs found.
                       </TableCell>
                     </TableRow>
@@ -1169,6 +1259,7 @@ export default function FollowUpLifting() {
                         <TableCell>{h.vendorName}</TableCell>
                         <TableCell className="font-mono">{h.poNumber}</TableCell>
                         <TableCell className="text-center font-semibold">{h.liftingQty}</TableCell>
+                        <TableCell className="font-mono">{getPlannedDateForRecord(h, "Follow UP / Lifting", tatRules, h.createdAt)}</TableCell>
                         <TableCell>{h.transporterName}</TableCell>
                         <TableCell className="font-mono uppercase">{h.vehicleNo}</TableCell>
                         <TableCell>
@@ -1200,7 +1291,7 @@ export default function FollowUpLifting() {
       {/* PROCESS MODAL */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-6xl max-h-[95vh] sm:max-h-[90vh] flex flex-col p-0 bg-white border rounded-2xl shadow-xl overflow-hidden">
-          <DialogHeader className="flex-shrink-0 border-b p-6 bg-slate-50/50">
+          <DialogHeader className="shrink-0 border-b p-6 bg-slate-50/50">
             <div className="flex items-center justify-between">
               <div>
                 <DialogTitle className="text-xl font-bold text-slate-900">
@@ -1280,22 +1371,21 @@ export default function FollowUpLifting() {
                             type="date"
                             required
                             value={
-                              isUnifiedMode
-                                ? unifiedFormData?.followUpDate || ""
-                                : bulkFormData[0]?.followUpDate || ""
+                              (isUnifiedMode ? unifiedFormData?.followUpDate : null) ||
+                              bulkFormData[0]?.followUpDate ||
+                              ""
                             }
                             onChange={(e) => {
-                              if (isUnifiedMode) {
-                                setUnifiedFormData((prev) =>
-                                  prev ? { ...prev, followUpDate: e.target.value } : null
-                                );
-                              } else {
-                                setBulkFormData((prev) => {
-                                  const updated = [...prev];
-                                  if (updated[0]) updated[0].followUpDate = e.target.value;
-                                  return updated;
-                                });
-                              }
+                              const val = e.target.value;
+                              setUnifiedFormData((prev) => ({
+                                status: "follow-up",
+                                followUpDate: val,
+                                remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
+                                liftingData: prev?.liftingData || defaultLiftingData(),
+                              }));
+                              setBulkFormData((prev) =>
+                                prev.map((item) => ({ ...item, followUpDate: val, status: "follow-up" }))
+                              );
                             }}
                             className="bg-white border-slate-200 h-10 shadow-sm"
                           />
@@ -1307,22 +1397,21 @@ export default function FollowUpLifting() {
                           <Input
                             placeholder="Enter remarks..."
                             value={
-                              isUnifiedMode
-                                ? unifiedFormData?.remarks || ""
-                                : bulkFormData[0]?.remarks || ""
+                              (isUnifiedMode ? unifiedFormData?.remarks : null) ||
+                              bulkFormData[0]?.remarks ||
+                              ""
                             }
                             onChange={(e) => {
-                              if (isUnifiedMode) {
-                                setUnifiedFormData((prev) =>
-                                  prev ? { ...prev, remarks: e.target.value } : null
-                                );
-                              } else {
-                                setBulkFormData((prev) => {
-                                  const updated = [...prev];
-                                  if (updated[0]) updated[0].remarks = e.target.value;
-                                  return updated;
-                                });
-                              }
+                              const val = e.target.value;
+                              setUnifiedFormData((prev) => ({
+                                status: "follow-up",
+                                followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
+                                remarks: val,
+                                liftingData: prev?.liftingData || defaultLiftingData(),
+                              }));
+                              setBulkFormData((prev) =>
+                                prev.map((item) => ({ ...item, remarks: val, status: "follow-up" }))
+                              );
                             }}
                             className="bg-white border-slate-200 h-10 shadow-sm"
                           />
@@ -1334,7 +1423,7 @@ export default function FollowUpLifting() {
                       <Button type="button" variant="outline" onClick={resetBulk} disabled={isSubmitting} className="h-10 px-5 rounded-lg border-slate-200">
                         Cancel
                       </Button>
-                      <Button type="submit" disabled={isSubmitting || !isBulkValid} className="h-10 bg-slate-950 text-white hover:bg-slate-800 font-semibold px-6 shadow-sm rounded-lg">
+                      <Button type="submit" disabled={isSubmitting || !isBulkValid} className="h-10 bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm rounded-lg">
                         {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Save Follow-Up"}
                       </Button>
                     </DialogFooter>
@@ -1473,11 +1562,10 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, vehicleNumber: e.target.value.toUpperCase() }
                               } : null)
                             }
-                            required
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">Contact No *</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">Contact No</Label>
                           <Input
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
                             value={unifiedFormData.liftingData.contactNumber}
@@ -1487,12 +1575,11 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, contactNumber: e.target.value }
                               } : null)
                             }
-                            required
                             placeholder="Driver contact info"
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">AREA LIFTING *</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">AREA LIFTING</Label>
                           <Select
                             value={unifiedFormData.liftingData.areaLifting || ""}
                             onValueChange={(val) =>
@@ -1513,7 +1600,7 @@ export default function FollowUpLifting() {
                           </Select>
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILL NO. *</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILL NO.</Label>
                           <Input
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
                             value={unifiedFormData.liftingData.billNo || ""}
@@ -1523,11 +1610,10 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, billNo: e.target.value }
                               } : null)
                             }
-                            required
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILL DATE *</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILL DATE</Label>
                           <Input
                             type="date"
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
@@ -1538,11 +1624,10 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, billDate: e.target.value }
                               } : null)
                             }
-                            required
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">EXPECTED DELIVERY DATE *</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">EXPECTED DELIVERY DATE</Label>
                           <Input
                             type="date"
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
@@ -1553,11 +1638,10 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, expectedDeliveryDate: e.target.value }
                               } : null)
                             }
-                            required
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TYPE OF TRANSPORTING RATE *</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TYPE OF TRANSPORTING RATE</Label>
                           <Input
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
                             value={unifiedFormData.liftingData.transportRateType || ""}
@@ -1567,11 +1651,10 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, transportRateType: e.target.value }
                               } : null)
                             }
-                            required
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TOTAL TRANSPORTING AMOUNT *</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TOTAL TRANSPORTING AMOUNT</Label>
                           <Input
                             type="number"
                             step="0.01"
@@ -1583,7 +1666,6 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, freightAmount: e.target.value }
                               } : null)
                             }
-                            required
                           />
                         </div>
                         <div className="space-y-1.5">
@@ -1696,7 +1778,7 @@ export default function FollowUpLifting() {
                       <Button type="button" variant="outline" onClick={resetBulk} disabled={isSubmitting} className="h-10 px-5 rounded-lg border-slate-200">
                         Cancel
                       </Button>
-                      <Button type="submit" disabled={isSubmitting || !isBulkValid} className="h-10 bg-slate-950 text-white hover:bg-slate-800 font-semibold px-6 shadow-sm rounded-lg">
+                      <Button type="submit" disabled={isSubmitting || !isBulkValid} className="h-10 bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm rounded-lg">
                         {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Dispatch Material"}
                       </Button>
                     </DialogFooter>
