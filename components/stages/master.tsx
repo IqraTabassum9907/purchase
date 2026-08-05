@@ -39,10 +39,13 @@ import {
   CheckSquare,
   XCircle,
   Clock,
-  Edit3
+  Edit3,
+  Check,
+  Layers,
 } from "lucide-react";
 import { STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 interface ItemOption {
   itemCode: string;
@@ -64,6 +67,135 @@ interface VendorInfo {
   phone: string;
   email: string;
   address: string;
+}
+
+/**
+ * Searchable + creatable dropdown: click to see all options, type to filter,
+ * and if nothing matches, "Add '<value>'" persists it to the master table and
+ * selects it. Defined at module scope (not inside MasterPage) so its identity
+ * stays stable across re-renders — otherwise React would remount it on every
+ * keystroke of the parent and the field would drop focus after each character.
+ */
+function Combobox({
+  options,
+  value,
+  onSelect,
+  onCreate,
+  placeholder,
+}: {
+  options: string[];
+  value: string;
+  onSelect: (value: string) => void;
+  onCreate: (value: string) => Promise<boolean>;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value);
+  const [creating, setCreating] = useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  // Keep the input text in sync when the committed value changes externally
+  // (e.g. the parent resets the form after a successful submit).
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery(value); // discard any unconfirmed typing
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [value]);
+
+  const trimmedQuery = query.trim();
+  const filtered = trimmedQuery
+    ? options.filter((o) => o.toLowerCase().includes(trimmedQuery.toLowerCase()))
+    : options;
+  const hasExactMatch = options.some((o) => o.toLowerCase() === trimmedQuery.toLowerCase());
+  const canCreate = trimmedQuery.length > 0 && !hasExactMatch;
+
+  const selectOption = (option: string) => {
+    onSelect(option);
+    setQuery(option);
+    setOpen(false);
+  };
+
+  const createAndSelect = async () => {
+    if (!canCreate || creating) return;
+    setCreating(true);
+    const ok = await onCreate(trimmedQuery);
+    setCreating(false);
+    if (ok) {
+      onSelect(trimmedQuery);
+      setQuery(trimmedQuery);
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <Input
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (hasExactMatch) {
+            const match = options.find((o) => o.toLowerCase() === trimmedQuery.toLowerCase())!;
+            selectOption(match);
+          } else if (canCreate) {
+            createAndSelect();
+          }
+        }}
+        placeholder={placeholder}
+        className="h-10 text-xs rounded-xl bg-slate-50 border-slate-200"
+        autoComplete="off"
+      />
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
+          {filtered.length === 0 && !canCreate && (
+            <div className="px-3 py-2 text-xs text-slate-400">No options found</div>
+          )}
+          {filtered.map((option) => (
+            <div
+              key={option}
+              className="px-3 py-2 text-xs cursor-pointer hover:bg-slate-100 flex items-center gap-2 text-slate-700"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                selectOption(option);
+              }}
+            >
+              <Check className={cn("h-3.5 w-3.5 shrink-0", value === option ? "opacity-100 text-blue-600" : "opacity-0")} />
+              <span className="truncate">{option}</span>
+            </div>
+          ))}
+          {canCreate && (
+            <div
+              className={cn(
+                "px-3 py-2 text-xs flex items-center gap-2 font-medium border-t border-slate-100",
+                creating ? "text-slate-400 cursor-wait" : "text-blue-600 cursor-pointer hover:bg-blue-50"
+              )}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                createAndSelect();
+              }}
+            >
+              {creating ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <Plus className="h-3.5 w-3.5 shrink-0" />}
+              <span className="truncate">{creating ? "Adding..." : `Add "${trimmedQuery}"`}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function MasterPage() {
@@ -110,16 +242,26 @@ export default function MasterPage() {
   const [newVendor, setNewVendor] = useState<VendorInfo>({ vendorName: "", contactPerson: "", phone: "", email: "", address: "" });
   const [vendorSearch, setVendorSearch] = useState<string>("");
 
+  // Categories are now their own dedicated master list (Category Master), same as UOMs
+  const [categoryList, setCategoryList] = useState<string[]>([]);
+
   // Form Inputs
   const [newSimpleVal, setNewSimpleVal] = useState<string>("");
   const [newItem, setNewItem] = useState<ItemOption>({ itemCode: "", category: "", itemName: "", uom: "" });
   const [itemSearch, setItemSearch] = useState<string>("");
 
+  // Options shown in the Category combobox: the Category Master list, plus any category
+  // already used on an existing item (in case it predates the master table / migration).
+  const categoryOptions = useMemo(
+    () => Array.from(new Set([...categoryList, ...items.map((i) => i.category)])).filter(Boolean),
+    [categoryList, items]
+  );
+
   const fetchDropdowns = async () => {
     setIsLoading(true);
     try {
       const [
-        cbRes, whRes, apRes, qcRes, acRes, uomRes, chRes, rjRes,
+        cbRes, whRes, apRes, qcRes, acRes, uomRes, catRes, chRes, rjRes,
         csRes, tsRes, tuRes, transRes, venRes, itemRes
       ] = await Promise.all([
         supabase.from("master_created_by").select("name").eq("is_active", true),
@@ -128,6 +270,7 @@ export default function MasterPage() {
         supabase.from("master_qc_engineers").select("name").eq("is_active", true),
         supabase.from("master_accountants").select("name").eq("is_active", true),
         supabase.from("master_uoms").select("name").eq("is_active", true),
+        supabase.from("master_categories").select("name").eq("is_active", true),
         supabase.from("master_checklists").select("name").eq("is_active", true),
         supabase.from("master_reject_reasons").select("name").eq("is_active", true),
         supabase.from("master_cancel_stages").select("name").eq("is_active", true),
@@ -149,6 +292,7 @@ export default function MasterPage() {
       let qcList = mapNames(qcRes, ["QC Eng 1", "QC Eng 2"]);
       let acList = mapNames(acRes, ["Acc 1", "Acc 2"]);
       let uomList = mapNames(uomRes, ["Nos", "Sets", "Kgs", "Bags", "Mtrs"]);
+      let catList = mapNames(catRes, ["Raw Material", "Hardware", "Electronics", "Office Supplies", "General"]);
       let chList = mapNames(chRes, ["Check Packaging", "Check Quality Standards", "Quantity Audit"]);
       let rjList = mapNames(rjRes, ["Damaged Material", "Specification Mismatch", "Short Supply"]);
       let csList = mapNames(csRes, ["Create Indent", "Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up", "Material Received", "Billing", "Purchase Return", "Order Cancel"]);
@@ -161,6 +305,7 @@ export default function MasterPage() {
       setQcEngineer(qcList);
       setAccountant(acList);
       setUom(uomList);
+      setCategoryList(catList);
       setChecklist(chList);
       setRejectReason(rjList);
       setCancelStages(csList);
@@ -422,6 +567,7 @@ export default function MasterPage() {
     qcEngineer: "master_qc_engineers",
     accountant: "master_accountants",
     uom: "master_uoms",
+    category: "master_categories",
     checklist: "master_checklists",
     rejectReason: "master_reject_reasons",
     cancelStage: "master_cancel_stages",
@@ -451,6 +597,7 @@ export default function MasterPage() {
       case "qcEngineer": setQcEngineer(prev => Array.from(new Set([...prev, val]))); break;
       case "accountant": setAccountant(prev => Array.from(new Set([...prev, val]))); break;
       case "uom": setUom(prev => Array.from(new Set([...prev, val]))); break;
+      case "category": setCategoryList(prev => Array.from(new Set([...prev, val]))); break;
       case "checklist": setChecklist(prev => Array.from(new Set([...prev, val]))); break;
       case "rejectReason": setRejectReason(prev => Array.from(new Set([...prev, val]))); break;
       case "cancelStage": setCancelStages(prev => Array.from(new Set([...prev, val]))); break;
@@ -480,6 +627,7 @@ export default function MasterPage() {
       case "qcEngineer": setQcEngineer(prev => prev.filter(item => item !== valToRemove)); break;
       case "accountant": setAccountant(prev => prev.filter(item => item !== valToRemove)); break;
       case "uom": setUom(prev => prev.filter(item => item !== valToRemove)); break;
+      case "category": setCategoryList(prev => prev.filter(item => item !== valToRemove)); break;
       case "checklist": setChecklist(prev => prev.filter(item => item !== valToRemove)); break;
       case "rejectReason": setRejectReason(prev => prev.filter(item => item !== valToRemove)); break;
       case "cancelStage": setCancelStages(prev => prev.filter(item => item !== valToRemove)); break;
@@ -488,6 +636,43 @@ export default function MasterPage() {
     }
 
     toast.success(`Removed '${valToRemove}' successfully!`);
+  };
+
+  // Create-on-the-fly handlers for the Category / UOM comboboxes on the item form.
+  // Both persist to their own master table and are case-insensitive-duplicate-safe;
+  // if the value already exists (any case), nothing is inserted — it's just selected.
+  const createCategoryOption = async (raw: string): Promise<boolean> => {
+    const val = raw.trim();
+    if (!val) return false;
+    if (categoryOptions.some((c) => c.toLowerCase() === val.toLowerCase())) return true;
+
+    const { error } = await supabase
+      .from("master_categories")
+      .upsert({ name: val, is_active: true }, { onConflict: "name" });
+    if (error) {
+      toast.error("Failed to add category");
+      return false;
+    }
+    setCategoryList((prev) => Array.from(new Set([...prev, val])));
+    toast.success(`Category '${val}' added`);
+    return true;
+  };
+
+  const createUomOption = async (raw: string): Promise<boolean> => {
+    const val = raw.trim();
+    if (!val) return false;
+    if (uom.some((u) => u.toLowerCase() === val.toLowerCase())) return true;
+
+    const { error } = await supabase
+      .from("master_uoms")
+      .upsert({ name: val, is_active: true }, { onConflict: "name" });
+    if (error) {
+      toast.error("Failed to add UOM");
+      return false;
+    }
+    setUom((prev) => Array.from(new Set([...prev, val])));
+    toast.success(`UOM '${val}' added`);
+    return true;
   };
 
   // Add Item to Catalog
@@ -668,6 +853,7 @@ export default function MasterPage() {
     { id: "qcEngineer", label: "QC Engineers", icon: Wrench, desc: "Engineers inspecting items on arrival." },
     { id: "accountant", label: "Accountants", icon: FileText, desc: "Financial accountants posting to Tally." },
     { id: "uom", label: "UOMs", icon: Settings, desc: "Units of Measure (e.g. Nos, Sets, Kgs, Bags)." },
+    { id: "category", label: "Categories", icon: Layers, desc: "Item categories used in the Product Catalog." },
     { id: "checklist", label: "QC Checklists", icon: CheckSquare, desc: "Quality inspection standard checklist options." },
     { id: "rejectReason", label: "Reject Reasons", icon: AlertCircle, desc: "Reasons cited for material returns." },
     { id: "cancelStage", label: "Cancel Stages", icon: XCircle, desc: "Stage options for Order Cancellation." },
@@ -1103,12 +1289,12 @@ export default function MasterPage() {
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs text-slate-600">Category *</Label>
-                            <Input
-                              placeholder="e.g. Electronics, Hardware"
+                            <Combobox
+                              options={categoryOptions}
                               value={newItem.category}
-                              onChange={(e) => setNewItem({ ...newItem, category: e.target.value })}
-                              className="h-10 text-xs rounded-xl"
-                              required
+                              onSelect={(val) => setNewItem({ ...newItem, category: val })}
+                              onCreate={createCategoryOption}
+                              placeholder="Search or type a category..."
                             />
                           </div>
                           <div className="space-y-1.5">
@@ -1123,23 +1309,13 @@ export default function MasterPage() {
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs text-slate-600 font-semibold">UOM *</Label>
-                            <Select
+                            <Combobox
+                              options={uom}
                               value={newItem.uom}
-                              onValueChange={(val) => setNewItem({ ...newItem, uom: val })}
-                            >
-                              <SelectTrigger className="h-10 text-xs rounded-xl bg-slate-50 border-slate-200">
-                                <SelectValue placeholder="Select UOM" />
-                              </SelectTrigger>
-                              <SelectContent className="bg-white border text-xs rounded-xl shadow-md">
-                                {uom.length === 0 ? (
-                                  <div className="p-2 text-center text-slate-400">No UOMs configured</div>
-                                ) : (
-                                  uom.map((u) => (
-                                    <SelectItem key={u} value={u}>{u}</SelectItem>
-                                  ))
-                                )}
-                              </SelectContent>
-                            </Select>
+                              onSelect={(val) => setNewItem({ ...newItem, uom: val })}
+                              onCreate={createUomOption}
+                              placeholder="Search or type a UOM..."
+                            />
                           </div>
                           <Button
                             type="submit"
@@ -1385,6 +1561,7 @@ export default function MasterPage() {
                               activeTab === "qcEngineer" ? qcEngineer.length :
                               activeTab === "accountant" ? accountant.length :
                               activeTab === "uom" ? uom.length :
+                              activeTab === "category" ? categoryList.length :
                               activeTab === "checklist" ? checklist.length :
                               activeTab === "rejectReason" ? rejectReason.length :
                               activeTab === "cancelStage" ? cancelStages.length :
@@ -1404,6 +1581,7 @@ export default function MasterPage() {
                                   case "qcEngineer": return qcEngineer;
                                   case "accountant": return accountant;
                                   case "uom": return uom;
+                                  case "category": return categoryList;
                                   case "checklist": return checklist;
                                   case "rejectReason": return rejectReason;
                                   case "cancelStage": return cancelStages;

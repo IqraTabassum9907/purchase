@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS public.master_uoms (
     created_at timestamptz DEFAULT now()
 );
 
+-- 6b. Master Categories Table (backs the Category combobox on the Product Catalog form)
+CREATE TABLE IF NOT EXISTS public.master_categories (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name text NOT NULL UNIQUE,
+    is_active boolean DEFAULT true,
+    created_at timestamptz DEFAULT now()
+);
+
 -- 7. Master Checklists Table
 CREATE TABLE IF NOT EXISTS public.master_checklists (
     id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -168,6 +176,10 @@ ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO public.master_uoms (name) VALUES
     ('Nos'), ('Sets'), ('Kgs'), ('Bags'), ('Mtrs')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO public.master_categories (name) VALUES
+    ('Raw Material'), ('Hardware'), ('Electronics'), ('Office Supplies'), ('General')
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO public.master_checklists (name) VALUES

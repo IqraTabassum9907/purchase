@@ -584,7 +584,7 @@ export default function Stage2() {
                           .map((col) => (
                             <TableCell key={col.key} className="text-sm text-slate-700">
                               {(col.key as string) === "createdAtCol"
-                                ? formatDateTimeFull(record.createdAt)
+                                ? formatDateTimeFull(record.data.actualDate || record.createdAt)
                                 : (col.key as string) === "plannedDate"
                                 ? getPlannedDateForRecord(record.data, "Indent Approval", tatRules, record.createdAt)
                                 : col.key === "leadTime"

@@ -459,7 +459,7 @@ export default function ApprovedVendor() {
                         </TableCell>
                         {selectedColumns.includes("createdAtCol") && (
                           <TableCell className="text-xs text-slate-700 px-4 font-mono">
-                            {formatDateTimeFull(group.records[0]?.createdAt)}
+                            {formatDateTimeFull(group.records[0]?.data?.actual3 || group.records[0]?.createdAt)}
                           </TableCell>
                         )}
                         {selectedColumns.includes("indentNumber") && (
@@ -538,14 +538,14 @@ export default function ApprovedVendor() {
                         {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
                           <TableCell key={col.key} className="text-sm text-slate-700 px-4">
                             {col.key === "createdAtCol"
-                              ? formatDateTimeFull(record.createdAt)
+                              ? formatDateTimeFull(record.data.plan4 || record.createdAt)
                               : col.key === "actual3"
                               ? getPlannedDateForRecord(record.data, "Approved Vendor", tatRules, record.createdAt)
                               : String(record.data[col.key] ?? "-")}
                           </TableCell>
                         ))}
                         <TableCell className="text-sm text-slate-700 px-4">
-                          {formatDateDash(record.data.planned4)}
+                          {formatDateDash(record.data.plan4)}
                         </TableCell>
                         <TableCell className="text-sm text-slate-700 px-4 font-semibold">
                           <div className="flex items-center gap-1.5">

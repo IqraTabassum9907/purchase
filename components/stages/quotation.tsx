@@ -191,6 +191,7 @@ export default function Quotation() {
             category: row.data.category,
             itemName: row.data.itemName,
             quantity: row.data.approvedQty || row.data.quantity,
+            approvedAt: row.data.actual1,
             planned3: row.data.plan3,
             actual3: row.data.actual3,
             selectedVendor: row.data.selectedVendor,
@@ -730,7 +731,7 @@ export default function Quotation() {
                           {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
                             <TableCell key={col.key} className="text-xs text-slate-700 px-4 font-mono">
                               {col.key === "createdAtCol"
-                                ? formatDateTimeFull(record.createdAt)
+                                ? formatDateTimeFull(record.data.approvedAt || record.createdAt)
                                 : col.key === "planned3"
                                 ? getPlannedDateForRecord(record.data, "Quotation", tatRules, record.createdAt)
                                 : String(record.data[col.key] ?? "-")}
@@ -789,7 +790,7 @@ export default function Quotation() {
                         {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
                           <TableCell key={col.key} className="text-sm text-slate-700 px-4">
                             {col.key === "createdAtCol"
-                              ? formatDateTimeFull(record.createdAt)
+                              ? formatDateTimeFull(record.data.actual3 || record.createdAt)
                               : col.key === "planned3"
                               ? getPlannedDateForRecord(record.data, "Quotation", tatRules, record.createdAt)
                               : String(record.data[col.key] ?? "-")}

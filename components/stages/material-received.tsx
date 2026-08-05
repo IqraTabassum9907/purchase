@@ -240,9 +240,23 @@ export default function Stage7() {
                 liftingByPo.set(l.po_id, list);
             });
 
+            // Latest transporter follow-up per PO (fallback for POs with no lifting record
+            // tracked at all), and separately indexed by lifting_id so a dispatch with its own
+            // Transporter Follow-Up entry doesn't accidentally borrow another lift's
+            // transporter/vehicle/dispatch details just because it shares the same PO.
             const transporterByPo = new Map<string, any>();
+            const transporterByLifting = new Map<string, any>();
             transporters.forEach((t: any) => {
-                if (!transporterByPo.has(t.po_id)) transporterByPo.set(t.po_id, t);
+                const existing = transporterByPo.get(t.po_id);
+                if (!existing || new Date(t.created_at || 0) > new Date(existing.created_at || 0)) {
+                    transporterByPo.set(t.po_id, t);
+                }
+                if (t.lifting_id) {
+                    const existingByLift = transporterByLifting.get(t.lifting_id);
+                    if (!existingByLift || new Date(t.created_at || 0) > new Date(existingByLift.created_at || 0)) {
+                        transporterByLifting.set(t.lifting_id, t);
+                    }
+                }
             });
 
             const receiptsByPo = new Map<string, any[]>();
@@ -267,7 +281,9 @@ export default function Stage7() {
 
                 const poLiftings = liftingByPo.get(po.id) || [];
                 const poReceipts = receiptsByPo.get(po.id) || [];
-                const transporter = transporterByPo.get(po.id);
+                // Fallback transporter used only when there's no per-lifting record to key off of
+                // (e.g. a PO with no Follow-Up/Lifting stage at all — see poLiftings.length === 0 below).
+                const transporterFallback = transporterByPo.get(po.id);
                 const poPayments = paymentsByPo.get(po.id) || [];
                 const freightPayment = poPayments.find((p: any) => p.payment_type === "freight");
                 const advancePayment = poPayments.find((p: any) => p.payment_type === "advance");
@@ -278,6 +294,7 @@ export default function Stage7() {
 
                 if (poLiftings.length === 0) {
                     const compositeId = `${indentRow.data.indentNumber}_${po.po_number}`;
+                    const transporter = transporterFallback;
                     const receipt = poReceipts.find(r => parseFloat(String(r.received_quantity || "0")) > 0);
                     const status = receipt ? "completed" : (transporter ? "pending" : "not_ready");
 
@@ -313,6 +330,8 @@ export default function Stage7() {
                             poCopy: po.po_copy_url || "",
                             planned6: "",
                             actual6: receipt ? String(receipt.received_date || "") : "",
+                            receivedAt: receipt ? (receipt.created_at || "") : "",
+                            enteredPendingAt: transporter?.updated_at || po.created_at || "",
                             invoiceType: "",
                             receivedQty: receipt ? String(receipt.received_quantity || "") : "",
                             invoiceDate: "",
@@ -329,14 +348,26 @@ export default function Stage7() {
                         }
                     });
                 } else {
+                    // Guards against one GRN/receipt being matched to more than one lifting of the
+                    // same PO (e.g. two equal-quantity partial dispatches) — without this, a receipt
+                    // already recorded for an earlier lift could get reused for a later lift that was
+                    // only just approved in Transporter Follow-Up, sending it straight to History
+                    // instead of Pending.
+                    const usedReceiptIds = new Set<string>();
                     for (const lifting of poLiftings) {
                         const liftTrackingNo = String(lifting.id).substring(0, 8);
                         const compositeId = `${indentRow.data.indentNumber}_${liftTrackingNo}`;
                         const liftQty = parseFloat(String(lifting.quantity || lifting.lifting_qty || "0").replace(/,/g, "")) || 0;
-                        const receipt = poReceipts.find(r => 
-                            String(r.grn_number || "").includes(liftTrackingNo) || 
-                            (liftQty > 0 && Math.abs((parseFloat(String(r.received_quantity || "0").replace(/,/g, "")) || 0) - liftQty) < 0.01)
+                        // Prefer this lift's own Transporter Follow-Up entry; only fall back to the
+                        // PO-level transporter when this specific dispatch has no linked record.
+                        const transporter = transporterByLifting.get(lifting.id) || transporterFallback;
+                        const receipt = poReceipts.find(r =>
+                            !usedReceiptIds.has(r.id) && (
+                                String(r.grn_number || "").includes(liftTrackingNo) ||
+                                (liftQty > 0 && Math.abs((parseFloat(String(r.received_quantity || "0").replace(/,/g, "")) || 0) - liftQty) < 0.01)
+                            )
                         ) || null;
+                        if (receipt) usedReceiptIds.add(receipt.id);
 
                         let status = "not_ready";
                         const isLiftingDone = !!(lifting.actual_lifting_date && String(lifting.actual_lifting_date).trim() !== "" && String(lifting.actual_lifting_date).trim() !== "-");
@@ -380,6 +411,8 @@ export default function Stage7() {
                                 poCopy: po.po_copy_url || "",
                                 planned6: lifting.expected_lifting_date || "",
                                 actual6: receipt ? String(receipt.received_date || "") : "",
+                                receivedAt: receipt ? (receipt.created_at || "") : "",
+                                enteredPendingAt: transporter?.updated_at || lifting.updated_at || po.created_at || "",
                                 invoiceType: "",
                                 receivedQty: receipt ? String(receipt.received_quantity || "") : "",
                                 invoiceDate: "",
@@ -1115,7 +1148,7 @@ export default function Stage7() {
                                                         if (col.key === "createdAtCol") {
                                                             return (
                                                                 <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
-                                                                    {formatDateTimeFull(rec.createdAt)}
+                                                                    {formatDateTimeFull(rec.data.enteredPendingAt || rec.createdAt)}
                                                                 </TableCell>
                                                             );
                                                         }
@@ -1196,7 +1229,7 @@ export default function Stage7() {
                                                             if (col.key === "createdAtCol") {
                                                                 return (
                                                                     <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
-                                                                        {formatDateTimeFull(record.createdAt)}
+                                                                        {formatDateTimeFull(record.data.receivedAt || record.data.actual6 || record.createdAt)}
                                                                     </TableCell>
                                                                 );
                                                             }

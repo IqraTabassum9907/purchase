@@ -1071,7 +1071,7 @@ export default function Stage5() {
                                 {col.key === "planned4"
                                   ? getPlannedDateForRecord(record.data, "Make PO", tatRules, record.createdAt)
                                   : col.key === "createdAt"
-                                  ? formatDateTimeFull(record.createdAt)
+                                  ? formatDateTimeFull(record.data.planned4 || record.createdAt)
                                   : (record.data[col.key] || "-")}
                               </TableCell>
                             ))}
@@ -1131,7 +1131,7 @@ export default function Stage5() {
                     return (
                       <TableRow key={record.id} className="bg-green-50/50 hover:bg-green-100/50">
                         <TableCell className="px-4 text-slate-700 whitespace-nowrap font-mono text-xs">
-                          {formatDateTimeFull(record.createdAt)}
+                          {formatDateTimeFull(record.data.actual4 || record.createdAt)}
                         </TableCell>
                         <TableCell className="max-w-[200px] px-4">
                           <div className="space-y-1">

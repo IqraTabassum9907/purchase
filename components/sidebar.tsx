@@ -309,7 +309,7 @@ export default function Sidebar() {
             })}
           </div>
 
-          <div className="mt-auto pt-6 border-t border-sidebar-border">
+          <div className="mt-auto pt-6 pb-6 border-t border-sidebar-border">
             <div className="px-3 py-2 mb-3">
               <p className="text-sm text-sidebar-foreground/80">
                 Logged in as:

@@ -19,6 +19,7 @@ CREATE TABLE public.master_approvers ( id uuid PRIMARY KEY DEFAULT uuid_generate
 CREATE TABLE public.master_qc_engineers ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_accountants ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_uoms ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
+CREATE TABLE public.master_categories ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_checklists ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_reject_reasons ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_transporters ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), transporter_name text NOT NULL UNIQUE, contact_person text, phone text, vehicle_type text, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );

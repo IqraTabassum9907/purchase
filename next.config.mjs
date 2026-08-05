@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Move the dev-mode indicator badge away from the bottom-left corner so it
+  // doesn't sit on top of the sidebar's "Logged in as / Logout" section.
+  devIndicators: {
+    position: 'bottom-right',
+  },
   typescript: {
     ignoreBuildErrors: true,
   },
