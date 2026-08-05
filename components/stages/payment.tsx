@@ -429,6 +429,7 @@ export default function UnifiedPaymentHub() {
               dueDate: po?.delivery_date || "-",
               vendor: vendorName,
               poNumber: po?.po_number || "",
+              quantity: po?.quantity || indent?.data?.quantity || "-",
               totalRcvd,
               poCopy: po?.po_copy_url || "",
               qty: receipts.map((r: any) => r.received_quantity).join(", "),
@@ -468,6 +469,7 @@ export default function UnifiedPaymentHub() {
             id: `VHIST_${p.id}`,
             invoiceNo: po?.po_number || "",
             vendor: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.vendor1Name || "-",
+            quantity: po?.quantity || indent?.data?.quantity || "-",
             amountPaid: p.amount,
             status: p.status,
             date: toDate(p.payment_date),
@@ -493,6 +495,7 @@ export default function UnifiedPaymentHub() {
             id: `FHIST_${p.id}`,
             lrNo: tf?.bilty_number || "",
             transporter: tf?.transporter_name || "",
+            quantity: po?.quantity || indent?.data?.quantity || "-",
             amountPaid: p.amount,
             status: p.status,
             date: toDate(p.payment_date),
@@ -555,6 +558,7 @@ export default function UnifiedPaymentHub() {
               biltyImage: tf.bilty_copy_url || "",
               freightAmount: freightAmt,
               transporter: tf.transporter_name || "",
+              quantity: receipt?.received_quantity || po?.quantity || "-",
               vehicleNo: tf.vehicle_number || lifting?.vehicle_number || "",
               contact: tf.driver_contact || lifting?.driver_contact || "",
               advanceAmount,
@@ -603,6 +607,7 @@ export default function UnifiedPaymentHub() {
               biltyImage: rcpt.bilty_invoice_image_url || "",
               freightAmount: freightAmt,
               transporter: tf?.transporter_name || po?.vendor_name || "-",
+              quantity: rcpt.received_quantity || po?.quantity || "-",
               vehicleNo: tf?.vehicle_number || lifting?.vehicle_number || "-",
               contact: tf?.driver_contact || lifting?.driver_contact || "-",
               advanceAmount,
@@ -1146,6 +1151,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">Indent</TableHead>
                     <TableHead className="font-bold p-3">Item Details</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3">Supplier</TableHead>
                     <TableHead className="font-bold p-3">PO Number</TableHead>
                     <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
@@ -1157,7 +1163,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
                         No pending advance payments found.
                       </TableCell>
                     </TableRow>
@@ -1176,7 +1182,8 @@ export default function UnifiedPaymentHub() {
                         </TableCell>
                         <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.createdAt)}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
-                        <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName} (Qty: {r.data.quantity})</TableCell>
+                        <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.data.selectedVendorName}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
@@ -1208,6 +1215,7 @@ export default function UnifiedPaymentHub() {
                   <TableRow>
                     <TableHead className="font-bold p-3">Indent</TableHead>
                     <TableHead className="font-bold p-3">Item Details</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3">Vendor</TableHead>
                     <TableHead className="font-bold p-3">PO Number</TableHead>
                     <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
@@ -1220,7 +1228,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
                         No advance payment history found.
                       </TableCell>
                     </TableRow>
@@ -1228,7 +1236,8 @@ export default function UnifiedPaymentHub() {
                     advHistoryPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
-                        <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName} (Qty: {r.data.quantity})</TableCell>
+                        <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.data.selectedVendorName}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
@@ -1262,6 +1271,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">Invoice No</TableHead>
                     <TableHead className="font-bold p-3">Supplier</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Total Bill Value</TableHead>
                     <TableHead className="font-bold p-3 text-right text-indigo-700">Advance Paid</TableHead>
                     <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
@@ -1276,7 +1286,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredVendorPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
                         No pending vendor invoices found.
                       </TableCell>
                     </TableRow>
@@ -1288,6 +1298,7 @@ export default function UnifiedPaymentHub() {
                           <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.createdAt)}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-800">{r.data.invoiceNo}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-900">{r.data.vendor}</TableCell>
+                          <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
                           <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
                           <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
                           <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
@@ -1328,6 +1339,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Payment Date</TableHead>
                     <TableHead className="font-bold p-3">Invoice No</TableHead>
                     <TableHead className="font-bold p-3">Vendor</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
                     <TableHead className="font-bold p-3">Payment Mode</TableHead>
                     <TableHead className="font-bold p-3">Status</TableHead>
@@ -1338,7 +1350,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredVendorHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
                         No vendor payment history found.
                       </TableCell>
                     </TableRow>
@@ -1348,6 +1360,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.invoiceNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.vendor}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.quantity}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
                         <TableCell className="p-3">
@@ -1382,6 +1395,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">LR No.</TableHead>
                     <TableHead className="font-bold p-3">Transporter</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Freight Amt</TableHead>
                     <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
                     <TableHead className="font-bold p-3">Vehicle No.</TableHead>
@@ -1393,7 +1407,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredFreightPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
                         No pending freight payments found.
                       </TableCell>
                     </TableRow>
@@ -1413,6 +1427,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.data.createdAt)}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.data.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.transporter}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.freightAmount)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.vehicleNo}</TableCell>
@@ -1443,6 +1458,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Payment Date</TableHead>
                     <TableHead className="font-bold p-3">LR No.</TableHead>
                     <TableHead className="font-bold p-3">Transporter</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
                     <TableHead className="font-bold p-3">Payment Mode</TableHead>
                     <TableHead className="font-bold p-3">Status</TableHead>
@@ -1453,7 +1469,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredFreightHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
                         No freight payment history found.
                       </TableCell>
                     </TableRow>
@@ -1463,6 +1479,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.transporter}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.quantity}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
                         <TableCell className="p-3">
