@@ -53,6 +53,8 @@ import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 // Column definitions for Vendor Invoices
 const VENDOR_PENDING_COLUMNS = [
@@ -697,6 +699,14 @@ export default function UnifiedPaymentHub() {
     ));
   }, [freightHistory, searchLower]);
 
+  // --- Client-side pagination per table ---
+  const advPendingPagination = usePagination(filteredAdvPending, 15);
+  const advHistoryPagination = usePagination(filteredAdvHistory, 15);
+  const vendorPendingPagination = usePagination(filteredVendorPending, 15);
+  const vendorHistoryPagination = usePagination(filteredVendorHistory, 15);
+  const freightPendingPagination = usePagination(filteredFreightPending, 15);
+  const freightHistoryPagination = usePagination(filteredFreightHistory, 15);
+
   // --- Sub-workflow Actions & Forms Submission ---
 
   // 1. Submit PO Advance
@@ -1152,7 +1162,7 @@ export default function UnifiedPaymentHub() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredAdvPending.map((r) => (
+                    advPendingPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3">
                           <Button
@@ -1180,6 +1190,13 @@ export default function UnifiedPaymentHub() {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={advPendingPagination.page}
+                pageSize={advPendingPagination.pageSize}
+                totalCount={advPendingPagination.totalCount}
+                onPageChange={advPendingPagination.setPage}
+                onPageSizeChange={advPendingPagination.setPageSize}
+              />
             </div>
           )}
 
@@ -1208,7 +1225,7 @@ export default function UnifiedPaymentHub() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredAdvHistory.map((r) => (
+                    advHistoryPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName} (Qty: {r.data.quantity})</TableCell>
@@ -1226,6 +1243,13 @@ export default function UnifiedPaymentHub() {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={advHistoryPagination.page}
+                pageSize={advHistoryPagination.pageSize}
+                totalCount={advHistoryPagination.totalCount}
+                onPageChange={advHistoryPagination.setPage}
+                onPageSizeChange={advHistoryPagination.setPageSize}
+              />
             </div>
           )}
 
@@ -1257,7 +1281,7 @@ export default function UnifiedPaymentHub() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredVendorPending.map((r) => {
+                    vendorPendingPagination.pageData.map((r) => {
                       const overdue = isDueDateOverdueOrToday(r.data.dueDate);
                       return (
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
@@ -1285,6 +1309,13 @@ export default function UnifiedPaymentHub() {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={vendorPendingPagination.page}
+                pageSize={vendorPendingPagination.pageSize}
+                totalCount={vendorPendingPagination.totalCount}
+                onPageChange={vendorPendingPagination.setPage}
+                onPageSizeChange={vendorPendingPagination.setPageSize}
+              />
             </div>
           )}
 
@@ -1312,7 +1343,7 @@ export default function UnifiedPaymentHub() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredVendorHistory.map((r) => (
+                    vendorHistoryPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.invoiceNo}</TableCell>
@@ -1331,6 +1362,13 @@ export default function UnifiedPaymentHub() {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={vendorHistoryPagination.page}
+                pageSize={vendorHistoryPagination.pageSize}
+                totalCount={vendorHistoryPagination.totalCount}
+                onPageChange={vendorHistoryPagination.setPage}
+                onPageSizeChange={vendorHistoryPagination.setPageSize}
+              />
             </div>
           )}
 
@@ -1360,7 +1398,7 @@ export default function UnifiedPaymentHub() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredFreightPending.map((r) => (
+                    freightPendingPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3">
                           <Button
@@ -1386,6 +1424,13 @@ export default function UnifiedPaymentHub() {
                   )}
                 </TableBody>
               </table>
+              <PaginationBar
+                page={freightPendingPagination.page}
+                pageSize={freightPendingPagination.pageSize}
+                totalCount={freightPendingPagination.totalCount}
+                onPageChange={freightPendingPagination.setPage}
+                onPageSizeChange={freightPendingPagination.setPageSize}
+              />
             </div>
           )}
 
@@ -1413,7 +1458,7 @@ export default function UnifiedPaymentHub() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredFreightHistory.map((r) => (
+                    freightHistoryPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.lrNo}</TableCell>
@@ -1432,6 +1477,13 @@ export default function UnifiedPaymentHub() {
                   )}
                 </TableBody>
               </table>
+              <PaginationBar
+                page={freightHistoryPagination.page}
+                pageSize={freightHistoryPagination.pageSize}
+                totalCount={freightHistoryPagination.totalCount}
+                onPageChange={freightHistoryPagination.setPage}
+                onPageSizeChange={freightHistoryPagination.setPageSize}
+              />
             </div>
           )}
         </div>

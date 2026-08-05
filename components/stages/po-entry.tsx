@@ -40,6 +40,8 @@ import { formatDate, parseSheetDate, getFmsTimestamp, getPlannedDateForRecord, f
 import { useMemo } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const formatDateDash = (date: any) => {
   if (!date || date === "-" || date === "—") return "-";
@@ -331,6 +333,9 @@ export default function Stage5() {
         String(r.data.poNumber || "").toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm]);
+
+  const pendingPagination = usePagination(pending, 15);
+  const historyPagination = usePagination(completed, 15);
 
   const poTotalMap = useMemo(() => {
     const totals = new Map<string, number>();
@@ -1048,7 +1053,7 @@ export default function Stage5() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pending.map((record) => {
+                    pendingPagination.pageData.map((record) => {
                       const v = getVendorData(record);
                       const isSelected = selectedRecordIds.includes(record.id);
                       const isRowDisabled = selectedVendorName !== null && v.name !== selectedVendorName;
@@ -1089,6 +1094,13 @@ export default function Stage5() {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={pendingPagination.page}
+                pageSize={pendingPagination.pageSize}
+                totalCount={pendingPagination.totalCount}
+                onPageChange={pendingPagination.setPage}
+                onPageSizeChange={pendingPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>
@@ -1126,7 +1138,7 @@ export default function Stage5() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    completed.map((record) => {
+                    historyPagination.pageData.map((record) => {
                     const v = getVendorData(record);
                     return (
                       <TableRow key={record.id} className="bg-green-50/50 hover:bg-green-100/50">
@@ -1224,6 +1236,13 @@ export default function Stage5() {
                 )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={historyPagination.page}
+                pageSize={historyPagination.pageSize}
+                totalCount={historyPagination.totalCount}
+                onPageChange={historyPagination.setPage}
+                onPageSizeChange={historyPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>

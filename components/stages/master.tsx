@@ -46,6 +46,8 @@ import {
 import { STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 interface ItemOption {
   itemCode: string;
@@ -863,6 +865,36 @@ export default function MasterPage() {
 
   const activeTabConfig = tabsConfig.find(t => t.id === activeTab);
 
+  // Whichever simple string list is active in the "Simple Values Management" panel
+  // (Created By, Warehouse, Approver, ... Category, TAT Units, etc.)
+  const currentSimpleList = useMemo(() => {
+    switch (activeTab) {
+      case "createdBy": return createdBy;
+      case "warehouse": return warehouse;
+      case "approver": return approver;
+      case "qcEngineer": return qcEngineer;
+      case "accountant": return accountant;
+      case "uom": return uom;
+      case "category": return categoryList;
+      case "checklist": return checklist;
+      case "rejectReason": return rejectReason;
+      case "cancelStage": return cancelStages;
+      case "tatSystem": return tatSystems;
+      case "tatUnit": return tatUnits;
+      default: return [];
+    }
+  }, [activeTab, createdBy, warehouse, approver, qcEngineer, accountant, uom, categoryList, checklist, rejectReason, cancelStages, tatSystems, tatUnits]);
+
+  // Preserve each TAT rule's true index (in the full `tatRules` array) through pagination,
+  // since handleStartEditTatRule/handleDeleteTatRule operate on that original index.
+  const tatRulesIndexed = useMemo(() => tatRules.map((rule, idx) => ({ rule, idx })), [tatRules]);
+
+  const tatRulesPagination = usePagination(tatRulesIndexed, 15);
+  const transportersPagination = usePagination(filteredTransporters, 15);
+  const catalogPagination = usePagination(filteredCatalog, 15);
+  const vendorsPagination = usePagination(filteredVendors, 15);
+  const simpleListPagination = usePagination(currentSimpleList, 15);
+
   return (
     <div className="flex flex-col h-full w-full bg-slate-50 overflow-hidden">
       {/* Top Banner Header */}
@@ -1062,7 +1094,7 @@ export default function MasterPage() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      tatRules.map((rule, idx) => (
+                      tatRulesPagination.pageData.map(({ rule, idx }) => (
                         <TableRow key={idx} className="hover:bg-slate-50/50 transition-colors">
                           <TableCell className="text-xs font-semibold text-slate-800">{rule.systemName}</TableCell>
                           <TableCell className="text-xs text-slate-650">{rule.sectionName}</TableCell>
@@ -1093,6 +1125,13 @@ export default function MasterPage() {
                     )}
                   </TableBody>
                 </Table>
+                <PaginationBar
+                  page={tatRulesPagination.page}
+                  pageSize={tatRulesPagination.pageSize}
+                  totalCount={tatRulesPagination.totalCount}
+                  onPageChange={tatRulesPagination.setPage}
+                  onPageSizeChange={tatRulesPagination.setPageSize}
+                />
               </div>
             </div>
           </div>
@@ -1243,7 +1282,7 @@ export default function MasterPage() {
                                   </TableCell>
                                 </TableRow>
                               ) : (
-                                filteredTransporters.map((t, idx) => (
+                                transportersPagination.pageData.map((t, idx) => (
                                   <TableRow key={idx} className="hover:bg-slate-50/50">
                                     <TableCell className="text-xs text-slate-800 font-bold">{t.transporterName}</TableCell>
                                     <TableCell className="text-xs text-slate-600 font-semibold">{t.contactPerson}</TableCell>
@@ -1266,6 +1305,13 @@ export default function MasterPage() {
                             </TableBody>
                           </Table>
                         </div>
+                        <PaginationBar
+                          page={transportersPagination.page}
+                          pageSize={transportersPagination.pageSize}
+                          totalCount={transportersPagination.totalCount}
+                          onPageChange={transportersPagination.setPage}
+                          onPageSizeChange={transportersPagination.setPageSize}
+                        />
                       </div>
                     </div>
                   ) : activeTab === "items" ? (
@@ -1361,7 +1407,7 @@ export default function MasterPage() {
                                   </TableCell>
                                 </TableRow>
                               ) : (
-                                filteredCatalog.map((item, idx) => (
+                                catalogPagination.pageData.map((item, idx) => (
                                   <TableRow key={idx} className="hover:bg-slate-50/50">
                                     <TableCell className="font-mono text-xs text-slate-700">{item.itemCode || "-"}</TableCell>
                                     <TableCell className="text-xs text-slate-600 font-semibold">{item.category}</TableCell>
@@ -1385,6 +1431,13 @@ export default function MasterPage() {
                             </TableBody>
                           </Table>
                         </div>
+                        <PaginationBar
+                          page={catalogPagination.page}
+                          pageSize={catalogPagination.pageSize}
+                          totalCount={catalogPagination.totalCount}
+                          onPageChange={catalogPagination.setPage}
+                          onPageSizeChange={catalogPagination.setPageSize}
+                        />
                       </div>
                     </div>
                   ) : activeTab === "vendor" ? (
@@ -1493,7 +1546,7 @@ export default function MasterPage() {
                                   </TableCell>
                                 </TableRow>
                               ) : (
-                                filteredVendors.map((v, idx) => (
+                                vendorsPagination.pageData.map((v, idx) => (
                                   <TableRow key={idx} className="hover:bg-slate-50/50">
                                     <TableCell className="text-xs text-slate-800 font-bold">{v.vendorName}</TableCell>
                                     <TableCell className="text-xs text-slate-600 font-semibold">{v.contactPerson}</TableCell>
@@ -1517,6 +1570,13 @@ export default function MasterPage() {
                             </TableBody>
                           </Table>
                         </div>
+                        <PaginationBar
+                          page={vendorsPagination.page}
+                          pageSize={vendorsPagination.pageSize}
+                          totalCount={vendorsPagination.totalCount}
+                          onPageChange={vendorsPagination.setPage}
+                          onPageSizeChange={vendorsPagination.setPageSize}
+                        />
                       </div>
                     </div>
                   ) : (
@@ -1572,33 +1632,12 @@ export default function MasterPage() {
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 bg-slate-50/30">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {(() => {
-                              const getList = () => {
-                                switch (activeTab) {
-                                  case "createdBy": return createdBy;
-                                  case "warehouse": return warehouse;
-                                  case "approver": return approver;
-                                  case "qcEngineer": return qcEngineer;
-                                  case "accountant": return accountant;
-                                  case "uom": return uom;
-                                  case "category": return categoryList;
-                                  case "checklist": return checklist;
-                                  case "rejectReason": return rejectReason;
-                                  case "cancelStage": return cancelStages;
-                                  case "tatSystem": return tatSystems;
-                                  case "tatUnit": return tatUnits;
-                                  default: return [];
-                                }
-                              };
-                              const list = getList();
-                              if (list.length === 0) {
-                                return (
-                                  <div className="col-span-2 text-center text-slate-400 py-12 text-xs">
-                                    No values entered yet. Add options using the form on the left.
-                                  </div>
-                                );
-                              }
-                              return list.map((val, idx) => (
+                            {currentSimpleList.length === 0 ? (
+                              <div className="col-span-2 text-center text-slate-400 py-12 text-xs">
+                                No values entered yet. Add options using the form on the left.
+                              </div>
+                            ) : (
+                              simpleListPagination.pageData.map((val, idx) => (
                                 <div key={idx} className="flex items-center justify-between px-3 py-2 bg-white border border-slate-200/70 rounded-xl shadow-sm hover:border-slate-350 transition-colors">
                                   <span className="text-xs font-semibold text-slate-700 truncate mr-2" title={val}>{val}</span>
                                   <Button
@@ -1612,10 +1651,17 @@ export default function MasterPage() {
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </Button>
                                 </div>
-                              ));
-                            })()}
+                              ))
+                            )}
                           </div>
                         </div>
+                        <PaginationBar
+                          page={simpleListPagination.page}
+                          pageSize={simpleListPagination.pageSize}
+                          totalCount={simpleListPagination.totalCount}
+                          onPageChange={simpleListPagination.setPage}
+                          onPageSizeChange={simpleListPagination.setPageSize}
+                        />
                       </div>
                     </div>
                   )}

@@ -26,6 +26,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 
 export default function Stage9() {
@@ -328,6 +330,9 @@ export default function Stage9() {
         String(r.data.invoiceNumber || "").toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm, warehouseFilter]);
+
+  const pendingPagination = usePagination(pending, 15);
+  const completedPagination = usePagination(completed, 15);
 
   // Pending columns
   const pendingColumns = [
@@ -903,7 +908,7 @@ export default function Stage9() {
                     </td>
                   </tr>
                 ) : (
-                  pending.map((record: any) => (
+                  pendingPagination.pageData.map((record: any) => (
                     <tr
                       key={record.id}
                       className="hover:bg-gray-50 transition-colors group"
@@ -937,6 +942,13 @@ export default function Stage9() {
               </tbody>
             </table>
           </div>
+          <PaginationBar
+            page={pendingPagination.page}
+            pageSize={pendingPagination.pageSize}
+            totalCount={pendingPagination.totalCount}
+            onPageChange={pendingPagination.setPage}
+            onPageSizeChange={pendingPagination.setPageSize}
+          />
         </TabsContent>
 
         {/* History Tab */}
@@ -980,7 +992,7 @@ export default function Stage9() {
                     </td>
                   </tr>
                 ) : (
-                  completed.map((record: any) => (
+                  completedPagination.pageData.map((record: any) => (
                     <tr
                       key={record.id}
                       className="hover:bg-indigo-50/50 transition-colors"
@@ -1001,6 +1013,13 @@ export default function Stage9() {
               </tbody>
             </table>
           </div>
+          <PaginationBar
+            page={completedPagination.page}
+            pageSize={completedPagination.pageSize}
+            totalCount={completedPagination.totalCount}
+            onPageChange={completedPagination.setPage}
+            onPageSizeChange={completedPagination.setPageSize}
+          />
         </TabsContent>
       </Tabs>
     </div>

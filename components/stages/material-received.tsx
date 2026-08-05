@@ -36,6 +36,8 @@ import { toast } from "sonner";
 import { parseSheetDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const formatDateDash = (date: any) => {
     if (!date || date === "-" || date === "—") return "-";
@@ -862,6 +864,9 @@ export default function Stage7() {
         });
     }, [sheetRecords, searchTerm, warehouseFilter]);
 
+    const pendingPagination = usePagination(pending, 15);
+    const historyPagination = usePagination(completed, 15);
+
     const activeRec = selectedRecordId ? recordMap.get(selectedRecordId) : null;
     const singleLiftingQtyVal = parseFloat(String(activeRec?.data?.liftingQty || 0)) || 0;
     const singleReceivedQtyVal = parseFloat(String(form.receivedQty || 0)) || 0;
@@ -1062,7 +1067,7 @@ export default function Stage7() {
                                                 </TableCell>
                                             </TableRow>
                                         ) : (
-                                            pending.map((rec) => (
+                                            pendingPagination.pageData.map((rec) => (
                                                 <TableRow key={rec.id} className="bg-white hover:bg-gray-50 transition-colors group">
                                                     {activeTab === "pending" && (
                                                         <TableCell className="sticky left-0 z-20 bg-white group-hover:bg-gray-50 border-b text-center">
@@ -1188,6 +1193,13 @@ export default function Stage7() {
                                         )}
                                     </TableBody>
                                 </Table>
+                                <PaginationBar
+                                    page={pendingPagination.page}
+                                    pageSize={pendingPagination.pageSize}
+                                    totalCount={pendingPagination.totalCount}
+                                    onPageChange={pendingPagination.setPage}
+                                    onPageSizeChange={pendingPagination.setPageSize}
+                                />
                             </div>
                         </TabsContent>
 
@@ -1214,7 +1226,7 @@ export default function Stage7() {
                                                 </TableCell>
                                             </TableRow>
                                         ) : (
-                                            completed.map((record) => {
+                                            historyPagination.pageData.map((record) => {
                                                 const historyData = record.data;
 
                                                 return (
@@ -1366,6 +1378,13 @@ export default function Stage7() {
                                         )}
                                     </TableBody>
                                 </Table>
+                                <PaginationBar
+                                    page={historyPagination.page}
+                                    pageSize={historyPagination.pageSize}
+                                    totalCount={historyPagination.totalCount}
+                                    onPageChange={historyPagination.setPage}
+                                    onPageSizeChange={historyPagination.setPageSize}
+                                />
                             </div>
                         </TabsContent>
                     </>

@@ -66,6 +66,8 @@ import { Check, ChevronsUpDown } from "lucide-react";
 import { cn, parseSheetDate, formatDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 interface LiftingEntry {
   liftNumber: string;
@@ -961,6 +963,9 @@ export default function FollowUpLifting() {
     });
   }, [receivingAccountsData, searchTerm]);
 
+  const pendingPagination = usePagination(pending, 15);
+  const historyPagination = usePagination(history, 15);
+
   const handleColumnToggle = useCallback((key: string, checked: boolean) => {
     setSelectedColumns((prev) =>
       checked ? [...prev, key] : prev.filter((k) => k !== key)
@@ -1173,7 +1178,7 @@ export default function FollowUpLifting() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pending.map((record) => {
+                    pendingPagination.pageData.map((record) => {
                       const v = getVendorData(record);
                       return (
                         <TableRow key={record.id} className="hover:bg-slate-50/50">
@@ -1220,6 +1225,13 @@ export default function FollowUpLifting() {
                 </TableBody>
               </Table>
             </div>
+            <PaginationBar
+              page={pendingPagination.page}
+              pageSize={pendingPagination.pageSize}
+              totalCount={pendingPagination.totalCount}
+              onPageChange={pendingPagination.setPage}
+              onPageSizeChange={pendingPagination.setPageSize}
+            />
           </div>
         </TabsContent>
 
@@ -1251,7 +1263,7 @@ export default function FollowUpLifting() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    history.map((h) => (
+                    historyPagination.pageData.map((h) => (
                       <TableRow key={h.id} className="hover:bg-slate-50/50">
                         <TableCell className="font-bold text-slate-800">{h.liftNo}</TableCell>
                         <TableCell className="font-mono">{h.indentNumber}</TableCell>
@@ -1284,6 +1296,13 @@ export default function FollowUpLifting() {
                 </TableBody>
               </Table>
             </div>
+            <PaginationBar
+              page={historyPagination.page}
+              pageSize={historyPagination.pageSize}
+              totalCount={historyPagination.totalCount}
+              onPageChange={historyPagination.setPage}
+              onPageSizeChange={historyPagination.setPageSize}
+            />
           </div>
         </TabsContent>
       </Tabs>

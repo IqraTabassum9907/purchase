@@ -36,6 +36,8 @@ import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/u
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow, selectApprovedVendor } from "@/lib/supabase/queries";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const formatDateDash = (dateStr: string) => {
   if (!dateStr || dateStr === "-" || dateStr === "—") return "-";
@@ -153,6 +155,9 @@ export default function ApprovedVendor() {
         r.data.itemName?.toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm]);
+
+  const pendingPagination = usePagination(pending, 15);
+  const historyPagination = usePagination(completed, 15);
 
   const baseColumns = [
     { key: "createdAtCol", label: "Timestamp" },
@@ -445,7 +450,7 @@ export default function ApprovedVendor() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pending.map((group) => (
+                    pendingPagination.pageData.map((group) => (
                       <TableRow key={group.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
                         <TableCell className="px-4 py-3">
                           <Button
@@ -487,6 +492,13 @@ export default function ApprovedVendor() {
                   )}
                 </TableBody>
               </table>
+              <PaginationBar
+                page={pendingPagination.page}
+                pageSize={pendingPagination.pageSize}
+                totalCount={pendingPagination.totalCount}
+                onPageChange={pendingPagination.setPage}
+                onPageSizeChange={pendingPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>
@@ -526,7 +538,7 @@ export default function ApprovedVendor() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    completed.map((record) => {
+                    historyPagination.pageData.map((record) => {
                     const selId = String(record.data.selectedVendor || "vendor1");
                     const idx = parseInt(selId.replace("vendor", ""), 10) || 1;
 
@@ -563,6 +575,13 @@ export default function ApprovedVendor() {
                   }))}
                 </TableBody>
               </table>
+              <PaginationBar
+                page={historyPagination.page}
+                pageSize={historyPagination.pageSize}
+                totalCount={historyPagination.totalCount}
+                onPageChange={historyPagination.setPage}
+                onPageSizeChange={historyPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>

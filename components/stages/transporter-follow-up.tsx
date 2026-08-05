@@ -33,6 +33,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const formatDateDash = (date: any) => {
     if (!date || date === "-" || date === "—") return "-";
@@ -317,6 +319,9 @@ export default function TransporterFollowUp() {
         });
     }, [records, searchTerm]);
     const pending = sortedPending; // Use sorted list for display
+
+    const pendingPagination = usePagination(pending, 15);
+    const historyPagination = usePagination(completed, 15);
 
     const pendingColumns = [
         { key: "createdAtCol", label: "Timestamp" },
@@ -706,7 +711,7 @@ export default function TransporterFollowUp() {
                                             </TableCell>
                                         </TableRow>
                                     ) : (
-                                        pending.map(rec => (
+                                        pendingPagination.pageData.map(rec => (
                                             <TableRow key={rec.id}>
                                                 <TableCell className="sticky left-0 z-10 bg-white border-b border-r px-4 py-2">
                                                     <Checkbox
@@ -755,6 +760,13 @@ export default function TransporterFollowUp() {
                                 </TableBody>
                             </table>
                         </div>
+                        <PaginationBar
+                            page={pendingPagination.page}
+                            pageSize={pendingPagination.pageSize}
+                            totalCount={pendingPagination.totalCount}
+                            onPageChange={pendingPagination.setPage}
+                            onPageSizeChange={pendingPagination.setPageSize}
+                        />
                     </TabsContent>
 
                     <TabsContent value="history" className="mt-0 flex-1 flex flex-col overflow-hidden">
@@ -775,7 +787,7 @@ export default function TransporterFollowUp() {
                                             </TableCell>
                                         </TableRow>
                                     ) : (
-                                        completed.map(rec => (
+                                        historyPagination.pageData.map(rec => (
                                         <TableRow key={rec.id}>
                                             {historyColumns.map((c) => {
                                                 const val = rec.data[c.key];
@@ -797,6 +809,13 @@ export default function TransporterFollowUp() {
                                 </TableBody>
                             </table>
                         </div>
+                        <PaginationBar
+                            page={historyPagination.page}
+                            pageSize={historyPagination.pageSize}
+                            totalCount={historyPagination.totalCount}
+                            onPageChange={historyPagination.setPage}
+                            onPageSizeChange={historyPagination.setPageSize}
+                        />
                     </TabsContent>
                 </Tabs>
             )}

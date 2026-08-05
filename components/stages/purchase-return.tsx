@@ -26,6 +26,8 @@ import {
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 import { getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const PENDING_COLUMNS = [
   { key: "createdAtCol", label: "Timestamp" },
@@ -285,6 +287,9 @@ export default function Stage12() {
     });
   }, [partialReturnRecords, searchTerm]);
 
+  const pendingPagination = usePagination(pending, 15);
+  const completedPagination = usePagination(completed, 15);
+
   const handleOpenForm = useCallback((recordId: string) => {
     const rec = sheetRecords.find((r) => r.id === recordId);
     if (!rec) return;
@@ -509,7 +514,7 @@ export default function Stage12() {
                           </td>
                         </tr>
                       ) : (
-                        pending.map((record) => (
+                        pendingPagination.pageData.map((record) => (
                           <tr key={record.id} className="hover:bg-slate-50/80 transition-colors group">
                             <td className="px-4 py-3 whitespace-nowrap">
                               <Button
@@ -532,6 +537,13 @@ export default function Stage12() {
                     </tbody>
                   </table>
                 </div>
+                <PaginationBar
+                  page={pendingPagination.page}
+                  pageSize={pendingPagination.pageSize}
+                  totalCount={pendingPagination.totalCount}
+                  onPageChange={pendingPagination.setPage}
+                  onPageSizeChange={pendingPagination.setPageSize}
+                />
               </TabsContent>
 
               <TabsContent value="history" className="flex-1 mt-0 focus-visible:outline-none">
@@ -554,7 +566,7 @@ export default function Stage12() {
                           </td>
                         </tr>
                       ) : (
-                        completed.map((record) => (
+                        completedPagination.pageData.map((record) => (
                           <tr key={record.id} className="hover:bg-slate-50/80 transition-colors">
                             {HISTORY_COLUMNS.map((col) => (
                               <td key={col.key} className="px-4 py-3 text-slate-600 whitespace-nowrap">
@@ -567,6 +579,13 @@ export default function Stage12() {
                     </tbody>
                   </table>
                 </div>
+                <PaginationBar
+                  page={completedPagination.page}
+                  pageSize={completedPagination.pageSize}
+                  totalCount={completedPagination.totalCount}
+                  onPageChange={completedPagination.setPage}
+                  onPageSizeChange={completedPagination.setPageSize}
+                />
               </TabsContent>
             </div>
           )}

@@ -36,6 +36,8 @@ import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/u
 import { toast } from "sonner";
 import { fetchIndentWorkflow, submitQuotation } from "@/lib/supabase/queries";
 import { supabase } from "@/lib/supabase/client";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const formatDateDash = (dateStr: string) => {
   if (!dateStr || dateStr === "-" || dateStr === "—") return "-";
@@ -299,6 +301,9 @@ export default function Quotation() {
         r.data.itemName?.toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm]);
+
+  const pendingPagination = usePagination(pending, 15);
+  const historyPagination = usePagination(completed, 15);
 
   const baseColumns = [
     { key: "createdAtCol", label: "Timestamp" },
@@ -705,7 +710,7 @@ export default function Quotation() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pending.map((record) => {
+                    pendingPagination.pageData.map((record) => {
                       const statusText = record.data.vendor1Name
                         ? "Awaiting responses..."
                         : "Awaiting sending details...";
@@ -746,6 +751,13 @@ export default function Quotation() {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={pendingPagination.page}
+                pageSize={pendingPagination.pageSize}
+                totalCount={pendingPagination.totalCount}
+                onPageChange={pendingPagination.setPage}
+                onPageSizeChange={pendingPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>
@@ -782,7 +794,7 @@ export default function Quotation() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    completed.map((record) => {
+                    historyPagination.pageData.map((record) => {
                     const approvedName = record.data.selectedVendorName || "Decision pending";
 
                     return (
@@ -808,6 +820,13 @@ export default function Quotation() {
                 )}
                 </TableBody>
               </Table>
+              <PaginationBar
+                page={historyPagination.page}
+                pageSize={historyPagination.pageSize}
+                totalCount={historyPagination.totalCount}
+                onPageChange={historyPagination.setPage}
+                onPageSizeChange={historyPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>

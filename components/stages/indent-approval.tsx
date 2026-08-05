@@ -57,6 +57,8 @@ import {
 import { cn, formatDate, parseSheetDate, getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
+import { usePagination } from "@/lib/use-pagination";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const formatDateDash = (date: any) => {
   if (!date || date === "-" || date === "—") return "-";
@@ -204,6 +206,9 @@ export default function Stage2() {
         r.data.vendorType?.toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm]);
+
+  const pendingPagination = usePagination(pending, 15);
+  const historyPagination = usePagination(history, 15);
 
   const columns = [
     { key: "createdAtCol", label: "Timestamp" },
@@ -499,7 +504,7 @@ export default function Stage2() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pending.map((record) => {
+                    pendingPagination.pageData.map((record) => {
                       const isSelected = selectedRecords.includes(record.id);
                       return (
                         <TableRow
@@ -538,6 +543,13 @@ export default function Stage2() {
                   )}
                 </TableBody>
               </table>
+              <PaginationBar
+                page={pendingPagination.page}
+                pageSize={pendingPagination.pageSize}
+                totalCount={pendingPagination.totalCount}
+                onPageChange={pendingPagination.setPage}
+                onPageSizeChange={pendingPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>
@@ -574,7 +586,7 @@ export default function Stage2() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    history.map((record, index) => (
+                    historyPagination.pageData.map((record, index) => (
                       <TableRow key={record.id} className="hover:bg-slate-50/50 transition-colors">
                         <TableCell className="text-center font-medium text-slate-500 text-sm">
                           {index + 1}
@@ -599,6 +611,13 @@ export default function Stage2() {
                   )}
                 </TableBody>
               </table>
+              <PaginationBar
+                page={historyPagination.page}
+                pageSize={historyPagination.pageSize}
+                totalCount={historyPagination.totalCount}
+                onPageChange={historyPagination.setPage}
+                onPageSizeChange={historyPagination.setPageSize}
+              />
             </div>
           )}
         </TabsContent>

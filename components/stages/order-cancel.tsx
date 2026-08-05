@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils"
 import { supabase } from "@/lib/supabase/client"
 import { fetchIndentWorkflow } from "@/lib/supabase/queries"
 import { getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils"
+import { usePagination } from "@/lib/use-pagination"
+import { PaginationBar } from "@/components/ui/pagination-bar"
 
 const ItemCombobox = ({
   value,
@@ -302,6 +304,8 @@ export default function OrderCancelPage() {
       )
     })
   }, [cancelledOrders, searchTerm])
+
+  const cancelledOrdersPagination = usePagination(filteredCancelledOrders, 15)
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -595,7 +599,7 @@ export default function OrderCancelPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredCancelledOrders.map((order) => (
+                  cancelledOrdersPagination.pageData.map((order) => (
                     <TableRow key={order.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 group">
                       <TableCell className="text-[11px] text-slate-500 font-mono py-4">
                         {formatDateTimeFull(order.createdAt)}
@@ -667,6 +671,13 @@ export default function OrderCancelPage() {
               </TableBody>
             </Table>
           </div>
+          <PaginationBar
+            page={cancelledOrdersPagination.page}
+            pageSize={cancelledOrdersPagination.pageSize}
+            totalCount={cancelledOrdersPagination.totalCount}
+            onPageChange={cancelledOrdersPagination.setPage}
+            onPageSizeChange={cancelledOrdersPagination.setPageSize}
+          />
         </CardContent>
       </Card>
 
