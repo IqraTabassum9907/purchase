@@ -248,14 +248,18 @@ export default function Stage7() {
             // transporter/vehicle/dispatch details just because it shares the same PO.
             const transporterByPo = new Map<string, any>();
             const transporterByLifting = new Map<string, any>();
+            // transporter_followups has no created_at column (only updated_at, set at
+            // insert time) — comparing on created_at here always evaluated as "not newer"
+            // and got stuck on whichever row was processed first (often a stale "Intransit"
+            // entry), so a later "Received" row never replaced it. Use updated_at instead.
             transporters.forEach((t: any) => {
                 const existing = transporterByPo.get(t.po_id);
-                if (!existing || new Date(t.created_at || 0) > new Date(existing.created_at || 0)) {
+                if (!existing || new Date(t.updated_at || 0) > new Date(existing.updated_at || 0)) {
                     transporterByPo.set(t.po_id, t);
                 }
                 if (t.lifting_id) {
                     const existingByLift = transporterByLifting.get(t.lifting_id);
-                    if (!existingByLift || new Date(t.created_at || 0) > new Date(existingByLift.created_at || 0)) {
+                    if (!existingByLift || new Date(t.updated_at || 0) > new Date(existingByLift.updated_at || 0)) {
                         transporterByLifting.set(t.lifting_id, t);
                     }
                 }
@@ -298,7 +302,11 @@ export default function Stage7() {
                     const compositeId = `${indentRow.data.indentNumber}_${po.po_number}`;
                     const transporter = transporterFallback;
                     const receipt = poReceipts.find(r => parseFloat(String(r.received_quantity || "0")) > 0);
-                    const status = receipt ? "completed" : (transporter ? "pending" : "not_ready");
+                    // Only surface this once Transporter Follow-Up has actually marked it
+                    // Received — merely having a transporter_followups row (e.g. status
+                    // "Intransit") shouldn't prompt materials staff to log a receipt yet.
+                    const isTransporterReceived = !!transporter && ["received", "delivered", "completed", "complete"].includes(String(transporter.status || "").toLowerCase());
+                    const status = receipt ? "completed" : (isTransporterReceived ? "pending" : "not_ready");
 
                     rows.push({
                         id: compositeId,
@@ -372,12 +380,14 @@ export default function Stage7() {
                         if (receipt) usedReceiptIds.add(receipt.id);
 
                         let status = "not_ready";
-                        const isLiftingDone = !!(lifting.actual_lifting_date && String(lifting.actual_lifting_date).trim() !== "" && String(lifting.actual_lifting_date).trim() !== "-");
-                        const isTransporterDone = !!transporter || (lifting.lifting_status && ["complete", "completed", "received", "approved", "intransit"].includes(String(lifting.lifting_status).toLowerCase()));
+                        // Gate strictly on Transporter Follow-Up's own status being Received —
+                        // an "Intransit" transporter row, or the lifting merely having a dispatch
+                        // date, isn't enough to prompt materials staff to log a receipt yet.
+                        const isTransporterReceived = !!transporter && ["received", "delivered", "completed", "complete"].includes(String(transporter.status || "").toLowerCase());
 
                         if (receipt) {
                             status = "completed";
-                        } else if (isTransporterDone || isLiftingDone) {
+                        } else if (isTransporterReceived) {
                             status = "pending";
                         }
 
