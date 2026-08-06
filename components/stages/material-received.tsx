@@ -33,7 +33,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { FileText, Upload, X, Loader2, Search, Eye, Package, CheckCircle2, AlertCircle, Info, ClipboardList } from "lucide-react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
-import { parseSheetDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
+import { parseSheetDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord, reportPendingCount } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 import { usePagination } from "@/lib/use-pagination";
@@ -845,6 +845,8 @@ export default function Stage7() {
             );
         });
     }, [sheetRecords, searchTerm, warehouseFilter]);
+
+    useEffect(() => { reportPendingCount("Material Received", pending.length); }, [pending.length]);
 
     const completed = useMemo(() => {
         const lower = searchTerm.toLowerCase();

@@ -63,7 +63,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Check, ChevronsUpDown } from "lucide-react";
-import { cn, parseSheetDate, formatDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
+import { cn, parseSheetDate, formatDate, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord, reportPendingCount } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 import { usePagination } from "@/lib/use-pagination";
@@ -94,6 +94,7 @@ interface RecordLifting {
   recordId: string;
   status: string;
   followUpDate?: string;
+  followUpStatus?: string;
   remarks?: string;
   quantity?: number | string;
   liftingData: LiftingEntry;
@@ -226,6 +227,7 @@ export default function FollowUpLifting() {
   const [unifiedFormData, setUnifiedFormData] = useState<{
     status: string;
     followUpDate: string;
+    followUpStatus?: string;
     remarks: string;
     liftingData: LiftingEntry;
   } | null>(null);
@@ -555,6 +557,7 @@ export default function FollowUpLifting() {
     setUnifiedFormData({
       status: "follow-up",
       followUpDate: "",
+      followUpStatus: "Intransit",
       remarks: "",
       liftingData: defaultLiftingData(),
     });
@@ -567,6 +570,7 @@ export default function FollowUpLifting() {
         recordId: id,
         status: "follow-up",
         followUpDate: "",
+        followUpStatus: "Intransit",
         remarks: "",
         liftingData: defaultLiftingData(existLift, String(record.data.quantity || 0)),
         indentNumber: record.data.indentNumber,
@@ -598,12 +602,14 @@ export default function FollowUpLifting() {
       setUnifiedFormData(prev => ({
         status: "follow-up",
         followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
+        followUpStatus: prev?.followUpStatus || bulkFormData[0]?.followUpStatus || "Intransit",
         remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
         liftingData: defaultLiftingData(),
       }));
       setBulkFormData(prev => prev.map(item => ({
         ...item,
         status: "follow-up",
+        followUpStatus: item.followUpStatus || "Intransit",
       })));
     } else {
       if (selectedRecordIds.length > 1) {
@@ -714,6 +720,11 @@ export default function FollowUpLifting() {
             ...record,
             status: unifiedFormData.status,
             followUpDate: unifiedFormData.followUpDate,
+            // followUpStatus is intentionally NOT overwritten from the shared
+            // unifiedFormData here — each item keeps its own individually
+            // chosen status (see the per-item Status control below), so
+            // marking one item "Received" in a multi-item follow-up no
+            // longer drags every other selected item along with it.
             remarks: unifiedFormData.remarks,
             liftingData: {
               ...record.liftingData,
@@ -755,6 +766,24 @@ export default function FollowUpLifting() {
         const followUpDateFormatted = toYMD(record.followUpDate || "");
         const expectedDeliveryDateFormatted = toYMD(lift.expectedDeliveryDate || "");
 
+        // In Follow-Up mode, "Received" behaves like completing the lift
+        // (same as switching to Material Lifting mode) — "Intransit" keeps
+        // it pending, matching Transporter Follow-Up's own status meaning.
+        const isFollowUpMode = record.status === "follow-up";
+        const followUpReceived = isFollowUpMode && record.followUpStatus === "Received";
+
+        // defaultLiftingData() prefills liftingQty with the record's full
+        // pending quantity for BOTH modes, even though the Follow-Up form
+        // has no quantity field of its own — so blindly saving lift.liftingQty
+        // here recorded the *entire* quantity as "lifted" on every Follow-Up
+        // submission (Intransit included), which is what silently completed
+        // the PO and knocked it out of Pending regardless of the status picked.
+        // Only "Received" should count as anything actually lifted; a plain
+        // Intransit follow-up hasn't lifted anything yet.
+        const followUpLiftQty = followUpReceived
+          ? (parseFloat(String(sheetRecord.data.quantity || "0").replace(/,/g, "")) || null)
+          : null;
+
         const liftingRecord: any = {
           po_id: sheetRecord._poId || null,
           contact_person: lift.contactNumber || "",
@@ -762,14 +791,16 @@ export default function FollowUpLifting() {
           expected_lifting_date: expectedDeliveryDateFormatted || null,
           vehicle_number: lift.vehicleNumber || "",
           driver_contact: lift.contactNumber || "",
-          lifting_status: record.status === "lift-material" ? "Complete" : "Pending",
-          lifting_qty: parseFloat(lift.liftingQty || unifiedLiftingQtys[record.recordId] || "0") || null,
+          lifting_status: (record.status === "lift-material" || followUpReceived) ? "Complete" : "Pending",
+          lifting_qty: isFollowUpMode
+            ? followUpLiftQty
+            : (parseFloat(lift.liftingQty || unifiedLiftingQtys[record.recordId] || "0") || null),
           freight_amount: parseFloat(lift.freightAmount) || null,
           transport_rate: lift.transportRateType || null,
           remarks: record.remarks || "",
         };
 
-        if (record.status === "lift-material") {
+        if (record.status === "lift-material" || followUpReceived) {
           liftingRecord.actual_lifting_date = toYMD(new Date().toISOString()) || null;
         }
 
@@ -784,7 +815,17 @@ export default function FollowUpLifting() {
           toast.error("Failed to save lifting record");
         }
 
-        if (sheetRecord._poId && (lift.transporterName || lift.vehicleNumber || lift.freightAmount || lift.biltyNumber)) {
+        if (isFollowUpMode) {
+          // Log the vendor follow-up outcome (Intransit / Received) so
+          // downstream stages (Transporter Follow-Up, Payment) recognize the
+          // same status transition they already understand from that stage.
+          await supabase.from("transporter_followups").insert({
+            po_id: sheetRecord._poId,
+            lifting_id: insertedLifting?.id || null,
+            status: record.followUpStatus || "Intransit",
+            dispatch_date: toYMD(new Date().toISOString()),
+          });
+        } else if (sheetRecord._poId && (lift.transporterName || lift.vehicleNumber || lift.freightAmount || lift.biltyNumber)) {
           await supabase.from("transporter_followups").insert({
             po_id: sheetRecord._poId,
             lifting_id: insertedLifting?.id || null,
@@ -846,7 +887,13 @@ export default function FollowUpLifting() {
 
     if (processMode === "follow-up") {
       const followUpDate = (isUnifiedMode ? unifiedFormData?.followUpDate : null) || bulkFormData[0]?.followUpDate;
-      return !!(followUpDate && String(followUpDate).trim() !== "");
+      const hasValidDate = !!(followUpDate && String(followUpDate).trim() !== "");
+      if (isUnifiedMode && bulkFormData.length > 1) {
+        // Every item needs its own status now — not one shared value.
+        return hasValidDate && bulkFormData.every((item) => !!item.followUpStatus);
+      }
+      const followUpStatus = (isUnifiedMode ? unifiedFormData?.followUpStatus : null) || bulkFormData[0]?.followUpStatus;
+      return hasValidDate && !!followUpStatus;
     }
 
     if (isUnifiedMode && unifiedFormData) {
@@ -949,6 +996,8 @@ export default function FollowUpLifting() {
       });
   }, [sheetRecords, searchTerm]);
 
+  useEffect(() => { reportPendingCount("Follow UP / Lifting", pending.length); }, [pending.length]);
+
   const history = useMemo(() => {
     const term = searchTerm.toLowerCase();
     return receivingAccountsData.filter((r) => {
@@ -982,16 +1031,63 @@ export default function FollowUpLifting() {
                 <span className="p-1.5 bg-blue-700 text-white rounded text-[10px] font-bold">Selected Items</span>
                 <span>Batch Details ({bulkFormData.length} Indents)</span>
               </h4>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {bulkFormData.map((item) => {
-                  const record = sheetRecords.find((r) => r.id === item.recordId);
-                  return (
-                    <Badge key={item.recordId} variant="secondary" className="bg-white border-slate-200 px-3 py-1 font-semibold text-slate-700 text-xs">
-                      {record?.data.indentNumber} - {record?.data.itemName} (Qty: {record?.data.quantity})
-                    </Badge>
-                  );
-                })}
-              </div>
+              {bulkFormData.length > 1 ? (
+                // Each item gets its own Status — marking one "Received"
+                // must not drag the rest of the batch along with it.
+                <div className="border border-slate-200 rounded-lg overflow-hidden bg-white mb-4">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-bold">Indent</th>
+                        <th className="text-left px-3 py-2 font-bold">Item</th>
+                        <th className="text-right px-3 py-2 font-bold">Qty</th>
+                        <th className="text-left px-3 py-2 font-bold w-40">Status *</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bulkFormData.map((item) => {
+                        const record = sheetRecords.find((r) => r.id === item.recordId);
+                        return (
+                          <tr key={item.recordId} className="border-t border-slate-100">
+                            <td className="px-3 py-2 font-mono font-semibold text-slate-800">{record?.data.indentNumber}</td>
+                            <td className="px-3 py-2 text-slate-700">{record?.data.itemName}</td>
+                            <td className="px-3 py-2 text-right text-slate-700">{record?.data.quantity}</td>
+                            <td className="px-3 py-2">
+                              <Select
+                                value={item.followUpStatus || "Intransit"}
+                                onValueChange={(val) => {
+                                  setBulkFormData((prev) =>
+                                    prev.map((b) => b.recordId === item.recordId ? { ...b, followUpStatus: val, status: "follow-up" } : b)
+                                  );
+                                }}
+                              >
+                                <SelectTrigger className="bg-white border-slate-200 h-8 text-xs">
+                                  <SelectValue placeholder="Select status" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-white border">
+                                  <SelectItem value="Intransit">Intransit</SelectItem>
+                                  <SelectItem value="Received">Received</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {bulkFormData.map((item) => {
+                    const record = sheetRecords.find((r) => r.id === item.recordId);
+                    return (
+                      <Badge key={item.recordId} variant="secondary" className="bg-white border-slate-200 px-3 py-1 font-semibold text-slate-700 text-xs">
+                        {record?.data.indentNumber} - {record?.data.itemName} (Qty: {record?.data.quantity})
+                      </Badge>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
           <div className={cn("grid grid-cols-2 md:grid-cols-4 gap-4 text-xs", processMode === "follow-up" && "pt-3 border-t border-slate-200/60")}>
@@ -1382,7 +1478,43 @@ export default function FollowUpLifting() {
                     <div className="border border-slate-200 rounded-2xl p-6 bg-slate-50/30 shadow-sm space-y-4">
                       <h4 className="font-semibold text-xs text-slate-400 uppercase tracking-wider mb-2">Follow-Up Information</h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-2">
+                        {/* When multiple items are selected, Status is set per-item in the
+                            table above instead of one shared field for the whole batch. */}
+                        {!(isUnifiedMode && bulkFormData.length > 1) && (
+                          <div className="space-y-2">
+                            <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
+                              Status *
+                            </Label>
+                            <Select
+                              value={
+                                (isUnifiedMode ? unifiedFormData?.followUpStatus : null) ||
+                                bulkFormData[0]?.followUpStatus ||
+                                "Intransit"
+                              }
+                              onValueChange={(val) => {
+                                setUnifiedFormData((prev) => ({
+                                  status: "follow-up",
+                                  followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
+                                  followUpStatus: val,
+                                  remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
+                                  liftingData: prev?.liftingData || defaultLiftingData(),
+                                }));
+                                setBulkFormData((prev) =>
+                                  prev.map((item) => ({ ...item, followUpStatus: val, status: "follow-up" }))
+                                );
+                              }}
+                            >
+                              <SelectTrigger className="bg-white border-slate-200 h-10 shadow-sm">
+                                <SelectValue placeholder="Select status" />
+                              </SelectTrigger>
+                              <SelectContent className="bg-white border">
+                                <SelectItem value="Intransit">Intransit</SelectItem>
+                                <SelectItem value="Received">Received</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                        <div className={cn("space-y-2", isUnifiedMode && bulkFormData.length > 1 && "md:col-span-2")}>
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
                             Estimated Requirement Date *
                           </Label>
@@ -1399,6 +1531,7 @@ export default function FollowUpLifting() {
                               setUnifiedFormData((prev) => ({
                                 status: "follow-up",
                                 followUpDate: val,
+                                followUpStatus: prev?.followUpStatus || bulkFormData[0]?.followUpStatus || "Intransit",
                                 remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
                                 liftingData: prev?.liftingData || defaultLiftingData(),
                               }));
@@ -1409,7 +1542,7 @@ export default function FollowUpLifting() {
                             className="bg-white border-slate-200 h-10 shadow-sm"
                           />
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-2 md:col-span-2">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
                             Remarks
                           </Label>
@@ -1425,6 +1558,7 @@ export default function FollowUpLifting() {
                               setUnifiedFormData((prev) => ({
                                 status: "follow-up",
                                 followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
+                                followUpStatus: prev?.followUpStatus || bulkFormData[0]?.followUpStatus || "Intransit",
                                 remarks: val,
                                 liftingData: prev?.liftingData || defaultLiftingData(),
                               }));
@@ -1599,24 +1733,17 @@ export default function FollowUpLifting() {
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">AREA LIFTING</Label>
-                          <Select
+                          <Input
+                            className="bg-white border-green-200 h-10 shadow-sm w-full"
                             value={unifiedFormData.liftingData.areaLifting || ""}
-                            onValueChange={(val) =>
+                            onChange={(e) =>
                               setUnifiedFormData((prev) => prev ? {
                                 ...prev,
-                                liftingData: { ...prev.liftingData, areaLifting: val }
+                                liftingData: { ...prev.liftingData, areaLifting: e.target.value }
                               } : null)
                             }
-                          >
-                            <SelectTrigger className="bg-white border-green-200 h-10 shadow-sm w-full">
-                              <SelectValue placeholder="Select area..." />
-                            </SelectTrigger>
-                            <SelectContent className="bg-white border">
-                              {areaList.map(area => (
-                                <SelectItem key={area} value={area}>{area}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Enter lifting area"
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILL NO.</Label>
@@ -1655,19 +1782,6 @@ export default function FollowUpLifting() {
                               setUnifiedFormData((prev) => prev ? {
                                 ...prev,
                                 liftingData: { ...prev.liftingData, expectedDeliveryDate: e.target.value }
-                              } : null)
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TYPE OF TRANSPORTING RATE</Label>
-                          <Input
-                            className="bg-white border-green-200 h-10 shadow-sm w-full"
-                            value={unifiedFormData.liftingData.transportRateType || ""}
-                            onChange={(e) =>
-                              setUnifiedFormData((prev) => prev ? {
-                                ...prev,
-                                liftingData: { ...prev.liftingData, transportRateType: e.target.value }
                               } : null)
                             }
                           />

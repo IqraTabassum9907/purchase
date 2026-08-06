@@ -32,7 +32,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Loader2, Search, Link as LinkIcon, Mail, CheckCircle, ExternalLink, Copy, MessagesSquare } from "lucide-react";
-import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
+import { formatDate, getPlannedDateForRecord, formatDateTimeFull, getErrorMessage, reportPendingCount } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchIndentWorkflow, submitQuotation } from "@/lib/supabase/queries";
 import { supabase } from "@/lib/supabase/client";
@@ -59,6 +59,8 @@ const paymentTermsOptions = [
   { value: "60", label: "60 days" },
   { value: "90", label: "90 days" }
 ];
+
+const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
 
 export default function Quotation() {
   const [open, setOpen] = useState(false);
@@ -141,12 +143,12 @@ export default function Quotation() {
   const [gstin, setGstin] = useState("27ABCDE1234A1Z5");
   const [pan, setPan] = useState("ABCDE1234A");
 
-  const [billingCompany, setBillingCompany] = useState("M/S Botivate Pvt. Ltd.");
-  const [billingAddress, setBillingAddress] = useState("401-402, Gateway Park, HQ, Mumbai");
+  const [billingCompany, setBillingCompany] = useState("M/S Nutech Pvt. Ltd.");
+  const [billingAddress, setBillingAddress] = useState(NUTECH_ADDRESS);
   const [isEditingBilling, setIsEditingBilling] = useState(false);
 
-  const [destCompany, setDestCompany] = useState("M/S Botivate Pvt. Ltd.");
-  const [destAddress, setDestAddress] = useState("Division 1, Mumbai");
+  const [destCompany, setDestCompany] = useState("M/S Nutech Pvt. Ltd.");
+  const [destAddress, setDestAddress] = useState(NUTECH_ADDRESS);
   const [isEditingDest, setIsEditingDest] = useState(false);
 
   // Description / Letter Note
@@ -198,6 +200,7 @@ export default function Quotation() {
             actual3: row.data.actual3,
             selectedVendor: row.data.selectedVendor,
             selectedVendorName: row.data.selectedVendorName,
+            warehouseLocation: row.data.warehouseLocation || "",
             uom: row.data.uom || "PCS",
             vendor1Name: row.data.vendor1Name,
             vendor1Rate: row.data.vendor1Rate,
@@ -220,10 +223,12 @@ export default function Quotation() {
       });
       setSheetRecords(rows);
 
-      const { data: tatRows } = await supabase.from("master_tat_rules").select("*");
+      const { data: tatRows, error: tatErr } = await supabase.from("master_tat_rules").select("*");
+      if (tatErr) console.error("Fetch error Stage 3 (master_tat_rules):", getErrorMessage(tatErr));
       if (tatRows) setTatRules(tatRows);
     } catch (e) {
-      console.error("Fetch error Stage 3:", e);
+      console.error("Fetch error Stage 3:", getErrorMessage(e));
+      toast.error(`Failed to load Quotation data: ${getErrorMessage(e)}`);
     }
     setIsLoading(false);
   };
@@ -291,6 +296,8 @@ export default function Quotation() {
         r.data.itemName?.toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm]);
+
+  useEffect(() => { reportPendingCount("Quotation", pending.length); }, [pending.length]);
 
   const completed = useMemo(() => sheetRecords
     .filter((r) => r.status === "completed")
@@ -600,11 +607,11 @@ export default function Quotation() {
     setSelectedVendors([]);
     setGstin("27ABCDE1234A1Z5");
     setPan("ABCDE1234A");
-    setBillingCompany("M/S Botivate");
-    setBillingAddress("Gateway Park, HQ, Mumbai");
+    setBillingCompany("M/S Nutech Pvt. Ltd.");
+    setBillingAddress(NUTECH_ADDRESS);
     setIsEditingBilling(false);
-    setDestCompany("M/S Botivate");
-    setDestAddress("Warehouse 1, Mumbai");
+    setDestCompany("M/S Nutech Pvt. Ltd.");
+    setDestAddress(NUTECH_ADDRESS);
     setIsEditingDest(false);
     setDescriptionNote("");
     setItemSelected(true);
@@ -842,13 +849,12 @@ export default function Quotation() {
           <div className="flex-1 overflow-y-auto space-y-6 pr-2 py-4 scrollbar-thin">
             {!emailSent ? (
               <div className="space-y-6">
-                {/* BOTIVATE SERVICES header card */}
+                {/* Nutech header card */}
                 <div className="flex items-center justify-center gap-8 bg-slate-50 px-6 py-6 border rounded-xl shadow-sm">
-                  <img src="null" alt="Logo" className="h-10 w-10 object-contain" />
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-900">Botivate</h2>
-                    <p className="text-sm text-slate-600">Gateway Park, Mumbai, Maharashtra</p>
-                    <p className="text-sm text-slate-600">Phone No: +9820012345</p>
+                  <img src="/nutech-logo.png" alt="Nutech Logo" className="h-14 w-auto max-w-[180px] object-contain shrink-0" />
+                  <div className="max-w-md">
+                    <h2 className="text-xl font-bold text-slate-900">Nutech</h2>
+                    <p className="text-sm text-slate-600 line-clamp-2 wrap-break-word" title={NUTECH_ADDRESS}>{NUTECH_ADDRESS}</p>
                   </div>
                 </div>
 
@@ -971,7 +977,7 @@ export default function Quotation() {
                     ) : (
                       <div className="text-xs space-y-1">
                         <p className="font-bold text-slate-800">{billingCompany}</p>
-                        <p className="text-slate-600 font-medium leading-relaxed">{billingAddress}</p>
+                        <p className="text-slate-600 font-medium leading-relaxed line-clamp-2 wrap-break-word" title={billingAddress}>{billingAddress}</p>
                       </div>
                     )}
                   </div>
@@ -1015,7 +1021,7 @@ export default function Quotation() {
                     ) : (
                       <div className="text-xs space-y-1">
                         <p className="font-bold text-slate-800">{destCompany}</p>
-                        <p className="text-slate-600 font-medium leading-relaxed">{destAddress}</p>
+                        <p className="text-slate-600 font-medium leading-relaxed line-clamp-2 wrap-break-word" title={destAddress}>{destAddress}</p>
                       </div>
                     )}
                   </div>
@@ -1070,7 +1076,7 @@ export default function Quotation() {
                             <TableCell className="p-3 font-semibold text-slate-900 font-mono">
                               {record?.data?.indentNumber || "—"}
                             </TableCell>
-                            <TableCell className="p-3 text-slate-700">Botivate</TableCell>
+                            <TableCell className="p-3 text-slate-700">{record?.data?.warehouseLocation || "-"}</TableCell>
                             <TableCell className="p-3 text-slate-800 font-medium">
                               {record?.data?.itemName || "—"}
                             </TableCell>
@@ -1285,7 +1291,7 @@ export default function Quotation() {
                     type="button"
                     variant="outline"
                     onClick={() => setEmailSent(false)}
-                    className="w-full bg-white border-slate-200"
+                    className="flex-1 min-w-0 bg-white border-slate-200"
                   >
                     Resend / Change Vendors
                   </Button>
@@ -1293,7 +1299,7 @@ export default function Quotation() {
                     type="button"
                     onClick={() => handleProceedToApproval()}
                     disabled={isSubmitting}
-                    className="w-full bg-blue-700 text-white hover:bg-blue-800"
+                    className="flex-1 min-w-0 bg-blue-700 text-white hover:bg-blue-800"
                   >
                     {isSubmitting ? (
                       <>

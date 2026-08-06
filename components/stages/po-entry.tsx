@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -22,7 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, Upload, X, Shield, ShieldCheck, Loader2, ClipboardList, History, Search, Plus, Trash2, Eye, Save, Edit2, FileEdit, Mail, Send, Check, CheckCircle, ExternalLink } from "lucide-react";
+import { FileText, Upload, X, Shield, ShieldCheck, Loader2, ClipboardList, History, Search, Plus, Trash2, Eye, Save, Edit2, FileEdit, Send, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Popover,
@@ -36,7 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatDate, parseSheetDate, getFmsTimestamp, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
+import { formatDate, parseSheetDate, getFmsTimestamp, getPlannedDateForRecord, formatDateTimeFull, getErrorMessage, reportPendingCount } from "@/lib/utils";
 import { useMemo } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
@@ -120,26 +120,8 @@ export default function Stage5() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // States for PO Preview and Email Simulator
+  // State for PO Preview
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [emailSimOpen, setEmailSimOpen] = useState(false);
-  const [emailSimSteps, setEmailSimSteps] = useState<string[]>([]);
-  const [emailSimActiveIndex, setEmailSimActiveIndex] = useState(0);
-
-  // Auto-advance simulated email delivery steps
-  React.useEffect(() => {
-    if (!emailSimOpen) return;
-    const interval = setInterval(() => {
-      setEmailSimActiveIndex((prev) => {
-        if (prev >= emailSimSteps.length - 1) {
-          clearInterval(interval);
-          return prev;
-        }
-        return prev + 1;
-      });
-    }, 900);
-    return () => clearInterval(interval);
-  }, [emailSimOpen, emailSimSteps]);
 
   // Shared fields for bulk PO
   const [poMode, setPoMode] = useState<"create" | "revise">("create");
@@ -226,6 +208,7 @@ export default function Stage5() {
               actual1: row.data.actual1 || "",
               approvedBy: row.data.finalApprovedBy,
               itemCode: row.data.itemCode,
+              warehouseLocation: row.data.warehouseLocation || "",
 
               vendor1Name: row.data.vendor1Name,
               vendor1Rate: row.data.vendor1Rate,
@@ -265,11 +248,22 @@ export default function Stage5() {
               actual4: latestPo ? (latestPo.created_at || "") : "",
               delay4: "",
               poNumber: latestPo?.po_number || "",
+              poDate: latestPo?.po_date || "",
               basicValue: latestPo ? String(latestPo.unit_rate || "") : "",
               totalWithTax: latestPo ? String(latestPo.total_amount || "") : "",
-              hsn: "",
+              hsn: latestPo?.hsn || "",
               poCopy: latestPo?.po_copy_url || "",
-              gst: latestPo?.payment_type || "",
+              poPdfUrl: latestPo?.po_pdf_url || "",
+              gst: latestPo?.gst_percent || "",
+              advanceAmount: latestPo ? String(latestPo.advance_amount || "0") : "",
+              paymentType: latestPo?.payment_type || "",
+              // The actual supplier/delivery details submitted with the PO —
+              // used to correctly prefill Revise (getVendorData reflects the
+              // original quotation vendor, which can differ from whichever
+              // supplier was actually picked/typed when the PO was created).
+              poSupplierName: latestPo?.vendor_name || "",
+              poDeliveryDate: latestPo?.delivery_date || "",
+              poDeliveryAddress: latestPo?.delivery_address || "",
               pkgAmount: "",
               pkgGst: "",
             }
@@ -277,7 +271,8 @@ export default function Stage5() {
         });
       setSheetRecords(rows);
     } catch (e) {
-      console.error("Fetch error Stage 5:", e);
+      console.error("Fetch error Stage 5:", getErrorMessage(e));
+      toast.error(`Failed to load Make PO data: ${getErrorMessage(e)}`);
     }
     setIsLoading(false);
   };
@@ -316,6 +311,8 @@ export default function Stage5() {
         String(r.data.poNumber || "").toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm]);
+
+  useEffect(() => { reportPendingCount("Make PO", pending.length); }, [pending.length]);
 
   const completed = useMemo(() => sheetRecords
     .filter((r) => r.status === "completed")
@@ -415,8 +412,10 @@ export default function Stage5() {
     return map;
   }, [dbVendors]);
 
+  const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
+
   const defaultPOForm = {
-    firmName: "Botivate",
+    firmName: "",
     supplierName: "",
     poDate: new Date().toISOString().split("T")[0],
     deliveryDate: "",
@@ -433,10 +432,10 @@ export default function Stage5() {
     remarks: "",
     companyGstin: "27ABCDE1234A1Z5",
     companyPan: "ABCDE1234A",
-    billingName: "M/S Botivate Pvt. Ltd.",
-    billingAddress: "401-402, Gateway Park, HQ, Mumbai",
-    destinationName: "M/S Botivate Pvt. Ltd.",
-    destinationAddress: "Division 1, Mumbai",
+    billingName: "M/S Nutech Pvt. Ltd.",
+    billingAddress: NUTECH_ADDRESS,
+    destinationName: "M/S Nutech Pvt. Ltd.",
+    destinationAddress: NUTECH_ADDRESS,
   };
 
   const [poForm, setPoForm] = useState(defaultPOForm);
@@ -469,30 +468,47 @@ export default function Stage5() {
     setSelectedRecordIds(matchedIds);
 
     const firstRec = matching[0];
+    // Diagnostic: confirms whether advance_amount/gst/hsn actually came back
+    // with a real saved value for this PO, or whether it's genuinely 0/blank
+    // in the database (nothing was ever saved) vs. a display bug here.
+    console.table(matching.map((r) => ({
+      indentNumber: r.data.indentNumber,
+      poNumber: r.data.poNumber,
+      rawAdvanceAmount: r.data.advanceAmount,
+      rawGst: r.data.gst,
+      rawHsn: r.data.hsn,
+      rawSupplierName: r.data.poSupplierName,
+    })));
     const v = getVendorData(firstRec);
+    // Prefer the supplier/delivery details actually saved on the PO itself
+    // over the original quotation vendor — the Supplier Name field in Create
+    // PO is a free choice and can be typed/changed to differ from whichever
+    // vendor quoted, so re-deriving from the quotation showed the wrong data
+    // (or the wrong delivery date/address) once you came back to Revise.
+    const actualSupplierName = firstRec.data.poSupplierName || (v.name !== "-" ? v.name : "");
 
     setPoForm({
-      firmName: "Botivate",
-      supplierName: v.name !== "-" ? v.name : "",
-      supplierEmail: v.name ? (vendorEmailMap[v.name] || "") : "",
-      supplierAddress: v.name ? (vendorAddressMap[v.name] || "") : "",
-      poDate: formatInputDate(firstRec.data.actual4),
-      deliveryDate: v.delivery ? formatInputDate(v.delivery) : "",
+      firmName: firstRec.data.warehouseLocation || "",
+      supplierName: actualSupplierName,
+      supplierEmail: actualSupplierName ? (vendorEmailMap[actualSupplierName] || "") : "",
+      supplierAddress: firstRec.data.poDeliveryAddress || (actualSupplierName ? (vendorAddressMap[actualSupplierName] || "") : ""),
+      poDate: firstRec.data.poDate ? formatInputDate(firstRec.data.poDate) : formatInputDate(firstRec.data.actual4),
+      deliveryDate: firstRec.data.poDeliveryDate ? formatInputDate(firstRec.data.poDeliveryDate) : (v.delivery ? formatInputDate(v.delivery) : ""),
       paymentTerms: normalizePaymentTerms(v.terms),
-      advancePayment: "yes",
-      advanceAmount: extractAdvanceAmount(v.terms),
+      advancePayment: (firstRec.data.paymentType || "").toLowerCase().includes("no advance") ? "no" : "yes",
+      advanceAmount: firstRec.data.advanceAmount && firstRec.data.advanceAmount !== "0" ? firstRec.data.advanceAmount : "",
       gstin: "",
-      quotationNumber: "",
+      quotationNumber: `QUO-${firstRec.data.indentNumber || ""}`,
       quotationDate: new Date().toISOString().split("T")[0],
       enquiryNumber: "",
       enquiryDate: "",
       remarks: "",
       companyGstin: "27ABCDE1234A1Z5",
       companyPan: "ABCDE1234A",
-      billingName: "M/S Botivate Pvt. Ltd.",
-      billingAddress: "401-402, Gateway Park, HQ, Mumbai",
-      destinationName: "M/S Botivate Pvt. Ltd.",
-      destinationAddress: "Division 1, Mumbai",
+      billingName: "M/S Nutech Pvt. Ltd.",
+      billingAddress: NUTECH_ADDRESS,
+      destinationName: "M/S Nutech Pvt. Ltd.",
+      destinationAddress: NUTECH_ADDRESS,
     });
 
     const matchedFormData: Record<string, any> = {};
@@ -613,12 +629,14 @@ export default function Stage5() {
     const firstVendor = firstRecord ? getVendorData(firstRecord) : null;
     setPoForm({
       ...defaultPOForm,
+      firmName: firstRecord?.data.warehouseLocation || "",
       supplierName: firstVendor?.name && firstVendor.name !== "-" ? firstVendor.name : "",
       supplierEmail: firstVendor?.name ? (vendorEmailMap[firstVendor.name] || "") : "",
       supplierAddress: firstVendor?.name ? (vendorAddressMap[firstVendor.name] || "") : "",
       deliveryDate: firstVendor?.delivery ? formatInputDate(firstVendor.delivery) : "",
       paymentTerms: normalizePaymentTerms(firstVendor?.terms),
-      advanceAmount: extractAdvanceAmount(firstVendor?.terms),
+      advanceAmount: "",
+      quotationNumber: `QUO-${firstRecord?.data.indentNumber || ""}`,
       quotationDate: new Date().toISOString().split("T")[0],
       enquiryDate: new Date().toISOString().split("T")[0],
     });
@@ -699,8 +717,6 @@ export default function Stage5() {
             return;
           }
 
-          await new Promise((r) => setTimeout(r, 300));
-
           try {
             const { perItemPkgTotal } = getPkgTotals(
               commonPkgAmount,
@@ -722,7 +738,7 @@ export default function Stage5() {
             const advAmtStr = isAdv && poForm.advanceAmount ? ` (₹${poForm.advanceAmount})` : "";
             const finalPaymentType = isAdv ? `Advance Payment${advAmtStr}` : `No Advance - ${pTerm}`;
 
-            const poPayload = {
+            const poPayload: Record<string, any> = {
               po_number: commonPONumber,
               indent_id: record.id,
               vendor_name: chosenSupplier,
@@ -737,41 +753,47 @@ export default function Stage5() {
               delivery_date: poForm.deliveryDate || null,
               delivery_address: poForm.supplierAddress || "",
               po_copy_url: finalFileUrl || record.data.poCopy || "",
+              gst_percent: data.gst || "",
+              hsn: data.hsn || "",
               created_by: "System",
               status: "PO Issued",
             };
 
-            if (poMode === "revise") {
-              let { error } = await supabase
-                .from("purchase_orders")
-                .update(poPayload)
-                .eq("indent_id", record.id)
-                .eq("po_number", commonPONumber);
-
-              if (error && (error.message.includes("advance_amount") || error.code === "PGRST204" || error.message.includes("column"))) {
-                const fallbackPayload = { ...poPayload };
-                delete (fallbackPayload as any).advance_amount;
-                const retryRes = await supabase
-                  .from("purchase_orders")
-                  .update(fallbackPayload)
-                  .eq("indent_id", record.id)
-                  .eq("po_number", commonPONumber);
-                error = retryRes.error;
+            // Some deployments may not have run the migration adding
+            // advance_amount / gst_percent / hsn yet — if Postgres/PostgREST
+            // reports a missing column, strip it and retry rather than
+            // failing the whole PO for columns we can't control here.
+            const submitWithColumnFallback = async (
+              runQuery: (payload: Record<string, any>) => PromiseLike<{ error: any }>
+            ) => {
+              let payload = { ...poPayload };
+              for (let attempt = 0; attempt < Object.keys(payload).length; attempt++) {
+                const { error } = await runQuery(payload);
+                if (!error) return { error: null };
+                const missingCol = error.message?.match(/'([a-zA-Z_]+)'\s+column/)?.[1]
+                  || (error.code === "PGRST204" ? error.message?.match(/column\s+"?([a-zA-Z_]+)"?/)?.[1] : null);
+                if (missingCol && missingCol in payload) {
+                  delete payload[missingCol];
+                  continue;
+                }
+                return { error };
               }
+              return { error: new Error("Too many missing columns on purchase_orders") };
+            };
+
+            if (poMode === "revise") {
+              const { error } = await submitWithColumnFallback((payload) =>
+                supabase
+                  .from("purchase_orders")
+                  .update(payload)
+                  .eq("indent_id", record.id)
+                  .eq("po_number", commonPONumber)
+              );
               if (error) throw error;
             } else {
-              let { error } = await supabase
-                .from("purchase_orders")
-                .insert(poPayload);
-
-              if (error && (error.message.includes("advance_amount") || error.code === "PGRST204" || error.message.includes("column"))) {
-                const fallbackPayload = { ...poPayload };
-                delete (fallbackPayload as any).advance_amount;
-                const retryRes = await supabase
-                  .from("purchase_orders")
-                  .insert(fallbackPayload);
-                error = retryRes.error;
-              }
+              const { error } = await submitWithColumnFallback((payload) =>
+                supabase.from("purchase_orders").insert(payload)
+              );
               if (error) {
                 // If UNIQUE violation on (po_number, indent_id), try upsert
                 if (error.code === "23505" || error.message?.includes("unique") || error.message?.includes("duplicate")) {
@@ -797,16 +819,85 @@ export default function Stage5() {
           }
         }
 
+        // Auto-generate a PDF copy of this Purchase Order and store it so it
+        // shows up under the "Make Copy" column in History. Non-blocking:
+        // if this fails (e.g. the po_pdf_url column hasn't been added yet),
+        // the PO itself has already been saved successfully above.
+        try {
+          const { pdf } = await import("@react-pdf/renderer");
+          const { POPdfDocument } = await import("./po-pdf");
+          const { perItemPkgTotal } = getPkgTotals(commonPkgAmount, commonPkgGST, recordsToProcess.length);
+
+          const pdfItems = recordsToProcess
+            .filter((item): item is { record: any; data: any } => !!item.record)
+            .map(({ record, data }, idx) => {
+              const v = getVendorData(record);
+              const total = (parseFloat(data.totalWithTax) || 0) + perItemPkgTotal;
+              return {
+                srNo: idx + 1,
+                itemName: record.data.itemName || "-",
+                indentNumber: record.data.indentNumber || "-",
+                quantity: record.data.quantity || "-",
+                rate: data.rate !== undefined ? data.rate : (v.rate || "0"),
+                hsn: data.hsn || "",
+                gst: data.gst || "",
+                total: total.toFixed(2),
+              };
+            });
+
+          const blob = await pdf(
+            <POPdfDocument
+              logoUrl={`${window.location.origin}/nutech-logo.png`}
+              companyAddress={NUTECH_ADDRESS}
+              poNumber={commonPONumber}
+              poDate={formatDateDash(poForm.poDate)}
+              supplierName={poForm.supplierName}
+              supplierAddress={poForm.supplierAddress}
+              supplierGstin={poForm.gstin}
+              supplierEmail={poForm.supplierEmail}
+              deliveryDate={formatDateDash(poForm.deliveryDate)}
+              quotationNumber={poForm.quotationNumber}
+              quotationDate={formatDateDash(poForm.quotationDate)}
+              billingName={poForm.billingName}
+              billingAddress={poForm.billingAddress}
+              destinationName={poForm.destinationName}
+              destinationAddress={poForm.destinationAddress}
+              items={pdfItems}
+              subtotal={poSummary.subtotal.toFixed(2)}
+              gst={poSummary.gst.toFixed(2)}
+              grandTotal={poSummary.grandTotal.toFixed(2)}
+              terms={terms}
+            />
+          ).toBlob();
+
+          const pdfPath = `po-pdfs/${commonPONumber.replace(/[^a-zA-Z0-9-_]/g, "_")}_${Date.now()}.pdf`;
+          const { error: pdfUploadError } = await supabase.storage
+            .from("po-copies")
+            .upload(pdfPath, blob, { contentType: "application/pdf" });
+
+          if (!pdfUploadError) {
+            const { data: urlData } = supabase.storage.from("po-copies").getPublicUrl(pdfPath);
+            const pdfUrl = urlData?.publicUrl || "";
+            if (pdfUrl) {
+              // Replaces any previously generated copy for this PO number —
+              // on Revise, the old "Make Copy" PDF is overwritten by the new one.
+              const { error: updateErr } = await supabase
+                .from("purchase_orders")
+                .update({ po_pdf_url: pdfUrl })
+                .eq("po_number", commonPONumber);
+              if (updateErr) {
+                console.warn("Could not save po_pdf_url (run the migration to add this column):", getErrorMessage(updateErr));
+              }
+            }
+          } else {
+            console.warn("PO PDF upload failed:", pdfUploadError.message);
+          }
+        } catch (pdfErr) {
+          console.error("Failed to auto-generate PO PDF (non-blocking):", getErrorMessage(pdfErr));
+        }
+
         await fetchData();
-        setEmailSimActiveIndex(0);
-        setEmailSimSteps([
-          "Generating PDF Purchase Order Document...",
-          "Connecting to SMTP server at mail.Botivateempire.com...",
-          "Attaching Purchase Order and commercial annexures...",
-          `Sending email to supplier: ${poForm.supplierEmail || "vendor@example.com"}...`,
-          "Purchase Order successfully dispatched via Email!"
-        ]);
-        setEmailSimOpen(true);
+        handleClosePOForm();
         return { successCount, total: recordsToProcess.length };
       } finally {
         setIsSubmitting(false);
@@ -820,12 +911,15 @@ export default function Stage5() {
     });
   };
 
-  const handleCloseEmailSim = () => {
-    setEmailSimOpen(false);
+  const handleClosePOForm = () => {
     setOpen(false);
+    // resetPOForm() rebuilds bulkFormData from the *current* (about-to-be-
+    // cleared) selection, so it must run before clearing selectedRecordIds/
+    // bulkFormData — otherwise its rebuilt data wins the batched update and
+    // this PO's items silently reappear pre-selected the next time around.
+    resetPOForm();
     setSelectedRecordIds([]);
     setBulkFormData({});
-    resetPOForm();
   };
 
   const handleCommonFileChange = (file: File | null) => {
@@ -850,6 +944,9 @@ export default function Stage5() {
     };
   };
 
+  // Only indents belonging to the same supplier can be batched into one PO —
+  // a single Create PO submission issues one PO to one vendor, so selection
+  // is restricted to a matching vendor across all selected rows.
   const selectedVendorName = useMemo(() => {
     if (selectedRecordIds.length === 0) return null;
     const firstSelected = sheetRecords.find((r) => r.id === selectedRecordIds[0]);
@@ -1127,13 +1224,14 @@ export default function Stage5() {
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">PO Details (Incl. HSN)</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Financials (Incl. GST%)</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Total Amount</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Make Copy</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {completed.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={11} className="h-32 text-center text-gray-500 font-medium">
                         No completed PO entries found.
                       </TableCell>
                     </TableRow>
@@ -1204,6 +1302,12 @@ export default function Stage5() {
                               <span className="text-xs text-gray-500">Basic:</span>
                               <span className="font-medium">₹{record.data.basicValue || "-"}</span>
                             </div>
+                            {parseFloat(record.data.advanceAmount || "0") > 0 && (
+                              <div className="flex justify-between gap-4">
+                                <span className="text-xs text-indigo-600 font-semibold">Advance:</span>
+                                <span className="font-medium text-indigo-700">₹{record.data.advanceAmount}</span>
+                              </div>
+                            )}
                             <div className="flex justify-between gap-4 border-t pt-1">
                                <span className="text-xs text-green-700 font-semibold">GST: {formatGSTDisplay(record.data.gst)}</span>
                               <span className="font-bold text-green-800">Total: ₹{record.data.totalWithTax || "-"}</span>
@@ -1214,6 +1318,21 @@ export default function Stage5() {
                           <div className="font-bold text-green-800 text-sm">
                             ₹{poTotalMap.get(record.data.poNumber)?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "-"}
                           </div>
+                        </TableCell>
+                        <TableCell className="bg-white/50 border-l">
+                          {record.data.poPdfUrl ? (
+                            <a
+                              href={record.data.poPdfUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-indigo-600 hover:underline text-[11px] font-semibold"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>View Copy</span>
+                            </a>
+                          ) : (
+                            <span className="text-[11px] text-gray-400">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="bg-white/50 border-l">
                           <Button
@@ -1249,7 +1368,19 @@ export default function Stage5() {
       </Tabs>
 
       {/* BULK PO MODAL */}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(val) => {
+          if (val) {
+            setOpen(true);
+          } else {
+            // Closing without submitting (X button, ESC, outside click) must
+            // drop the in-progress selection — otherwise these leftover items
+            // silently tag along the next time you select different rows.
+            handleClosePOForm();
+          }
+        }}
+      >
         <DialogContent className="max-w-7xl max-h-[94vh] flex flex-col gap-0 p-0 overflow-hidden bg-slate-50">
           <DialogHeader className="sr-only">
             <DialogTitle>Create Purchase Order</DialogTitle>
@@ -1259,6 +1390,8 @@ export default function Stage5() {
             <button
               type="button"
               onClick={() => {
+                // Already on this tab — don't wipe out whatever is prefilled.
+                if (poMode === "create") return;
                 setPoMode("create");
                 resetPOForm();
               }}
@@ -1269,6 +1402,10 @@ export default function Stage5() {
             <button
               type="button"
               onClick={() => {
+                // Already on this tab (e.g. opened via a History row's Revise
+                // button, which already prefilled everything) — clicking it
+                // again must not reset the prefilled data back to blank.
+                if (poMode === "revise") return;
                 setPoMode("revise");
                 resetPOForm();
               }}
@@ -1282,11 +1419,10 @@ export default function Stage5() {
             <div className="mx-auto max-w-6xl space-y-5 p-6">
               <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
                 <div className="flex items-center justify-center gap-6 bg-slate-50 px-6 py-6">
-                  <img src="/logo.png" alt="Purchase Logo" className="h-24 w-auto max-w-[320px] object-contain" />
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900">Purchase</h2>
-                    <p className="text-sm text-slate-600">Gateway Park, Mumbai, Maharashtra</p>
-                    <p className="text-sm text-slate-600">Phone No: +9820012345</p>
+                  <img src="/nutech-logo.png" alt="Nutech Logo" className="h-16 w-auto max-w-[220px] object-contain shrink-0" />
+                  <div className="max-w-md">
+                    <h2 className="text-lg font-semibold text-slate-900">Nutech</h2>
+                    <p className="text-sm text-slate-600 line-clamp-2 wrap-break-word" title={NUTECH_ADDRESS}>{NUTECH_ADDRESS}</p>
                   </div>
                 </div>
                 <div className="border-t bg-white py-4 text-center text-lg font-bold tracking-[0.2em] text-slate-800">
@@ -1303,16 +1439,12 @@ export default function Stage5() {
                 </div>
                 <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Firm Name</Label>
-                    <Select value={poForm.firmName} onValueChange={(value) => setPoForm((prev) => ({ ...prev, firmName: value }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Botivate">Botivate</SelectItem>
-                        <SelectItem value="Botivate Services">Botivate Services</SelectItem>
-                        <SelectItem value="Botivate Retail">Botivate Retail</SelectItem>
-                        <SelectItem value="Botivate Logistics">Botivate Logistics</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Firm Name (from Indent Division)</Label>
+                    <Input
+                      value={poForm.firmName || ""}
+                      onChange={(e) => setPoForm((prev) => ({ ...prev, firmName: e.target.value }))}
+                      placeholder="Auto-filled from indent's Division"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Name</Label>
@@ -1360,7 +1492,7 @@ export default function Stage5() {
                           handleRevisePONumberChange(val);
                         }
                       }}
-                      placeholder="Botivate/Store/26-27/21"
+                      placeholder="Nutech/Store/26-27/21"
                       required
                     />
                   </div>
@@ -1417,6 +1549,7 @@ export default function Stage5() {
                       <Input
                         type="number"
                         step="0.01"
+                        required
                         placeholder="e.g. 5000"
                         value={poForm.advanceAmount || ""}
                         onChange={(e) => setPoForm((prev) => ({ ...prev, advanceAmount: e.target.value }))}
@@ -1434,34 +1567,6 @@ export default function Stage5() {
                     />
                   </div>
 
-                  {/* PO Copy Upload */}
-                  <div className="space-y-1.5 md:col-span-2 bg-slate-50 p-4 border rounded-lg">
-                    <Label className="text-xs font-bold uppercase tracking-wide text-slate-700 block mb-1">PO Copy (PDF/Image)</Label>
-                    <div className="flex items-center gap-4">
-                      <Input
-                        type="file"
-                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                        onChange={(e) => handleCommonFileChange(e.target.files?.[0] || null)}
-                        className="bg-white max-w-sm h-9"
-                      />
-                      {commonPOCopy && (
-                        <div className="flex items-center gap-2 text-xs bg-white border px-3 py-1.5 rounded shadow-sm">
-                          <FileText className="w-4 h-4 text-indigo-500" />
-                          {commonPOCopy instanceof File ? (
-                            <span className="font-semibold text-slate-800">{commonPOCopy.name}</span>
-                          ) : (
-                            <a href={commonPOCopy} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-semibold flex items-center gap-1">
-                              <span>View Existing PO Copy</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
-                          )}
-                          <Button type="button" variant="ghost" size="icon" className="h-5 w-5 text-red-500 hover:text-red-750 hover:bg-slate-50" onClick={handleCommonFileRemove}>
-                            <X className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
 
 
                 </div>
@@ -1479,7 +1584,7 @@ export default function Stage5() {
                   <div className="border-b bg-slate-50 px-4 py-3 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Billing Address</div>
                   <div className="p-4 text-sm">
                     <p className="font-bold text-slate-900">{poForm.billingName}</p>
-                    <p className="mt-1 text-slate-600">{poForm.billingAddress}</p>
+                    <p className="mt-1 text-slate-600 line-clamp-2 wrap-break-word" title={poForm.billingAddress}>{poForm.billingAddress}</p>
                   </div>
                 </section>
                 <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
@@ -1489,7 +1594,7 @@ export default function Stage5() {
                   </div>
                   <div className="p-4 text-sm">
                     <p className="font-bold text-slate-900">{poForm.destinationName}</p>
-                    <p className="mt-1 text-slate-600">{poForm.destinationAddress}</p>
+                    <p className="mt-1 text-slate-600 line-clamp-2 wrap-break-word" title={poForm.destinationAddress}>{poForm.destinationAddress}</p>
                   </div>
                 </section>
               </div>
@@ -1505,7 +1610,6 @@ export default function Stage5() {
                       <tr>
                         <th className="px-4 py-3 text-left">S/N</th>
                         <th className="px-4 py-3 text-left">Item</th>
-                        <th className="px-4 py-3 text-left">Payment</th>
                         <th className="px-4 py-3 text-right">Qty</th>
                         <th className="px-4 py-3 text-right">Rate</th>
                         <th className="px-4 py-3 text-left">HSN</th>
@@ -1526,9 +1630,6 @@ export default function Stage5() {
                               <div className="font-medium text-slate-900">{record.data.itemName}</div>
                               <div className="text-xs text-slate-500">{record.data.indentNumber}</div>
                             </td>
-                            <td className="px-4 py-3 font-semibold text-indigo-900">
-                               {paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || v.terms || "-"}
-                             </td>
                             <td className="px-4 py-3 text-right">{record.data.quantity || "-"}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center justify-end gap-1">
@@ -1595,10 +1696,12 @@ export default function Stage5() {
                     </tbody>
                   </table>
                 </div>
-                <div className="grid justify-end gap-3 border-t p-4 text-sm">
-                  <div className="flex min-w-72 justify-between gap-10"><span>Subtotal</span><span>Rs. {poSummary.subtotal.toFixed(2)}</span></div>
-                  <div className="flex min-w-72 justify-between gap-10"><span>GST</span><span>Rs. {poSummary.gst.toFixed(2)}</span></div>
-                  <div className="flex min-w-72 justify-between gap-10 pt-2 text-base font-bold"><span>GRAND TOTAL</span><span className="text-indigo-700">Rs. {poSummary.grandTotal.toFixed(2)}</span></div>
+                <div className="flex justify-end border-t p-4 text-sm">
+                  <div className="w-full max-w-xs space-y-2">
+                    <div className="flex justify-between gap-6"><span>Subtotal</span><span>Rs. {poSummary.subtotal.toFixed(2)}</span></div>
+                    <div className="flex justify-between gap-6"><span>GST</span><span>Rs. {poSummary.gst.toFixed(2)}</span></div>
+                    <div className="flex justify-between gap-6 pt-2 border-t text-base font-bold"><span>GRAND TOTAL</span><span className="text-indigo-700">Rs. {poSummary.grandTotal.toFixed(2)}</span></div>
+                  </div>
                 </div>
               </section>
 
@@ -1645,6 +1748,7 @@ export default function Stage5() {
                 isSubmitting ||
                 selectedRecordIds.length === 0 ||
                 !commonPONumber.trim() ||
+                ((poForm.advancePayment || "yes") === "yes" && !poForm.advanceAmount) ||
                 !selectedRecordIds.every((id) => {
                   const d = bulkFormData[id];
                   return d?.basicValue && d?.totalWithTax && d?.gst;
@@ -1993,15 +2097,12 @@ export default function Stage5() {
               <div>
                 {/* Header Section */}
                 <div className="flex items-start justify-between border-b pb-6">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-slate-950 rounded flex items-center justify-center text-white font-extrabold text-xl shadow">
-                      DE
-                    </div>
-                    <div>
-                      <h2 className="text-xl font-bold text-slate-900 leading-tight">Botivate</h2>
-                      <p className="text-xs text-slate-500">Gateway Park, Mumbai, Maharashtra</p>
+                  <div className="flex items-center gap-4 max-w-xs">
+                    <img src="/nutech-logo.png" alt="Nutech Logo" className="h-12 w-auto max-w-[160px] object-contain rounded shrink-0" />
+                    <div className="min-w-0">
+                      <h2 className="text-xl font-bold text-slate-900 leading-tight">Nutech</h2>
+                      <p className="text-xs text-slate-500 line-clamp-2 wrap-break-word" title={NUTECH_ADDRESS}>{NUTECH_ADDRESS}</p>
                       <p className="text-xs text-slate-500">GSTIN: {poForm.companyGstin || "-"}</p>
-                      <p className="text-xs text-slate-500">Email: accounts@Botivateempire.com</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -2018,7 +2119,7 @@ export default function Stage5() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Supplier Info</h3>
                     <div className="bg-slate-50 border rounded-lg p-3 text-xs space-y-1">
                       <p className="font-bold text-slate-900">{poForm.supplierName || "—"}</p>
-                      <p className="text-slate-600 leading-relaxed">{poForm.supplierAddress || "—"}</p>
+                      <p className="text-slate-600 leading-relaxed line-clamp-2 wrap-break-word" title={poForm.supplierAddress || undefined}>{poForm.supplierAddress || "—"}</p>
                       <p className="text-slate-600"><span className="font-semibold text-slate-500">GSTIN:</span> {poForm.gstin || "—"}</p>
                       <p className="text-slate-600"><span className="font-semibold text-slate-500">Email:</span> {poForm.supplierEmail || "—"}</p>
                     </div>
@@ -2042,7 +2143,7 @@ export default function Stage5() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Billing Address</h3>
                     <div className="bg-slate-50 border rounded-lg p-3 text-xs leading-relaxed">
                       <p className="font-bold text-slate-900">{poForm.billingName}</p>
-                      <p className="text-slate-600">{poForm.billingAddress}</p>
+                      <p className="text-slate-600 line-clamp-2 wrap-break-word" title={poForm.billingAddress}>{poForm.billingAddress}</p>
                     </div>
                   </div>
 
@@ -2051,7 +2152,7 @@ export default function Stage5() {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Destination / Ship-To Address</h3>
                     <div className="bg-slate-50 border rounded-lg p-3 text-xs leading-relaxed">
                       <p className="font-bold text-slate-900">{poForm.destinationName}</p>
-                      <p className="text-slate-600">{poForm.destinationAddress}</p>
+                      <p className="text-slate-600 line-clamp-2 wrap-break-word" title={poForm.destinationAddress}>{poForm.destinationAddress}</p>
                     </div>
                   </div>
                 </div>
@@ -2139,7 +2240,7 @@ export default function Stage5() {
                 </div>
                 <div className="text-right">
                   <div className="h-10 w-32 border-b border-dashed border-slate-300 ml-auto mb-1"></div>
-                  <p className="font-bold text-slate-700">For Botivate</p>
+                  <p className="font-bold text-slate-700">For Nutech</p>
                   <p className="text-[9px]">Authorized Signatory</p>
                 </div>
               </div>
@@ -2154,70 +2255,6 @@ export default function Stage5() {
         </DialogContent>
       </Dialog>
 
-      {/* EMAIL SIMULATION MODAL */}
-      <Dialog open={emailSimOpen} onOpenChange={setEmailSimOpen}>
-        <DialogContent className="max-w-md p-6 bg-slate-900 border border-slate-800 text-white rounded-xl shadow-2xl flex flex-col items-center text-center">
-          <DialogHeader className="sr-only">
-            <DialogTitle>PO Email Dispatch Simulator</DialogTitle>
-          </DialogHeader>
-          <div className="w-16 h-16 rounded-full bg-indigo-500/10 flex items-center justify-center mb-4">
-            {emailSimActiveIndex === emailSimSteps.length - 1 ? (
-              <CheckCircle className="w-8 h-8 text-emerald-400 animate-bounce" />
-            ) : (
-              <Mail className="w-8 h-8 text-indigo-400 animate-pulse" />
-            )}
-          </div>
-
-          <h2 className="text-xl font-bold tracking-tight text-white mb-2">PO Email Dispatch Simulator</h2>
-          <p className="text-xs text-slate-400 max-w-xs mb-6">
-            Dispatching Purchase Order Ref: <span className="text-indigo-400 font-bold font-mono">{commonPONumber}</span> to <span className="text-indigo-400 font-bold">{poForm.supplierName}</span> via SMTP relay.
-          </p>
-
-          <div className="w-full space-y-3.5 mb-6 text-left max-w-sm">
-            {emailSimSteps.map((step, idx) => {
-              const isCompleted = idx < emailSimActiveIndex;
-              const isActive = idx === emailSimActiveIndex;
-              return (
-                <div key={idx} className="flex items-center gap-3 text-xs transition-opacity duration-300">
-                  <div className="shrink-0">
-                    {isCompleted ? (
-                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
-                        <Check className="w-2.5 h-2.5 text-emerald-400" />
-                      </div>
-                    ) : isActive ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                    ) : (
-                      <div className="w-4 h-4 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500 text-[9px] font-mono">
-                        {idx + 1}
-                      </div>
-                    )}
-                  </div>
-                  <span className={`font-medium ${isCompleted ? "text-emerald-400" : isActive ? "text-white font-bold" : "text-slate-500"}`}>
-                    {step}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Simple progress bar */}
-          <div className="w-full bg-slate-800 rounded-full h-1.5 mb-6 overflow-hidden">
-            <div
-              className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300"
-              style={{ width: `${((emailSimActiveIndex + 1) / emailSimSteps.length) * 100}%` }}
-            ></div>
-          </div>
-
-          <Button
-            type="button"
-            onClick={handleCloseEmailSim}
-            disabled={emailSimActiveIndex < emailSimSteps.length - 1}
-            className={`w-full font-bold h-10 ${emailSimActiveIndex === emailSimSteps.length - 1 ? "bg-emerald-500 hover:bg-emerald-600 text-white" : "bg-slate-800 text-slate-500 cursor-not-allowed"}`}
-          >
-            {emailSimActiveIndex === emailSimSteps.length - 1 ? "Done / Complete" : "Sending PO..."}
-          </Button>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -54,7 +54,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { cn, formatDate, parseSheetDate, getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
+import { cn, formatDate, parseSheetDate, getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord, getErrorMessage, reportPendingCount } from "@/lib/utils";
+import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
 import { usePagination } from "@/lib/use-pagination";
@@ -170,7 +171,8 @@ export default function Stage2() {
 
       setSheetRecords(stage2Rows);
     } catch (e) {
-      console.error("Fetch error:", e);
+      console.error("Fetch error Stage 2:", getErrorMessage(e));
+      toast.error(`Failed to load Indent Approval data: ${getErrorMessage(e)}`);
     }
     setIsLoading(false);
   };
@@ -193,6 +195,8 @@ export default function Stage2() {
         r.data.vendorType?.toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm]);
+
+  useEffect(() => { reportPendingCount("Indent Approval", pending.length); }, [pending.length]);
 
   const history = useMemo(() => sheetRecords
     .filter((r) => parseFloat(r.data.totalApprovedQty || r.data.approvedQty || "0") > 0 || r.status === "completed")
@@ -218,7 +222,6 @@ export default function Stage2() {
     { key: "itemName", label: "Item" },
     { key: "indentQty", label: "Indent Qty" },
     { key: "totalApprovedQty", label: "Total Approved" },
-    { key: "rejectedQty", label: "Rejected Qty" },
     { key: "warehouseLocation", label: "Warehouse" },
     { key: "itemCode", label: "Item Code" },
     { key: "leadTime", label: "Expected Requirement Date" },
@@ -264,13 +267,16 @@ export default function Stage2() {
 
       let successCount = 0;
 
-      for (const record of recordsToSubmit) {
+      // Fetch the current rows once and reuse for all records instead of
+      // re-fetching the whole workflow (with all its joins) on every iteration.
+      const allRows = await fetchIndentWorkflow();
+
+      await Promise.all(recordsToSubmit.map(async (record) => {
         const itemData = (approvalData as any).lineData?.[record.id];
         const finalStatus = itemData?.status || approvalData.status || "approved";
         const finalQty = itemData?.approvedQty || approvalData.approvedQty || record.data.pendingApprovalQty || record.data.quantity;
         const finalVendorType = itemData?.vendorType || approvalData.vendorType || "regular";
 
-        const allRows = await fetchIndentWorkflow();
         const matchingRow = allRows.find((r: any) => r.data.indentNumber === record.data.indentNumber);
 
         if (matchingRow) {
@@ -283,7 +289,7 @@ export default function Stage2() {
           });
           successCount++;
         }
-      }
+      }));
 
       if (successCount > 0) {
         fetchData();

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Loader2, FileText, Search, RefreshCw, Calendar, MessageSquare, User, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react";
-import { cn, parseSheetDate, getFmsTimestamp, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
+import { cn, parseSheetDate, getFmsTimestamp, getPlannedDateForRecord, formatDateTimeFull, getErrorMessage, reportPendingCount } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
 
@@ -104,43 +104,58 @@ export default function Stage9() {
       const selectedRecords = sheetRecords.filter(r => selectedRows.has(r.id));
 
       for (const rec of selectedRecords) {
-        // Find the matching PO
-        const { data: poRows } = await supabase
-          .from("purchase_orders")
-          .select("id")
-          .eq("po_number", rec.data.poNumber)
-          .limit(1);
-
-        const poId = poRows?.[0]?.id;
+        // Use the exact PO row this record was built from — a PO number can
+        // be shared across several items/indents (one purchase_orders row
+        // per item), so looking it up again by po_number alone would grab
+        // an arbitrary sibling row and silently attach billing to the wrong
+        // item, which is why some items never made it through to Payment.
+        const poId = rec.data.poId;
 
         // Find or create tally_billing record
-        if (poId) {
-          const { data: existingBilling } = await supabase
-            .from("tally_billing")
-            .select("id")
-            .eq("po_id", poId)
-            .limit(1);
+        if (!poId) {
+          console.warn(`Skipping billing for ${rec.data.indentNumber}: no matching PO id found.`);
+          continue;
+        }
 
-          if (existingBilling && existingBilling.length > 0) {
-            await supabase
-              .from("tally_billing")
-              .update({
-                accountant_name: formData.checkedStatus === "Yes" ? formData.checkedByAcc : formData.doneBy,
-                verification_status: formData.checkedStatus === "Yes" ? "Verified" : "Pending",
-                vendor_invoice_number: rec.data.invoiceNumber || "",
-                invoice_amount: parseFloat(rec.data.totalWithTax) || parseFloat(rec.data.basicValue) || 0,
-              })
-              .eq("id", existingBilling[0].id);
-          } else {
-            await supabase.from("tally_billing").insert({
-              po_id: poId,
-              vendor_invoice_number: rec.data.invoiceNumber || "",
-              invoice_date: rec.data.invoiceDate || null,
-              invoice_amount: parseFloat(rec.data.totalWithTax) || 0,
+        const { data: existingBilling, error: lookupErr } = await supabase
+          .from("tally_billing")
+          .select("id")
+          .eq("po_id", poId)
+          .limit(1);
+
+        if (lookupErr) throw new Error(`Lookup failed for ${rec.data.indentNumber}: ${getErrorMessage(lookupErr)}`);
+
+        if (existingBilling && existingBilling.length > 0) {
+          const { error: updateErr } = await supabase
+            .from("tally_billing")
+            .update({
               accountant_name: formData.checkedStatus === "Yes" ? formData.checkedByAcc : formData.doneBy,
               verification_status: formData.checkedStatus === "Yes" ? "Verified" : "Pending",
-            });
-          }
+              vendor_invoice_number: rec.data.invoiceNumber || "",
+              invoice_amount: parseFloat(rec.data.totalWithTax) || parseFloat(rec.data.basicValue) || 0,
+            })
+            .eq("id", existingBilling[0].id);
+          if (updateErr) throw new Error(`Update failed for ${rec.data.indentNumber}: ${getErrorMessage(updateErr)}`);
+        } else {
+          // tally_billing.invoice_date is NOT NULL — rec.data.invoiceDate
+          // falls back to the literal string "-" (or is empty) when the
+          // receipt has no received_date, and either one fails the insert
+          // silently (this used to go unchecked). Fall back to today so the
+          // row always gets created; the date can be corrected later.
+          const rawInvoiceDate = rec.data.invoiceDate;
+          const validInvoiceDate = rawInvoiceDate && rawInvoiceDate !== "-"
+            ? rawInvoiceDate
+            : new Date().toISOString().split("T")[0];
+
+          const { error: insertErr } = await supabase.from("tally_billing").insert({
+            po_id: poId,
+            vendor_invoice_number: rec.data.invoiceNumber || "",
+            invoice_date: validInvoiceDate,
+            invoice_amount: parseFloat(rec.data.totalWithTax) || 0,
+            accountant_name: formData.checkedStatus === "Yes" ? formData.checkedByAcc : formData.doneBy,
+            verification_status: formData.checkedStatus === "Yes" ? "Verified" : "Pending",
+          });
+          if (insertErr) throw new Error(`Insert failed for ${rec.data.indentNumber}: ${getErrorMessage(insertErr)}`);
         }
       }
 
@@ -151,8 +166,8 @@ export default function Stage9() {
       fetchData();
 
     } catch (e) {
-      console.error(e);
-      toast.error("Submission failed");
+      console.error("Billing submission failed:", getErrorMessage(e));
+      toast.error(getErrorMessage(e) || "Submission failed");
     } finally {
       setIsSubmitting(false);
     }
@@ -223,6 +238,7 @@ export default function Stage9() {
                 liftNumber: receipt.grn_number || "",
                 vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
                 poNumber: po.po_number || "-",
+                poId: po.id,
                 nextFollowUpDate: "",
                 remarksStage6: "",
                 itemName: po.item_name || indentRow.data.itemName || "-",
@@ -288,7 +304,8 @@ export default function Stage9() {
       }
 
     } catch (e) {
-      console.error("Fetch error:", e);
+      console.error("Fetch error Billing:", getErrorMessage(e));
+      toast.error(`Failed to load Billing data: ${getErrorMessage(e)}`);
     }
     setIsLoading(false);
   };
@@ -313,6 +330,8 @@ export default function Stage9() {
         String(r.data.invoiceNumber || "").toLowerCase().includes(searchLower)
       );
     }), [sheetRecords, searchTerm, warehouseFilter]);
+
+  useEffect(() => { reportPendingCount("Billing", pending.length); }, [pending.length]);
 
   const completed = useMemo(() => sheetRecords
     .filter((r: any) => r.status === "completed")

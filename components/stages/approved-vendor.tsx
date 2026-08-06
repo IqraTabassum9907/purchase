@@ -32,7 +32,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Loader2, Search, CheckCircle2, ShieldCheck, Copy, ExternalLink, CheckCircle, RefreshCw } from "lucide-react";
-import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
+import { formatDate, getPlannedDateForRecord, formatDateTimeFull, getErrorMessage, reportPendingCount } from "@/lib/utils";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow, selectApprovedVendor } from "@/lib/supabase/queries";
@@ -99,14 +99,17 @@ export default function ApprovedVendor() {
         .select("name")
         .eq("is_active", true);
 
+      if (dropErr) console.error("Fetch error Stage 4 (master_approvers):", getErrorMessage(dropErr));
       if (!dropErr && dropRows) {
         setApproverList(dropRows.map((r) => r.name).filter(Boolean));
       }
 
-      const { data: tatRows } = await supabase.from("master_tat_rules").select("*");
+      const { data: tatRows, error: tatErr } = await supabase.from("master_tat_rules").select("*");
+      if (tatErr) console.error("Fetch error Stage 4 (master_tat_rules):", getErrorMessage(tatErr));
       if (tatRows) setTatRules(tatRows);
     } catch (e) {
-      console.error("Fetch error Stage 4:", e);
+      console.error("Fetch error Stage 4:", getErrorMessage(e));
+      toast.error(`Failed to load Approved Vendor data: ${getErrorMessage(e)}`);
     }
     setIsLoading(false);
   };
@@ -145,6 +148,8 @@ export default function ApprovedVendor() {
       g.itemNames.toLowerCase().includes(searchLower)
     );
   }, [sheetRecords, searchTerm]);
+
+  useEffect(() => { reportPendingCount("Approved Vendor", pending.length); }, [pending.length]);
 
   const completed = useMemo(() => sheetRecords
     .filter((r) => r.status === "completed")
@@ -660,13 +665,13 @@ export default function ApprovedVendor() {
               <Label className="text-xs uppercase font-extrabold text-slate-500 tracking-wider block">
                 Vendor Proposals Comparison
               </Label>
-              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
-                <table className="w-full text-xs text-left border-collapse">
+              <div className="border border-slate-200 rounded-xl bg-white shadow-sm overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200">
+                <table className="w-full min-w-max text-xs text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-100 border-b border-slate-200">
-                      <th className="p-3 font-semibold text-slate-700 w-1/4">Field / Item</th>
+                      <th className="p-3 font-semibold text-slate-700 w-1/4 sticky left-0 bg-slate-100">Field / Item</th>
                       {groupVendorOptions.map((v) => (
-                        <th key={v.id} className="p-3 font-semibold text-slate-700 text-center">
+                        <th key={v.id} className="p-3 font-semibold text-slate-700 text-center min-w-40 whitespace-nowrap">
                           Vendor Slot {v.slotNum} ({v.name})
                         </th>
                       ))}
@@ -675,7 +680,7 @@ export default function ApprovedVendor() {
                   <tbody>
                     {/* Payment Terms Row */}
                     <tr className="border-b bg-slate-50/50">
-                      <td className="p-3 font-bold text-slate-600">Payment Terms</td>
+                      <td className="p-3 font-bold text-slate-600 sticky left-0 bg-slate-50 whitespace-nowrap">Payment Terms</td>
                       {groupVendorOptions.map((v) => (
                         <td key={v.id} className="p-3 text-slate-800 text-center">
                           {v.terms && v.terms !== "-" ? (paymentTermsOptions.find(opt => opt.value === v.terms)?.label || v.terms) : "—"}
@@ -685,7 +690,7 @@ export default function ApprovedVendor() {
 
                     {/* Delivery Date Row */}
                     <tr className="border-b bg-slate-50/50">
-                      <td className="p-3 font-bold text-slate-600">Expected Delivery</td>
+                      <td className="p-3 font-bold text-slate-600 sticky left-0 bg-slate-50 whitespace-nowrap">Expected Delivery</td>
                       {groupVendorOptions.map((v) => (
                         <td key={v.id} className="p-3 text-slate-800 text-center">
                           {v.delivery && v.delivery !== "-" ? formatDateDash(v.delivery) : "—"}
@@ -696,7 +701,7 @@ export default function ApprovedVendor() {
                     {/* Rates per Item Rows */}
                     {currentGroup?.records.map((rec: any) => (
                       <tr key={rec.id} className="border-b">
-                        <td className="p-3 font-medium text-slate-700">
+                        <td className="p-3 font-medium text-slate-700 sticky left-0 bg-white whitespace-nowrap">
                           <div className="font-mono text-[10px] text-slate-500">Indent: {rec.data.indentNumber}</div>
                           <div className="font-semibold text-slate-800">{rec.data.itemName}</div>
                           <div className="text-[10px] text-slate-500">Qty: {rec.data.quantity}</div>
@@ -714,7 +719,7 @@ export default function ApprovedVendor() {
 
                     {/* Total Value Row */}
                     <tr className="bg-emerald-50/30 font-bold border-t border-slate-350">
-                      <td className="p-3 text-emerald-800 uppercase tracking-wider text-xs">Total Estimate Value</td>
+                      <td className="p-3 text-emerald-800 uppercase tracking-wider text-xs sticky left-0 bg-emerald-50 whitespace-nowrap">Total Estimate Value</td>
                       {groupVendorOptions.map((v) => (
                         <td key={v.id} className="p-3 text-emerald-900 text-center text-sm font-semibold">
                           {v.totalValue !== null ? `₹${v.totalValue.toLocaleString()}` : "—"}

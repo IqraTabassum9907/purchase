@@ -18,6 +18,11 @@ export default function Sidebar() {
   const { pageAccess, fullName, role, logout } = useAuth();
   const pathname = usePathname();
   const [counts, setCounts] = useState<Record<string, number>>({});
+  // Live counts reported directly by whichever stage page is currently
+  // mounted (see reportPendingCount in lib/utils) — these take precedence
+  // over our own separately-derived `counts` approximation below, since
+  // they're the exact number the page itself shows in its Pending tab.
+  const [liveCounts, setLiveCounts] = useState<Record<string, number>>({});
 
   const handleLogout = () => {
     logout();
@@ -228,6 +233,27 @@ export default function Sidebar() {
     };
   }, [fetchCounts]);
 
+  // A stage page currently on screen reports its own live Pending-tab count
+  // (see reportPendingCount in lib/utils) — trust that over our own
+  // separately-derived approximation for that stage so the badge always
+  // matches what the page itself shows in its Pending tab.
+  useEffect(() => {
+    const handlePendingCount = (e: Event) => {
+      const { stageName, count } = (e as CustomEvent).detail || {};
+      if (!stageName) return;
+      setLiveCounts(prev => ({ ...prev, [stageName]: count }));
+    };
+    window.addEventListener("pendingCountUpdate", handlePendingCount);
+    return () => window.removeEventListener("pendingCountUpdate", handlePendingCount);
+  }, []);
+
+  // A live count is only trustworthy while its page is actually mounted —
+  // drop it on navigation so the fallback approximation takes back over
+  // until the newly-opened page reports its own fresh live count.
+  useEffect(() => {
+    setLiveCounts({});
+  }, [pathname]);
+
   return (
     <>
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-3 py-2 bg-white border-b border-slate-200">
@@ -277,7 +303,7 @@ export default function Sidebar() {
             {filteredStages.map((stage) => {
               const stagePath = `/stages/${stage.slug}`;
               const Icon = stage.icon;
-              const count = stage.name === "Create Indent" ? 0 : (counts[stage.name] || 0);
+              const count = stage.name === "Create Indent" ? 0 : (liveCounts[stage.name] ?? counts[stage.name] ?? 0);
               const active = isActive(stagePath);
               return (
                 <Button

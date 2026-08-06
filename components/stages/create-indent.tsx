@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { X, Loader2, PlusCircle, History as HistoryIcon, LayoutGrid, ClipboardList, FileText, Upload, Search, Check, ChevronsUpDown } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn, parseSheetDate, getFmsTimestamp } from "@/lib/utils";
+import { cn, parseSheetDate, getFmsTimestamp, getErrorMessage } from "@/lib/utils";
 import {
   Command,
   CommandEmpty,
@@ -100,7 +100,8 @@ export default function Stage1() {
 
       setSheetRecords(stage1Rows);
     } catch (e) {
-      console.error("Fetch error:", e);
+      console.error("Fetch error Stage 1:", getErrorMessage(e));
+      toast.error(`Failed to load Create Indent data: ${getErrorMessage(e)}`);
     }
     setIsLoading(false);
   };

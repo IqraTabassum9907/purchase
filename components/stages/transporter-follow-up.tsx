@@ -30,7 +30,7 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord } from "@/lib/utils";
+import { getFmsTimestamp, formatDateTimeFull, calculatePlannedDate, getPlannedDateForRecord, reportPendingCount } from "@/lib/utils";
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
 import { usePagination } from "@/lib/use-pagination";
@@ -319,6 +319,8 @@ export default function TransporterFollowUp() {
         });
     }, [records, searchTerm]);
     const pending = sortedPending; // Use sorted list for display
+
+    React.useEffect(() => { reportPendingCount("Transporter Follow-Up", pending.length); }, [pending.length]);
 
     const pendingPagination = usePagination(pending, 15);
     const historyPagination = usePagination(completed, 15);

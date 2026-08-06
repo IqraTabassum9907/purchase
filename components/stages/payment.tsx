@@ -46,7 +46,7 @@ import {
   Banknote,
   Trash2,
 } from "lucide-react";
-import { formatDate, getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
+import { formatDate, getPlannedDateForRecord, formatDateTimeFull, getErrorMessage, reportPendingCount } from "@/lib/utils";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
@@ -164,17 +164,15 @@ const isDueDateOverdueOrToday = (dueDateStr: any): boolean => {
 
 const defaultBulkForm = () => ({
   paymentMode: "",
+  transactionId: "",
   paymentDate: new Date() as Date | undefined,
   proof: null as File | null,
 });
 
 const defaultFreightForm = () => ({
-  amount: "",
-  paymentDetails: "",
+  paymentMode: "",
+  transactionId: "",
   paymentDate: new Date(),
-  paymentStatus: "pending",
-  totalPaid: "",
-  pendingAmount: "",
   paymentProof: null as File | null,
 });
 
@@ -202,6 +200,8 @@ export default function UnifiedPaymentHub() {
   const [advForm, setAdvForm] = useState({
     paymentRef: "",
     paymentDate: new Date().toISOString().split("T")[0],
+    remarks: "",
+    attachment: null as File | null,
   });
 
   // --- Workflow 2: Vendor Payments state ---
@@ -222,9 +222,11 @@ export default function UnifiedPaymentHub() {
   const [freightHistory, setFreightHistory] = useState<any[]>([]);
   const [freightSelectedColumns, setFreightSelectedColumns] = useState<string[]>(ALL_FREIGHT_COLUMN_KEYS);
   const [freightOpen, setFreightOpen] = useState(false);
-  const [selectedFreightId, setSelectedFreightId] = useState<string | null>(null);
+  const [freightBulkStep, setFreightBulkStep] = useState<"transporter" | "invoices">("transporter");
+  const [selectedBulkTransporter, setSelectedBulkTransporter] = useState("");
+  const [transporterSearch, setTransporterSearch] = useState("");
+  const [bulkFreightInvoices, setBulkFreightInvoices] = useState<Record<string, { selected: boolean; payAmount: string; originalPending: number }>>({});
   const [freightForm, setFreightForm] = useState(defaultFreightForm);
-  const [freightCalcData, setFreightCalcData] = useState({ freightAmount: 0, advanceAmount: 0 });
 
   // Sync sub-workflow with route slug
   useEffect(() => {
@@ -350,8 +352,9 @@ export default function UnifiedPaymentHub() {
               plannedPayment: advPay?.payment_date || null,
               actualPayment: advPay?.status === "Paid" ? advPay.payment_date : null,
               paymentMode: advPay?.payment_mode || "-",
-              transactionRef: advPay?.reference_number || "-",
+              transactionRef: advPay?.transaction_utr || "-",
               paymentProof: advPay?.proof_url || null,
+              remarks: advPay?.remarks || "-",
             }
           };
         });
@@ -368,21 +371,15 @@ export default function UnifiedPaymentHub() {
             p.payment_type === "Advance" || String(p.payment_type || "").toLowerCase().includes("advance")
           );
 
-          let advancePaid = advPayments.reduce((sum: number, p: any) => sum + (parseFloat(p.amount) || 0), 0);
-          if (advancePaid === 0) {
-            advancePaid = parseFloat(po?.advance_amount || po?.advance_amt || "0") || 0;
-          }
-          if (advancePaid === 0 && po?.payment_type) {
-            const match = String(po.payment_type).match(/₹?\s*([\d,]+(?:\.\d+)?)/);
-            if (match && match[1]) {
-              advancePaid = parseFloat(match[1].replace(/,/g, "")) || 0;
-            }
-          }
-          if (advancePaid === 0 && po?.indent_id) {
-            const indent = indentMapById.get(po.indent_id);
-            const indAdv = parseFloat(indent?.data?.advanceAmount || "0") || 0;
-            if (indAdv > 0) advancePaid = indAdv;
-          }
+          // Only count advance as "paid" when a real Advance Payment record
+          // exists (advPayments, sourced from actual vendor_payments rows).
+          // This used to fall back to the PO's *declared* advance_amount (or
+          // even a digit guessed out of the payment_type string) whenever no
+          // advance had actually been paid yet — which wrongly treated a
+          // still-pending advance as already settled and zeroed out the
+          // invoice's pending amount, making it silently vanish from both
+          // the Pending and History tabs here.
+          const advancePaid = advPayments.reduce((sum: number, p: any) => sum + (parseFloat(p.amount) || 0), 0);
 
           const vpPayments = allPayments.filter((p: any) => {
             const isPaid = p.status === "Paid" || !!p.transaction_utr || !!p.payment_mode || (parseFloat(p.amount) > 0);
@@ -444,6 +441,30 @@ export default function UnifiedPaymentHub() {
             }
           };
         });
+
+      // Temporary diagnostic: if a billed item still doesn't show up under
+      // Vendor Payment → Pending, open the browser console and check this
+      // table — it shows exactly why each tally_billing row landed in
+      // "pending" / "history" / "not_ready" instead of guessing again blind.
+      console.log(`Payment Hub: ${(billingData || []).length} tally_billing rows fetched, ${vendorRows.length} mapped, ${vendorRows.filter((r: any) => r.status === "pending").length} landed in Vendor Payment → Pending.`);
+      console.table((billingData || []).map((bill: any) => {
+        const mapped = vendorRows.find((r: any) => r.rowIndex === bill.id);
+        return {
+          billId: bill.id,
+          billPoId: bill.po_id || "(none)",
+          poFoundInPurchaseOrders: !!(bill.po_id && poById.get(bill.po_id)),
+          poNumber: mapped?.data.poNumber || poById.get(bill.po_id)?.po_number || "-",
+          verification_status: bill.verification_status,
+          accountant_name: bill.accountant_name,
+          invoice_amount: bill.invoice_amount,
+          po_total_amount: bill.po_id ? poById.get(bill.po_id)?.total_amount : undefined,
+          resultingStatus: mapped?.status,
+          totalVal: mapped?.data.totalVal,
+          advancePaid: mapped?.data.advanceAmount,
+          totalPaid: mapped?.data.totalPaid,
+          pendingAmount: mapped?.data.pendingAmount,
+        };
+      }));
       const pendingAdv = advRows.filter((r: any) => r.status === "pending");
       const pendingVen = vendorRows.filter((r: any) => r.status === "pending");
       setVendorRecords(pendingVen);
@@ -476,6 +497,7 @@ export default function UnifiedPaymentHub() {
             planned: toDate(plan1),
             actual: toDate(actual1),
             mode: p.payment_mode,
+            transactionId: p.transaction_utr || "-",
             proof: p.proof_url,
             createdAt: indent?.data?.createdAt || null,
           };
@@ -502,6 +524,7 @@ export default function UnifiedPaymentHub() {
             planned: toDate(plan1),
             actual: toDate(actual1),
             mode: p.payment_mode,
+            transactionId: p.transaction_utr || "-",
             proof: p.proof_url,
             createdAt: indent?.data?.createdAt || null,
           };
@@ -635,8 +658,8 @@ export default function UnifiedPaymentHub() {
       });
       setFreightRecords(Array.from(uniqueFreightMap.values()));
     } catch (e) {
-      console.error(e);
-      toast.error("Failed to load payment data");
+      console.error("Fetch error Payment Hub:", getErrorMessage(e));
+      toast.error(`Failed to load payment data: ${getErrorMessage(e)}`);
     }
     setIsLoading(false);
   }, []);
@@ -697,6 +720,11 @@ export default function UnifiedPaymentHub() {
     ));
   }, [freightRecords, searchLower]);
 
+  // Sidebar's single "Payment" entry aggregates all three sub-workflows —
+  // report the same sum it would otherwise have to approximate on its own.
+  const totalPendingPaymentCount = filteredAdvPending.length + filteredVendorPending.length + filteredFreightPending.length;
+  useEffect(() => { reportPendingCount("Payment", totalPendingPaymentCount); }, [totalPendingPaymentCount]);
+
   const filteredFreightHistory = useMemo(() => {
     return freightHistory.filter((r: any) => (
       String(r.lrNo || "").toLowerCase().includes(searchLower) ||
@@ -720,6 +748,8 @@ export default function UnifiedPaymentHub() {
     setAdvForm({
       paymentRef: "",
       paymentDate: new Date().toISOString().split("T")[0],
+      remarks: "",
+      attachment: null,
     });
     setAdvOpen(true);
   };
@@ -734,14 +764,40 @@ export default function UnifiedPaymentHub() {
     setIsSubmitting(true);
     try {
       const advAmt = parseFloat(String(currentAdvRecord.data.advanceAmount || currentAdvRecord.data.totalValue || "0").replace(/[^0-9.]/g, "")) || 0;
-      const { error } = await supabase.from("vendor_payments").insert({
+
+      let proofUrl = "";
+      if (advForm.attachment) {
+        const ext = advForm.attachment.name.split('.').pop() || 'bin';
+        const path = `advance_${currentAdvRecord.data.indentNumber || currentAdvRecord.poId}_${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('payment-proofs').upload(path, advForm.attachment);
+        if (!upErr) {
+          const { data } = supabase.storage.from('payment-proofs').getPublicUrl(path);
+          proofUrl = data?.publicUrl || "";
+        } else {
+          console.warn("Advance payment attachment upload error (bucket missing):", upErr.message);
+          proofUrl = typeof window !== "undefined" ? URL.createObjectURL(advForm.attachment) : "";
+        }
+      }
+
+      const advPayload: Record<string, any> = {
         po_id: currentAdvRecord.poId,
         payment_type: "Advance",
         amount: advAmt,
         payment_date: advForm.paymentDate || new Date().toISOString().split("T")[0],
         transaction_utr: advForm.paymentRef,
+        proof_url: proofUrl,
+        remarks: advForm.remarks || "",
         status: "Paid",
-      });
+      };
+
+      let { error } = await supabase.from("vendor_payments").insert(advPayload);
+      if (error && (error.code === "PGRST204" || error.message?.includes("remarks"))) {
+        // "remarks" column not migrated yet on this deployment — retry without it.
+        const fallbackPayload = { ...advPayload };
+        delete fallbackPayload.remarks;
+        const retryRes = await supabase.from("vendor_payments").insert(fallbackPayload);
+        error = retryRes.error;
+      }
 
       if (error) throw error;
       toast.success("Advance Payment recorded and transitioned successfully!");
@@ -860,6 +916,7 @@ export default function UnifiedPaymentHub() {
           payment_type: "Vendor Payment",
           amount: payAmount,
           payment_mode: bulkFormData.paymentMode,
+          transaction_utr: bulkFormData.transactionId || "",
           payment_date: dateStr,
           proof_url: proofUrl,
           status: paymentStatus,
@@ -884,54 +941,72 @@ export default function UnifiedPaymentHub() {
     }
   };
 
-  // 3. Submit Freight Payments
-  const handleOpenFreightForm = (recordId: string) => {
-    const rec = freightRecords.find(r => r.id === recordId);
-    if (!rec) return;
+  // 3. Bulk Freight Payments (mirrors the Vendor Payment vendor -> invoices flow)
+  const transportersList = useMemo(() => {
+    const list = new Set<string>();
+    freightRecords.forEach((r: any) => { if (r.data.transporter) list.add(r.data.transporter); });
+    return Array.from(list);
+  }, [freightRecords]);
 
-    const freight = rec.data.freightVal;
-    const advance = rec.data.advanceVal;
-    const pendingAmt = rec.data.pendingAmount > 0 ? rec.data.pendingAmount : (freight - advance);
+  const filteredTransportersList = useMemo(() => {
+    const term = transporterSearch.toLowerCase();
+    return transportersList.filter((v: any) => v.toLowerCase().includes(term));
+  }, [transportersList, transporterSearch]);
 
-    setSelectedFreightId(recordId);
-    setFreightForm({
-      amount: (pendingAmt > 0 ? pendingAmt : 0).toFixed(2),
-      paymentDetails: "",
-      paymentDate: new Date(),
-      paymentStatus: pendingAmt <= 1 ? "paid" : "pending",
-      totalPaid: rec.data.totalPaid.toString(),
-      pendingAmount: (pendingAmt > 0 ? pendingAmt : 0).toFixed(2),
-      paymentProof: null,
-    });
-    setFreightCalcData({ freightAmount: freight, advanceAmount: advance });
+  const handleFreightBulkOpen = () => {
+    setSelectedBulkTransporter("");
+    setTransporterSearch("");
+    setBulkFreightInvoices({});
+    setFreightForm(defaultFreightForm());
+    setFreightBulkStep("transporter");
     setFreightOpen(true);
   };
 
-  const handleFreightSubmit = async (e: React.FormEvent) => {
+  const handleSelectTransporter = (transporterName: string) => {
+    setSelectedBulkTransporter(transporterName);
+    const matched = freightRecords.filter((r: any) => r.data.transporter === transporterName);
+    const invoiceStates: Record<string, { selected: boolean; payAmount: string; originalPending: number }> = {};
+    matched.forEach((r: any) => {
+      invoiceStates[r.id] = {
+        selected: false,
+        payAmount: (r.data.pendingAmount || 0).toString(),
+        originalPending: r.data.pendingAmount || 0,
+      };
+    });
+    setBulkFreightInvoices(invoiceStates);
+    setFreightBulkStep("invoices");
+  };
+
+  const freightBulkTotalToPay = useMemo(() => {
+    return Object.entries(bulkFreightInvoices)
+      .filter(([_, info]) => info.selected)
+      .reduce((sum, [_, info]) => sum + (parseFloat(info.payAmount) || 0), 0);
+  }, [bulkFreightInvoices]);
+
+  const handleFreightBulkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFreightId) return;
+    const selectedIds = Object.entries(bulkFreightInvoices)
+      .filter(([_, info]) => info.selected)
+      .map(([id]) => id);
 
-    const rec = freightRecords.find(r => r.id === selectedFreightId);
-    if (!rec) return;
-
-    const payAmount = parseNum(freightForm.amount);
-    const currentPending = rec.data.pendingAmount || 0;
-
-    if (payAmount > currentPending + 0.01) {
-      toast.error(`Freight payment amount (₹${payAmount}) cannot exceed remaining pending balance (₹${currentPending.toFixed(2)}).`);
+    if (selectedIds.length === 0) {
+      toast.error("Please select at least one freight entry.");
+      return;
+    }
+    if (!freightForm.paymentMode) {
+      toast.error("Please select payment mode.");
       return;
     }
 
     setIsSubmitting(true);
-    const toastId = toast.loading("Processing Freight Payment...");
-
+    const toastId = toast.loading("Processing Freight payments...");
     try {
       const dateStr = format(freightForm.paymentDate, "yyyy-MM-dd");
 
       let proofUrl = "";
       if (freightForm.paymentProof) {
         const ext = freightForm.paymentProof.name.split('.').pop() || 'bin';
-        const path = `frt_${rec.data.lrNo}_${Date.now()}.${ext}`;
+        const path = `bulk-frt_${selectedBulkTransporter}_${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from('payment-proofs').upload(path, freightForm.paymentProof);
         if (!upErr) {
           const { data } = supabase.storage.from('payment-proofs').getPublicUrl(path);
@@ -942,27 +1017,56 @@ export default function UnifiedPaymentHub() {
         }
       }
 
-      const payAmount = parseNum(freightForm.amount);
-      const newTotalPaid = (rec.data.totalPaid || 0) + payAmount;
-      const newPending = rec.data.freightVal - newTotalPaid;
-      const paymentStatus = newPending <= 1 ? "Paid" : "Partial";
+      for (const id of selectedIds) {
+        const rec = freightRecords.find(r => r.id === id);
+        if (!rec) continue;
+        const payInfo = bulkFreightInvoices[id];
+        const payAmount = parseFloat(payInfo.payAmount) || 0;
+        const pending = rec.data.pendingAmount || 0;
 
-      const { error } = await supabase.from("vendor_payments").insert({
-        po_id: rec.poId,
-        payment_type: "Freight Payment",
-        amount: payAmount,
-        payment_mode: freightForm.paymentDetails || "",
-        payment_date: dateStr,
-        proof_url: proofUrl,
-        status: paymentStatus,
-      });
+        if (payAmount > pending + 0.01) {
+          toast.error(`Payment amount (₹${payAmount}) for LR ${rec.data.lrNo} cannot exceed remaining pending amount (₹${pending.toFixed(2)}).`, { id: toastId });
+          setIsSubmitting(false);
+          return;
+        }
+      }
 
-      if (error) throw error;
-      toast.success("Freight Payment Recorded!", { id: toastId });
-      setFreightOpen(false);
-      await fetchData();
+      let successCount = 0;
+      for (const id of selectedIds) {
+        const rec = freightRecords.find(r => r.id === id);
+        if (!rec) continue;
+        const payInfo = bulkFreightInvoices[id];
+        const payAmount = parseFloat(payInfo.payAmount) || 0;
+        if (payAmount <= 0) continue;
+
+        const newTotalPaid = (rec.data.totalPaid || 0) + payAmount;
+        const paymentStatus = (rec.data.freightVal - newTotalPaid) <= 1 ? "Paid" : "Partial";
+
+        const { error } = await supabase.from("vendor_payments").insert({
+          po_id: rec.poId,
+          payment_type: "Freight Payment",
+          amount: payAmount,
+          payment_mode: freightForm.paymentMode,
+          transaction_utr: freightForm.transactionId || "",
+          payment_date: dateStr,
+          proof_url: proofUrl,
+          status: paymentStatus,
+        });
+
+        if (!error) successCount++;
+      }
+
+      if (successCount > 0) {
+        toast.success(`Successfully processed ${successCount} freight payment(s)!`, { id: toastId });
+        setFreightOpen(false);
+        setBulkFreightInvoices({});
+        setFreightBulkStep("transporter");
+        await fetchData();
+      } else {
+        toast.error("No freight payments were processed.", { id: toastId });
+      }
     } catch (err: any) {
-      toast.error(err.message || "Freight payment failed", { id: toastId });
+      toast.error(err.message || "Failed to process freight payment", { id: toastId });
     } finally {
       setIsSubmitting(false);
     }
@@ -1017,6 +1121,14 @@ export default function UnifiedPaymentHub() {
             {workflow === "vendor" && (
               <Button
                 onClick={handleBulkOpen}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-md flex items-center gap-2 h-10 px-5 rounded-xl"
+              >
+                <Banknote className="w-4 h-4" /> Process Payment
+              </Button>
+            )}
+            {workflow === "freight" && (
+              <Button
+                onClick={handleFreightBulkOpen}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-md flex items-center gap-2 h-10 px-5 rounded-xl"
               >
                 <Banknote className="w-4 h-4" /> Process Payment
@@ -1223,12 +1335,14 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">Actual Payment Date</TableHead>
                     <TableHead className="font-bold p-3">Payment Reference</TableHead>
+                    <TableHead className="font-bold p-3">Remarks</TableHead>
+                    <TableHead className="font-bold p-3">Attachment</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredAdvHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
                         No advance payment history found.
                       </TableCell>
                     </TableRow>
@@ -1246,7 +1360,9 @@ export default function UnifiedPaymentHub() {
                           {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
                         </TableCell>
                         <TableCell className="p-3 text-slate-600 font-medium">{formatDate(r.data.actualPayment)}</TableCell>
-                        <TableCell className="p-3 font-mono text-xs text-slate-700">{r.data.paymentRef}</TableCell>
+                        <TableCell className="p-3 font-mono text-xs text-slate-700">{r.data.transactionRef}</TableCell>
+                        <TableCell className="p-3 text-slate-500 max-w-[160px] truncate">{r.data.remarks}</TableCell>
+                        <TableCell className="p-3">{renderSafeValue(r.data.paymentProof)}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -1342,6 +1458,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
                     <TableHead className="font-bold p-3">Payment Mode</TableHead>
+                    <TableHead className="font-bold p-3">Transaction ID</TableHead>
                     <TableHead className="font-bold p-3">Status</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">Proof</TableHead>
@@ -1350,7 +1467,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredVendorHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
                         No vendor payment history found.
                       </TableCell>
                     </TableRow>
@@ -1363,6 +1480,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-medium text-slate-700">{r.quantity}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
+                        <TableCell className="p-3 font-mono text-xs text-slate-700">{r.transactionId}</TableCell>
                         <TableCell className="p-3">
                           <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
                             {r.status}
@@ -1391,7 +1509,6 @@ export default function UnifiedPaymentHub() {
               <table className="w-full caption-bottom text-xs min-w-[1250px]">
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
-                    <TableHead className="font-bold p-3">Action</TableHead>
                     <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">LR No.</TableHead>
                     <TableHead className="font-bold p-3">Transporter</TableHead>
@@ -1407,23 +1524,13 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredFreightPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
                         No pending freight payments found.
                       </TableCell>
                     </TableRow>
                   ) : (
                     freightPendingPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
-                        <TableCell className="p-3">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleOpenFreightForm(r.id)}
-                            className="h-7 text-xs font-semibold px-2.5 hover:bg-slate-100 hover:text-black"
-                          >
-                            Pay
-                          </Button>
-                        </TableCell>
                         <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.data.createdAt)}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.data.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.transporter}</TableCell>
@@ -1461,6 +1568,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
                     <TableHead className="font-bold p-3">Payment Mode</TableHead>
+                    <TableHead className="font-bold p-3">Transaction ID</TableHead>
                     <TableHead className="font-bold p-3">Status</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">Proof</TableHead>
@@ -1469,7 +1577,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredFreightHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
                         No freight payment history found.
                       </TableCell>
                     </TableRow>
@@ -1482,6 +1590,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-medium text-slate-700">{r.quantity}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
+                        <TableCell className="p-3 font-mono text-xs text-slate-700">{r.transactionId}</TableCell>
                         <TableCell className="p-3">
                           <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
                             {r.status}
@@ -1535,6 +1644,29 @@ export default function UnifiedPaymentHub() {
                 required
                 className="border-slate-200 focus-visible:ring-slate-400"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Remarks</Label>
+              <Textarea
+                value={advForm.remarks}
+                onChange={(e) => setAdvForm({ ...advForm, remarks: e.target.value })}
+                placeholder="Optional notes about this advance payment..."
+                className="border-slate-200 focus-visible:ring-slate-400 min-h-16 resize-none"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Attachment</Label>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                onChange={(e) => setAdvForm({ ...advForm, attachment: e.target.files?.[0] || null })}
+                className="hidden"
+                id="adv-payment-attachment"
+              />
+              <label htmlFor="adv-payment-attachment" className="flex h-10 items-center justify-center border border-slate-200 rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-600 transition-colors">
+                <Upload className="mr-2 h-4 w-4 text-slate-500" />
+                {advForm.attachment ? advForm.attachment.name : "Choose attachment..."}
+              </label>
             </div>
             <DialogFooter className="pt-4 border-t">
               <Button type="button" variant="outline" onClick={() => setAdvOpen(false)} disabled={isSubmitting}>
@@ -1598,6 +1730,8 @@ export default function UnifiedPaymentHub() {
                       <TableHead className="w-12 text-center p-3">Select</TableHead>
                       <TableHead className="p-3">Invoice No</TableHead>
                       <TableHead className="p-3">PO Number</TableHead>
+                      <TableHead className="p-3 text-right">Total</TableHead>
+                      <TableHead className="p-3 text-right">Advance</TableHead>
                       <TableHead className="p-3 text-right">Pending Amount</TableHead>
                       <TableHead className="p-3 text-right">Paying Amount</TableHead>
                     </TableRow>
@@ -1622,6 +1756,8 @@ export default function UnifiedPaymentHub() {
                             </TableCell>
                             <TableCell className="p-3 font-semibold text-slate-700">{r.data.invoiceNo}</TableCell>
                             <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
+                            <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
+                            <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
                             <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.data.pendingAmount)}</TableCell>
                             <TableCell className="p-3">
                               <Input
@@ -1662,6 +1798,15 @@ export default function UnifiedPaymentHub() {
                         <SelectItem value="Cash">Cash</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-slate-700">Transaction ID</Label>
+                    <Input
+                      value={bulkFormData.transactionId}
+                      onChange={(e) => setBulkFormData(prev => ({ ...prev, transactionId: e.target.value }))}
+                      placeholder="e.g. TXN-1002345"
+                      className="border-slate-200 focus-visible:ring-slate-400"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold text-slate-700">Payment Date</Label>
@@ -1721,104 +1866,187 @@ export default function UnifiedPaymentHub() {
         </DialogContent>
       </Dialog>
 
-      {/* --- Workflow 3 Dialog: Record Freight Payment --- */}
+      {/* --- Workflow 3 Dialog: Bulk Freight Payment (mirrors Vendor Payment's flow) --- */}
       <Dialog open={freightOpen} onOpenChange={setFreightOpen}>
-        <DialogContent className="max-w-2xl bg-white border shadow-lg rounded-2xl flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-slate-950">Transporter Freight Payment</DialogTitle>
+        <DialogContent className="max-w-4xl bg-white border shadow-lg rounded-2xl flex flex-col max-h-[85vh]">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="text-lg font-bold text-slate-950">Bulk Freight Payment</DialogTitle>
             <DialogDescription className="text-slate-500 text-xs">
-              Confirm payment for Freight LR No. <span className="font-bold text-slate-800">{freightRecords.find(r => r.id === selectedFreightId)?.data.lrNo}</span>.
+              Select a transporter and freight entries to process payments in batch.
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleFreightSubmit} className="space-y-4 pt-2">
-            {/* Calculation info box */}
-            <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 border rounded-xl text-center text-xs">
-              <div>
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Freight Amount</span>
-                <span className="font-bold text-slate-800">{formatAmount(freightCalcData.freightAmount)}</span>
-              </div>
-              <div>
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Advance Paid</span>
-                <span className="font-bold text-emerald-600">{formatAmount(freightCalcData.advanceAmount)}</span>
-              </div>
-              <div>
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Calculated Due</span>
-                <span className="font-bold text-red-600">{formatAmount(freightCalcData.freightAmount - freightCalcData.advanceAmount)}</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-700">Amount Paying</Label>
+          {freightBulkStep === "transporter" ? (
+            <div className="flex-1 overflow-hidden flex flex-col space-y-4 pt-2">
+              <div className="relative shrink-0">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
                 <Input
-                  type="number"
-                  step="0.01"
-                  value={freightForm.amount}
-                  onChange={(e) => setFreightForm({ ...freightForm, amount: e.target.value })}
-                  placeholder="0.00"
-                  required
-                  className="border-slate-200 focus-visible:ring-slate-400 font-bold"
+                  placeholder="Search transporter name..."
+                  value={transporterSearch}
+                  onChange={(e) => setTransporterSearch(e.target.value)}
+                  className="pl-9 bg-white border-slate-200"
                 />
               </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-700">Payment Date</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start h-10 text-left border-slate-200">
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {freightForm.paymentDate ? format(freightForm.paymentDate, "PPP") : <span>Pick date</span>}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0 bg-white border">
-                    <Calendar
-                      mode="single"
-                      selected={freightForm.paymentDate}
-                      onSelect={(d) => d && setFreightForm({ ...freightForm, paymentDate: d })}
-                    />
-                  </PopoverContent>
-                </Popover>
+              <div className="flex-1 overflow-y-auto border border-slate-100 rounded-xl bg-slate-50/50 p-2 space-y-1">
+                {filteredTransportersList.length === 0 ? (
+                  <div className="py-8 text-center text-slate-400 text-sm">No transporters found with pending freight payments.</div>
+                ) : (
+                  filteredTransportersList.map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => handleSelectTransporter(v)}
+                      className="w-full text-left px-4 py-3 bg-white hover:bg-slate-100/80 border rounded-lg shadow-sm text-sm font-semibold text-slate-900 transition-colors"
+                    >
+                      {v}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
+          ) : (
+            <form onSubmit={handleFreightBulkSubmit} className="flex-1 overflow-hidden flex flex-col space-y-4 pt-2">
+              <div className="font-bold text-sm text-slate-800">
+                Transporter: <span className="text-emerald-700 font-extrabold">{selectedBulkTransporter}</span>
+              </div>
+              <div className="flex-1 overflow-y-auto border rounded-xl overflow-hidden shadow-sm">
+                <Table className="text-xs">
+                  <TableHeader className="bg-slate-50 sticky top-0">
+                    <TableRow>
+                      <TableHead className="w-12 text-center p-3">Select</TableHead>
+                      <TableHead className="p-3">LR No</TableHead>
+                      <TableHead className="p-3">PO Number</TableHead>
+                      <TableHead className="p-3 text-right">Freight Amt</TableHead>
+                      <TableHead className="p-3 text-right">Pending Amount</TableHead>
+                      <TableHead className="p-3 text-right">Paying Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {freightRecords
+                      .filter(r => r.data.transporter === selectedBulkTransporter)
+                      .map((r) => {
+                        const info = bulkFreightInvoices[r.id] || { selected: false, payAmount: "0" };
+                        return (
+                          <TableRow key={r.id} className="hover:bg-slate-50/30">
+                            <TableCell className="text-center p-3">
+                              <Checkbox
+                                checked={info.selected}
+                                onCheckedChange={(chk) => {
+                                  setBulkFreightInvoices(prev => ({
+                                    ...prev,
+                                    [r.id]: { ...prev[r.id], selected: !!chk },
+                                  }));
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="p-3 font-semibold text-slate-700">{r.data.lrNo}</TableCell>
+                            <TableCell className="p-3 font-mono text-xs">{r.data.invoiceNo}</TableCell>
+                            <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.freightAmount)}</TableCell>
+                            <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
+                            <TableCell className="p-3">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={info.payAmount}
+                                disabled={!info.selected}
+                                onChange={(e) => {
+                                  setBulkFreightInvoices(prev => ({
+                                    ...prev,
+                                    [r.id]: { ...prev[r.id], payAmount: e.target.value },
+                                  }));
+                                }}
+                                className="h-8 text-xs max-w-[120px] ml-auto border-slate-200 text-right font-bold"
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Payment Reference / Details</Label>
-              <Input
-                value={freightForm.paymentDetails}
-                onChange={(e) => setFreightForm({ ...freightForm, paymentDetails: e.target.value })}
-                placeholder="RTGS / Cheque Reference Details"
-                className="border-slate-200 focus-visible:ring-slate-400"
-              />
-            </div>
+              {/* Payment info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4 shrink-0">
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-slate-700">Payment Mode</Label>
+                    <Select
+                      value={freightForm.paymentMode}
+                      onValueChange={(val: string) => setFreightForm(prev => ({ ...prev, paymentMode: val }))}
+                    >
+                      <SelectTrigger className="border-slate-200"><SelectValue placeholder="Select mode" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="RTGS">RTGS / Bank Transfer</SelectItem>
+                        <SelectItem value="Cheque">Cheque</SelectItem>
+                        <SelectItem value="DD">Demand Draft</SelectItem>
+                        <SelectItem value="Cash">Cash</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-slate-700">Transaction ID</Label>
+                    <Input
+                      value={freightForm.transactionId}
+                      onChange={(e) => setFreightForm({ ...freightForm, transactionId: e.target.value })}
+                      placeholder="e.g. TXN-1002345"
+                      className="border-slate-200 focus-visible:ring-slate-400"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-slate-700">Payment Date</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" className="w-full justify-start h-10 text-left border-slate-200">
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {freightForm.paymentDate ? format(freightForm.paymentDate, "PPP") : <span>Pick date</span>}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0 bg-white border">
+                        <Calendar
+                          mode="single"
+                          selected={freightForm.paymentDate}
+                          onSelect={(d) => d && setFreightForm(prev => ({ ...prev, paymentDate: d }))}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Upload Bilty / Receipt Copy</Label>
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null;
-                  setFreightForm(prev => ({ ...prev, paymentProof: file }));
-                }}
-                className="hidden"
-                id="freight-payment-proof-file"
-              />
-              <label htmlFor="freight-payment-proof-file" className="flex h-10 items-center justify-center border border-slate-200 rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-600 transition-colors">
-                <Upload className="mr-2 h-4 w-4 text-slate-500" />
-                {freightForm.paymentProof ? freightForm.paymentProof.name : "Choose receipt copy..."}
-              </label>
-            </div>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-slate-700">Upload Bilty / Receipt Copy</Label>
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setFreightForm(prev => ({ ...prev, paymentProof: file }));
+                      }}
+                      className="hidden"
+                      id="freight-payment-proof-file"
+                    />
+                    <label htmlFor="freight-payment-proof-file" className="flex h-10 items-center justify-center border border-slate-200 rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-600 transition-colors">
+                      <Upload className="mr-2 h-4 w-4 text-slate-500" />
+                      {freightForm.paymentProof ? freightForm.paymentProof.name : "Choose receipt copy..."}
+                    </label>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-lg flex justify-between items-center h-10 border border-slate-150">
+                    <span className="text-xs font-bold text-slate-500">TOTAL TO PAY:</span>
+                    <span className="text-sm font-extrabold text-slate-900">{formatAmount(freightBulkTotalToPay)}</span>
+                  </div>
+                </div>
+              </div>
 
-            <DialogFooter className="pt-4 border-t">
-              <Button type="button" variant="outline" onClick={() => setFreightOpen(false)} disabled={isSubmitting}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting} className="bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm">
-                {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Submit Payment"}
-              </Button>
-            </DialogFooter>
-          </form>
+              <DialogFooter className="pt-4 border-t shrink-0">
+                <Button type="button" variant="outline" onClick={() => setFreightBulkStep("transporter")} disabled={isSubmitting}>
+                  Back
+                </Button>
+                <Button type="submit" disabled={isSubmitting || freightBulkTotalToPay <= 0 || !freightForm.paymentMode} className="bg-blue-700 text-white hover:bg-blue-800 font-semibold px-6 shadow-sm">
+                  {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Submit Payment"}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>

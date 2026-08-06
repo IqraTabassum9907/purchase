@@ -26,6 +26,8 @@ const paymentTermsOptions = [
   { value: "90", label: "90 days" }
 ];
 
+const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
+
 export default function PublicQuotationForm() {
   const searchParams = useSearchParams();
   const idParam = searchParams.get("id"); // e.g. "IND-001_8"
@@ -233,7 +235,14 @@ export default function PublicQuotationForm() {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 md:p-8">
       <Card className="max-w-3xl w-full bg-white shadow-xl rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="bg-slate-900 text-white p-6 md:p-8 space-y-2">
+        <div className="bg-slate-900 text-white p-6 md:p-8 space-y-3">
+          <div className="flex items-center gap-3">
+            <img src="/nutech-logo.png" alt="Nutech Logo" className="h-10 w-auto max-w-[140px] object-contain rounded shrink-0" />
+            <div className="min-w-0 max-w-md">
+              <h2 className="text-lg font-bold leading-tight">Nutech</h2>
+              <p className="text-slate-300 text-xs leading-snug line-clamp-2 wrap-break-word" title={NUTECH_ADDRESS}>{NUTECH_ADDRESS}</p>
+            </div>
+          </div>
           <CardTitle className="text-xl md:text-2xl font-bold tracking-tight">Vendor Quotation Submission</CardTitle>
           <CardDescription className="text-slate-300 text-sm">
             Please submit your commercial proposal details for the indent lift request below.

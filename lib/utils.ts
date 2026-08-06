@@ -6,6 +6,43 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Broadcasts the *actual* Pending-tab count a stage page just computed, so
+ * the sidebar badge for that stage can mirror it exactly instead of relying
+ * solely on its own separately-derived (and easily out-of-sync) count.
+ * Call this from a stage page's render/effect whenever its `pending` list
+ * changes — Sidebar listens for "pendingCountUpdate" and merges it in.
+ */
+export function reportPendingCount(stageName: string, count: number) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("pendingCountUpdate", { detail: { stageName, count } }));
+}
+
+/**
+ * Extracts a human-readable message from any thrown value, including
+ * Supabase/Postgrest error objects (which don't stringify usefully via
+ * console.error and just show up as "Object" in the browser console).
+ */
+export function getErrorMessage(e: unknown): string {
+  if (!e) return "Unknown error";
+  if (typeof e === "string") return e;
+  const err = e as any;
+  return (
+    err.message ||
+    err.error_description ||
+    err.details ||
+    err.hint ||
+    (err.code ? `Error code: ${err.code}` : "") ||
+    (() => {
+      try {
+        return JSON.stringify(err);
+      } catch {
+        return String(err);
+      }
+    })()
+  );
+}
+
+/**
  * Parses dates from Google Sheets, handling DD/MM/YYYY and other common formats.
  */
 export function parseSheetDate(dateStr: string | Date | null | undefined): Date | null {

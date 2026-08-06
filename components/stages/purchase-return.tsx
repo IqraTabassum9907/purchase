@@ -25,7 +25,7 @@ import {
 
 import { supabase } from "@/lib/supabase/client";
 import { fetchIndentWorkflow } from "@/lib/supabase/queries";
-import { getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils";
+import { getPlannedDateForRecord, formatDateTimeFull, reportPendingCount } from "@/lib/utils";
 import { usePagination } from "@/lib/use-pagination";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 
@@ -58,7 +58,7 @@ const HISTORY_COLUMNS = [
   { key: "returnReason", label: "Reason" },
   { key: "returnStatus", label: "Status" },
   { key: "returnItemImage", label: "Item Img" },
-  { key: "creditNoteImage", label: "Credit Note" },
+  { key: "creditNoteImage", label: "Debit Note" },
 ];
 
 const formatDateDash = (date: any) => {
@@ -273,6 +273,8 @@ export default function Stage12() {
       );
     });
   }, [sheetRecords, searchTerm]);
+
+  useEffect(() => { reportPendingCount("Purchase Return", pending.length); }, [pending.length]);
 
   const completed = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
@@ -680,7 +682,7 @@ export default function Stage12() {
                 }} />
               </div>
               <div>
-                <Label>Credit Note Image</Label>
+                <Label>Debit Note Image</Label>
                 <Input type="file" accept="image/*" onChange={(e) => {
                   const file = e.target.files?.[0] || null;
                   setFormData(prev => ({ ...prev, creditNoteImage: file }));
