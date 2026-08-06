@@ -266,6 +266,7 @@ export default function FollowUpLifting() {
     { key: "plannedDate", label: "Planned Date", icon: null },
     { key: "lastFollowUpDate", label: "Last Follow Up Date", icon: null },
     { key: "totalLifted", label: "Total Dispatch Qty", icon: null },
+    { key: "cancelledQty", label: "Cancel Qty", icon: null },
     { key: "pendingLifted", label: "Pending Dispatch Qty", icon: null },
     { key: "estimatedDate", label: "Next Follow Up Date", icon: null },
     { key: "remarksFollowUp", label: "Last Follow Up Remark", icon: null },
@@ -283,19 +284,30 @@ export default function FollowUpLifting() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [workflow, poResult, liftingResult, transResult, whResult, tatResult] = await Promise.all([
+      const [workflow, poResult, liftingResult, transResult, whResult, tatResult, cancelResult] = await Promise.all([
         fetchIndentWorkflow(),
         supabase.from("purchase_orders").select("*"),
         supabase.from("vendor_liftings").select("*"),
         supabase.from("master_transporters").select("transporter_name").eq("is_active", true),
         supabase.from("master_warehouses").select("name").eq("is_active", true),
         supabase.from("master_tat_rules").select("*"),
+        supabase.from("order_cancellations").select("po_id, financial_impact"),
       ]);
 
       if (tatResult.data) setTatRules(tatResult.data);
 
       const poData = poResult.data || [];
       const liftingData = liftingResult.data || [];
+
+      // financial_impact on order_cancellations actually stores the
+      // cancelled quantity (see order-cancel.tsx) — sum it per PO so pending
+      // lifting can account for quantity that's been cancelled, not just
+      // quantity still awaiting dispatch.
+      const cancelQtyByPoId = new Map<string, number>();
+      (cancelResult.data || []).forEach((c: any) => {
+        if (!c.po_id) return;
+        cancelQtyByPoId.set(c.po_id, (cancelQtyByPoId.get(c.po_id) || 0) + (parseFloat(c.financial_impact) || 0));
+      });
 
       if (transResult.data) {
         setTransporterList(transResult.data.map((r: any) => r.transporter_name).filter(Boolean));
@@ -386,6 +398,7 @@ export default function FollowUpLifting() {
                 remarksFollowUp: "",
                 lastFollowUpDate: "",
                 totalLifted: "0",
+                cancelledQty: "0",
                 pendingLifted: String(row.data.quantity || 0),
                 liftingData: { liftingQty: String(row.data.quantity || 0) },
               },
@@ -400,10 +413,11 @@ export default function FollowUpLifting() {
             const poLiftings = liftingsByPoId.get(po.id) || [];
             const totalQty = parseFloat(String(po.quantity || row.data.quantity || "0").replace(/,/g, "")) || 0;
             const totalLiftedSoFar = poLiftings.reduce((sum: number, l: any) => sum + (parseFloat(String(l.lifting_qty || "0").replace(/,/g, "")) || 0), 0);
-            const pendingLiftQty = Math.max(0, totalQty - totalLiftedSoFar);
+            const cancelledQty = cancelQtyByPoId.get(po.id) || 0;
+            const pendingLiftQty = Math.max(0, totalQty - (totalLiftedSoFar + cancelledQty));
 
             let status = "pending";
-            if (totalLiftedSoFar >= totalQty && totalQty > 0) {
+            if ((totalLiftedSoFar + cancelledQty) >= totalQty && totalQty > 0) {
               status = "completed";
             }
 
@@ -436,6 +450,7 @@ export default function FollowUpLifting() {
                 remarksFollowUp: latestLifting?.remarks || "",
                 lastFollowUpDate: latestLifting?.followup_date || "",
                 totalLifted: String(totalLiftedSoFar),
+                cancelledQty: String(cancelledQty),
                 pendingLifted: String(pendingLiftQty),
                 poNumber: po.po_number,
                 liftingData: latestLifting && latestLifting.lifting_status === "Complete"
@@ -1258,7 +1273,7 @@ export default function FollowUpLifting() {
                     {baseColumns
                       .filter((c) => selectedColumns.includes(c.key))
                       .map((c) => (
-                        <TableHead key={c.key} className={cn((c.key === "totalLifted" || c.key === "pendingLifted") && "text-center")}>
+                        <TableHead key={c.key} className={cn((c.key === "totalLifted" || c.key === "cancelledQty" || c.key === "pendingLifted") && "text-center")}>
                           {c.label}
                         </TableHead>
                       ))}
@@ -1296,7 +1311,7 @@ export default function FollowUpLifting() {
                           {baseColumns
                             .filter((c) => selectedColumns.includes(c.key))
                             .map((col) => (
-                              <TableCell key={col.key} className={cn((col.key === "totalLifted" || col.key === "pendingLifted") && "text-center")}>
+                              <TableCell key={col.key} className={cn((col.key === "totalLifted" || col.key === "cancelledQty" || col.key === "pendingLifted") && "text-center")}>
                                 {col.key === "supplierName" ? (
                                   <span className="font-semibold text-slate-800">{record.data.supplierName || v.name}</span>
                                 ) : col.key === "createdAtCol" ? (

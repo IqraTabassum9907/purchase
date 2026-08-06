@@ -30,10 +30,14 @@ export default function Sidebar() {
   };
 
   const isPageAllowed = useCallback((pageName: string) => {
+    // Settings manages logins/passwords — restricted to Admins regardless of
+    // the page_access bypass rules below, and never auto-granted just
+    // because a user has no explicit page_access list configured.
+    if (pageName === "Settings") return role === "Admin";
     if (!pageAccess || pageAccess.length === 0) return true;
     if (pageName === "Order Cancel" || pageName === "Master") return true;
     return pageAccess.includes(pageName);
-  }, [pageAccess]);
+  }, [pageAccess, role]);
 
   const filteredStages = useMemo(() => STAGES.filter(stage => isPageAllowed(stage.name)), [isPageAllowed]);
   const showDashboard = isPageAllowed("Dashboard");

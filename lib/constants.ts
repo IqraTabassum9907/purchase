@@ -1,7 +1,8 @@
 import {
     PlusCircle, CheckCircle2, Users, MessagesSquare, FileEdit,
     Phone, Package, ClipboardCheck, FileText, Upload, ShieldCheck,
-    CornerUpLeft, CreditCard, Truck, TruckIcon, ShieldAlert, LayoutGrid, AlertCircle, XCircle
+    CornerUpLeft, CreditCard, Truck, TruckIcon, ShieldAlert, LayoutGrid, AlertCircle, XCircle,
+    Settings
 } from "lucide-react";
 
 export const STAGES = [
@@ -18,4 +19,5 @@ export const STAGES = [
     { num: 11, name: "Billing", slug: "receipt-in-tally", icon: FileText },
     { num: 12, name: "Order Cancel", slug: "order-cancel", icon: XCircle },
     { num: 13, name: "Master", slug: "master", icon: LayoutGrid },
+    { num: 14, name: "Settings", slug: "settings", icon: Settings },
 ];

@@ -8,11 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Checkbox } from "@/components/ui/checkbox"
-import { RefreshCw, Search, Plus, Loader2, AlertCircle, XCircle, Check, ChevronsUpDown } from "lucide-react"
+import { RefreshCw, Search, Plus, Loader2, AlertCircle, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { supabase } from "@/lib/supabase/client"
@@ -21,94 +18,30 @@ import { getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils"
 import { usePagination } from "@/lib/use-pagination"
 import { PaginationBar } from "@/components/ui/pagination-bar"
 
-const ItemCombobox = ({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-}) => {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-
-  const filteredOptions = useMemo(() => {
-    if (!query) return options;
-    return options.filter((option) =>
-      option.toLowerCase().includes(query.toLowerCase())
-    );
-  }, [options, query]);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className="w-full justify-between bg-white border-slate-200 text-left font-normal"
-        >
-          <span className="truncate">{value ? value : "Select item..."}</span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-        <Command shouldFilter={false}>
-          <CommandInput
-            placeholder="Search item..."
-            value={query}
-            onValueChange={setQuery}
-          />
-          <CommandList className="max-h-[300px] overflow-y-auto">
-            <CommandEmpty>No item found.</CommandEmpty>
-            <CommandGroup>
-              {filteredOptions.map((option) => (
-                <CommandItem
-                  key={option}
-                  value={option}
-                  onSelect={() => {
-                    onChange(option);
-                    setOpen(false);
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      value === option ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  {option}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-};
-
 export default function OrderCancelPage() {
+  // Cancellation is only ever done off the Follow UP / Lifting pending set
+  // (search only looks there), so the stage is fixed rather than a pickable
+  // dropdown — no other stage can produce a cancellable record here.
+  const FIXED_CANCEL_STAGE = "Follow UP / Lifting"
   const [orderNumber, setOrderNumber] = useState("")
-  const [cancelStage, setCancelStage] = useState("")
+  const [cancelStage, setCancelStage] = useState(FIXED_CANCEL_STAGE)
   const [cancelReason, setCancelReason] = useState("")
   const [cancelQuantities, setCancelQuantities] = useState<Record<string, string>>({})
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [cancelledOrders, setCancelledOrders] = useState<any[]>([])
-  const [cancellationStageOptions, setCancellationStageOptions] = useState<string[]>([])
   const [tatRules, setTatRules] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  // Refactored Search States
-  const [searchType, setSearchType] = useState<"indent-no" | "po-number" | "item-name">("indent-no")
+  // Search is by Indent Number only, and only against indents that are
+  // currently Pending in the Follow UP / Lifting stage — this is the same
+  // "still has quantity left to lift" set that page itself shows, so an
+  // order can only be cancelled while it's genuinely still pending there.
   const [searchQuery, setSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [selectedSearchRowIds, setSelectedSearchRowIds] = useState<string[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
-  const [dropdownItemsList, setDropdownItemsList] = useState<string[]>([])
 
   const [searchTerm, setSearchTerm] = useState("")
 
@@ -204,6 +137,10 @@ export default function OrderCancelPage() {
         const totalLiftedQty = recData?.totalLiftedQty || 0;
         const receivedQty = recData?.totalReceivedQty || 0;
         const pendingQty = poQty - cancelQty - receivedQty;
+        // unit_rate on purchase_orders stores the line's basic value (rate x qty),
+        // not a true per-unit rate — divide back out by qty to get the actual rate.
+        const rate = poQty > 0 ? (parseFloat(po?.unit_rate) || 0) / poQty : 0;
+        const amount = cancelQty * rate;
 
         orders.push({
           id: cancel.id,
@@ -221,6 +158,8 @@ export default function OrderCancelPage() {
           totalLiftedQty,
           receivedQty,
           pendingQty,
+          rate,
+          amount,
         });
       });
 
@@ -234,59 +173,8 @@ export default function OrderCancelPage() {
     }
   }
 
-  const fetchCancelStages = async () => {
-    try {
-      const { data: rows, error } = await supabase
-        .from("master_cancel_stages")
-        .select("name")
-        .eq("is_active", true);
-
-      if (error) throw error;
-
-      let uniqueOptions = (rows || []).map((r: any) => r.name).filter(Boolean);
-      if (uniqueOptions.length === 0) {
-        uniqueOptions = [
-          "Create Indent",
-          "Indent Approval",
-          "Quotation",
-          "Approved Vendor",
-          "Make PO",
-          "Payment",
-          "Follow UP / Lifting",
-          "Transporter Follow-Up",
-          "Material Received",
-          "Billing",
-          "Purchase Return",
-          "Order Cancel"
-        ]
-      }
-      setCancellationStageOptions(uniqueOptions)
-    } catch (err) {
-      console.error("Error fetching cancel stages:", err)
-    }
-  }
-
-  const fetchDropdownItems = async () => {
-    try {
-      const { data: rows, error } = await supabase
-        .from("master_items")
-        .select("item_name")
-        .eq("is_active", true);
-
-      if (error) throw error;
-
-      const items = (rows || []).map((r: any) => r.item_name).filter(Boolean);
-      const uniqueItems = Array.from(new Set(items)) as string[]
-      setDropdownItemsList(uniqueItems)
-    } catch (err) {
-      console.error("Error fetching items from master_items:", err)
-    }
-  }
-
   useEffect(() => {
     fetchCancelledOrders()
-    fetchCancelStages()
-    fetchDropdownItems()
   }, [])
 
   // Filter orders based on search term
@@ -318,38 +206,37 @@ export default function OrderCancelPage() {
     setSelectedSearchRowIds([])
 
     try {
-      const [indentRows, { data: poData }, { data: receiptData }] = await Promise.all([
+      const [indentRows, { data: poData }, { data: liftingData }, { data: cancelData }] = await Promise.all([
         fetchIndentWorkflow(),
         supabase.from("purchase_orders").select("*"),
-        supabase.from("material_receipts").select("*"),
+        supabase.from("vendor_liftings").select("po_id, lifting_qty"),
+        supabase.from("order_cancellations").select("po_id, financial_impact"),
       ])
 
-      const poByIndentId = new Map<string, any>();
+      // Same "still pending" set Follow UP / Lifting itself shows: one row
+      // per PO, pending while (lifted + already cancelled) hasn't used up
+      // the full PO quantity yet.
+      const posByIndentId = new Map<string, any[]>();
       (poData || []).forEach((po: any) => {
-        if (po.indent_id && !poByIndentId.has(po.indent_id)) {
-          poByIndentId.set(po.indent_id, po);
+        if (po.indent_id) {
+          const list = posByIndentId.get(po.indent_id) || [];
+          list.push(po);
+          posByIndentId.set(po.indent_id, list);
         }
       });
 
-      const poById = new Map<string, any>();
-      (poData || []).forEach((po: any) => poById.set(po.id, po));
+      const liftedByPoId = new Map<string, number>();
+      (liftingData || []).forEach((l: any) => {
+        if (!l.po_id) return;
+        liftedByPoId.set(l.po_id, (liftedByPoId.get(l.po_id) || 0) + (parseFloat(l.lifting_qty) || 0));
+      });
 
-      const recMap = new Map<string, { receivedQty: number; invoiceNos: string[] }>();
-      (receiptData || []).forEach((r: any) => {
-        const po = r.po_id ? poById.get(r.po_id) : null;
-        const indentId = po?.indent_id;
-        if (indentId) {
-          const existing = recMap.get(indentId) || { receivedQty: 0, invoiceNos: [] };
-          const newInvNos = [...existing.invoiceNos];
-          const invNo = r.grn_number || "";
-          if (invNo && invNo !== "—" && invNo !== "-" && !newInvNos.includes(invNo)) {
-            newInvNos.push(invNo);
-          }
-          recMap.set(indentId, {
-            receivedQty: existing.receivedQty + (r.received_quantity || 0),
-            invoiceNos: newInvNos
-          });
-        }
+      // financial_impact on order_cancellations stores the cancelled
+      // quantity (see submitCancellation below), not a monetary amount.
+      const cancelledByPoId = new Map<string, number>();
+      (cancelData || []).forEach((c: any) => {
+        if (!c.po_id) return;
+        cancelledByPoId.set(c.po_id, (cancelledByPoId.get(c.po_id) || 0) + (parseFloat(c.financial_impact) || 0));
       });
 
       const query = searchQuery.toLowerCase().trim()
@@ -357,46 +244,41 @@ export default function OrderCancelPage() {
 
       indentRows.forEach((row: any) => {
         const indentNumber = row.data.indentNumber;
-        const poNumber = row.data.poNumber;
-        const itemName = row.data.itemName;
+        if (!indentNumber || !indentNumber.toLowerCase().includes(query)) return;
 
-        if (!indentNumber) return;
+        const posForIndent = posByIndentId.get(row.id) || [];
+        posForIndent.forEach((po: any) => {
+          const poQty = parseFloat(po.quantity) || 0;
+          const liftedQty = liftedByPoId.get(po.id) || 0;
+          const cancelledQty = cancelledByPoId.get(po.id) || 0;
+          const remainingQty = Math.max(0, poQty - (liftedQty + cancelledQty));
 
-        let isMatch = false;
-        if (searchType === "indent-no") {
-          isMatch = indentNumber.toLowerCase().includes(query);
-        } else if (searchType === "po-number") {
-          isMatch = poNumber.toLowerCase().includes(query);
-        } else if (searchType === "item-name") {
-          isMatch = itemName.toLowerCase().includes(query);
-        }
+          // Only still-pending-in-Follow-Up POs can be cancelled here.
+          if (remainingQty <= 0) return;
 
-        if (isMatch) {
-          const po = poByIndentId.get(row.id);
-          const poQty = po?.quantity || 0;
-
-          const recData = recMap.get(row.id) || { receivedQty: 0, invoiceNos: [] };
-          const receivedQty = recData.receivedQty;
-          const invoiceNo = recData.invoiceNos.length > 0 ? recData.invoiceNos.join(", ") : "—";
-          const remainingQty = poQty - receivedQty;
+          // unit_rate on purchase_orders stores the line's basic value
+          // (rate x qty), not a true per-unit rate — divide back out by
+          // qty to get the actual per-unit rate for display.
+          const rate = poQty > 0 ? (parseFloat(po.unit_rate) || 0) / poQty : 0;
 
           results.push({
             id: row.id,
-            poId: po?.id || null,
+            poId: po.id,
             indentNumber,
-            poNumber: poNumber || "—",
-            itemName,
-            invoiceNo,
+            poNumber: po.po_number || "—",
+            itemName: po.item_name || row.data.itemName,
             poQty,
-            receivedQty,
-            remainingQty: remainingQty >= 0 ? remainingQty : 0
+            liftedQty,
+            cancelledQty,
+            remainingQty,
+            rate,
           });
-        }
+        });
       });
 
       setSearchResults(results);
       if (results.length === 0) {
-        toast.info("No matching records found")
+        toast.info("No matching pending Follow-Up records found")
       }
     } catch (err: any) {
       console.error("Error during search:", err)
@@ -453,7 +335,7 @@ export default function OrderCancelPage() {
       setSearchQuery("")
       setSearchResults([])
       setSelectedSearchRowIds([])
-      setCancelStage("")
+      setCancelStage(FIXED_CANCEL_STAGE)
       setCancelReason("")
       setCancelQuantities({})
       setIsDialogOpen(false)
@@ -473,7 +355,7 @@ export default function OrderCancelPage() {
     setSearchQuery("")
     setSearchResults([])
     setSelectedSearchRowIds([])
-    setCancelStage("")
+    setCancelStage(FIXED_CANCEL_STAGE)
     setCancelReason("")
     setCancelQuantities({})
     setIsDialogOpen(true)
@@ -483,7 +365,6 @@ export default function OrderCancelPage() {
     setLoading(true)
     try {
       await fetchCancelledOrders()
-      await fetchCancelStages()
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -580,12 +461,14 @@ export default function OrderCancelPage() {
                   <TableHead className="w-[100px] text-center font-bold text-slate-700 uppercase text-[10px]">Received Qty</TableHead>
                   <TableHead className="w-[100px] text-center font-bold text-slate-700 uppercase text-[10px]">Canceled Qty</TableHead>
                   <TableHead className="w-[100px] text-center font-bold text-slate-700 uppercase text-[10px]">Pending Qty</TableHead>
+                  <TableHead className="w-[100px] text-right font-bold text-slate-700 uppercase text-[10px]">Rate</TableHead>
+                  <TableHead className="w-[120px] text-right font-bold text-slate-700 uppercase text-[10px]">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="h-48 text-center">
+                    <TableCell colSpan={15} className="h-48 text-center">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Loader2 className="w-8 h-8 animate-spin text-red-600" />
                         <span className="text-slate-500 font-medium">Loading cancelled orders...</span>
@@ -594,7 +477,7 @@ export default function OrderCancelPage() {
                   </TableRow>
                 ) : filteredCancelledOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
+                    <TableCell colSpan={15} className="h-32 text-center text-slate-400 font-medium">
                       No cancelled orders found.
                     </TableCell>
                   </TableRow>
@@ -653,13 +536,19 @@ export default function OrderCancelPage() {
                       <TableCell className="text-center font-semibold text-slate-700 py-4">
                         {order.pendingQty}
                       </TableCell>
+                      <TableCell className="text-right text-slate-700 py-4">
+                        ₹{Number(order.rate || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-slate-800 py-4">
+                        ₹{Number(order.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
                 {!loading && filteredCancelledOrders.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={11}
+                      colSpan={15}
                       className="text-center text-muted-foreground h-32"
                     >
                       {searchTerm
@@ -691,48 +580,14 @@ export default function OrderCancelPage() {
           <div className="flex-1 overflow-y-auto pr-1 space-y-4 py-2">
             {/* Search Section */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200">
-              <div className="md:col-span-4 space-y-1.5">
-                <Label htmlFor="searchType">Search By</Label>
-                <Select
-                  value={searchType}
-                  onValueChange={(val: any) => {
-                    setSearchType(val)
-                    setSearchQuery("")
-                    setSearchResults([])
-                    setSelectedSearchRowIds([])
-                  }}
-                >
-                  <SelectTrigger className="bg-white border-slate-200">
-                    <SelectValue placeholder="Search parameter" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border shadow-md">
-                    <SelectItem value="indent-no">Indent-No.</SelectItem>
-                    <SelectItem value="po-number">PO Number</SelectItem>
-                    <SelectItem value="item-name">Item-Name</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="md:col-span-6 space-y-1.5">
-                <Label>Search Value *</Label>
-                {searchType === "item-name" ? (
-                  <ItemCombobox
-                    value={searchQuery}
-                    onChange={(val) => setSearchQuery(val)}
-                    options={dropdownItemsList}
-                  />
-                ) : (
-                  <Input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={
-                      searchType === "indent-no"
-                        ? "Enter Indent Number (e.g. IN-...)"
-                        : "Enter PO Number"
-                    }
-                    className="bg-white border-slate-200"
-                  />
-                )}
+              <div className="md:col-span-10 space-y-1.5">
+                <Label>Search by Indent Number *</Label>
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Enter Indent Number (e.g. IN-...)"
+                  className="bg-white border-slate-200"
+                />
               </div>
 
               <div className="md:col-span-2">
@@ -789,15 +644,20 @@ export default function OrderCancelPage() {
                         <TableHead className="text-xs uppercase font-semibold text-slate-600">Indent No.</TableHead>
                         <TableHead className="text-xs uppercase font-semibold text-slate-600">PO Number</TableHead>
                         <TableHead className="text-xs uppercase font-semibold text-slate-600">Item Name</TableHead>
-                        <TableHead className="text-xs uppercase font-semibold text-slate-600">Invoice No.</TableHead>
                         <TableHead className="text-center text-xs uppercase font-semibold text-slate-600">PO Qty</TableHead>
-                        <TableHead className="text-center text-xs uppercase font-semibold text-slate-600">Received Qty</TableHead>
+                        <TableHead className="text-center text-xs uppercase font-semibold text-slate-600">Lifted Qty</TableHead>
+                        <TableHead className="text-center text-xs uppercase font-semibold text-slate-600">Cancelled Qty</TableHead>
                         <TableHead className="text-center text-xs uppercase font-semibold text-slate-600">Remaining Qty</TableHead>
                         <TableHead className="w-[120px] text-center text-xs uppercase font-semibold text-slate-600">Qty to Cancel</TableHead>
+                        <TableHead className="text-right text-xs uppercase font-semibold text-slate-600">Rate</TableHead>
+                        <TableHead className="text-right text-xs uppercase font-semibold text-slate-600">Amount</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {searchResults.map((row) => (
+                      {searchResults.map((row) => {
+                        const qtyToCancel = Number(cancelQuantities[row.id] ?? row.remainingQty) || 0;
+                        const amount = qtyToCancel * (row.rate || 0);
+                        return (
                         <TableRow
                           key={row.id}
                           className={cn(
@@ -822,11 +682,9 @@ export default function OrderCancelPage() {
                           <TableCell className="text-xs text-slate-700 max-w-[150px] truncate" title={row.itemName}>
                             {row.itemName}
                           </TableCell>
-                          <TableCell className="text-xs text-slate-700 max-w-[120px] truncate" title={row.invoiceNo}>
-                            {row.invoiceNo}
-                          </TableCell>
                           <TableCell className="text-center text-xs text-slate-700">{row.poQty}</TableCell>
-                          <TableCell className="text-center text-xs text-slate-700">{row.receivedQty}</TableCell>
+                          <TableCell className="text-center text-xs text-slate-700">{row.liftedQty}</TableCell>
+                          <TableCell className="text-center text-xs text-slate-700">{row.cancelledQty}</TableCell>
                           <TableCell className="text-center text-xs text-slate-700 font-semibold">{row.remainingQty}</TableCell>
                           <TableCell className="text-center py-1">
                             <Input
@@ -849,8 +707,15 @@ export default function OrderCancelPage() {
                               disabled={!selectedSearchRowIds.includes(row.id)}
                             />
                           </TableCell>
+                          <TableCell className="text-right text-xs text-slate-700">
+                            ₹{Number(row.rate || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-right text-xs font-semibold text-slate-800">
+                            ₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -869,23 +734,7 @@ export default function OrderCancelPage() {
                   Cancellation Details for {selectedSearchRowIds.length} Selected Item(s)
                 </h4>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="cancelStage">Order Cancel Stage *</Label>
-                    <Select value={cancelStage} onValueChange={setCancelStage}>
-                      <SelectTrigger className="bg-white border-slate-200">
-                        <SelectValue placeholder="Select cancel stage" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-white border shadow-md">
-                        {cancellationStageOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
+                <div className="grid grid-cols-1 gap-4">
                   <div className="space-y-1.5">
                     <Label htmlFor="cancelReason">Order Cancel Reason *</Label>
                     <Input

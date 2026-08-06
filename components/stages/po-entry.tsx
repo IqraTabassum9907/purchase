@@ -513,7 +513,15 @@ export default function Stage5() {
 
     const matchedFormData: Record<string, any> = {};
     matching.forEach((r) => {
+      // basicValue saved on the PO is the line's basic total (rate x qty),
+      // not a per-unit rate — divide back out by quantity so the Rate input
+      // shows the actual value that was saved, instead of falling back to
+      // the original quotation's rate (which can differ / be blank).
+      const savedBasic = parseFloat(r.data.basicValue) || 0;
+      const savedQty = parseFloat(r.data.quantity) || 0;
+      const derivedRate = savedQty > 0 ? (savedBasic / savedQty).toFixed(2) : "0";
       matchedFormData[r.id] = {
+        rate: derivedRate,
         basicValue: r.data.basicValue || "0",
         totalWithTax: r.data.totalWithTax || "0",
         hsn: r.data.hsn || "",
@@ -685,12 +693,12 @@ export default function Stage5() {
           try {
             const fileName = `po-copies/${Date.now()}_${commonPOCopy.name}`;
             const { error: uploadError } = await supabase.storage
-              .from("po-copies")
+              .from("po-documents")
               .upload(fileName, commonPOCopy);
 
             if (!uploadError) {
               const { data: urlData } = supabase.storage
-                .from("po-copies")
+                .from("po-documents")
                 .getPublicUrl(fileName);
               finalFileUrl = urlData.publicUrl;
             } else {
@@ -858,6 +866,8 @@ export default function Stage5() {
               deliveryDate={formatDateDash(poForm.deliveryDate)}
               quotationNumber={poForm.quotationNumber}
               quotationDate={formatDateDash(poForm.quotationDate)}
+              paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
+              advanceAmount={(poForm.advancePayment || "yes") === "yes" ? (poForm.advanceAmount || "") : ""}
               billingName={poForm.billingName}
               billingAddress={poForm.billingAddress}
               destinationName={poForm.destinationName}
@@ -872,11 +882,11 @@ export default function Stage5() {
 
           const pdfPath = `po-pdfs/${commonPONumber.replace(/[^a-zA-Z0-9-_]/g, "_")}_${Date.now()}.pdf`;
           const { error: pdfUploadError } = await supabase.storage
-            .from("po-copies")
+            .from("po-documents")
             .upload(pdfPath, blob, { contentType: "application/pdf" });
 
           if (!pdfUploadError) {
-            const { data: urlData } = supabase.storage.from("po-copies").getPublicUrl(pdfPath);
+            const { data: urlData } = supabase.storage.from("po-documents").getPublicUrl(pdfPath);
             const pdfUrl = urlData?.publicUrl || "";
             if (pdfUrl) {
               // Replaces any previously generated copy for this PO number —
@@ -886,14 +896,17 @@ export default function Stage5() {
                 .update({ po_pdf_url: pdfUrl })
                 .eq("po_number", commonPONumber);
               if (updateErr) {
-                console.warn("Could not save po_pdf_url (run the migration to add this column):", getErrorMessage(updateErr));
+                console.warn("Could not save po_pdf_url:", getErrorMessage(updateErr));
+                toast.warning(`PO saved, but "Make Copy" PDF link couldn't be attached: ${getErrorMessage(updateErr)}. Run the migration SQL (adds po_pdf_url) if you haven't yet.`);
               }
             }
           } else {
             console.warn("PO PDF upload failed:", pdfUploadError.message);
+            toast.warning(`PO saved, but the PDF failed to upload: ${getErrorMessage(pdfUploadError)}`);
           }
         } catch (pdfErr) {
           console.error("Failed to auto-generate PO PDF (non-blocking):", getErrorMessage(pdfErr));
+          toast.warning(`PO saved, but "Make Copy" PDF generation failed: ${getErrorMessage(pdfErr)}`);
         }
 
         await fetchData();
@@ -1390,10 +1403,11 @@ export default function Stage5() {
             <button
               type="button"
               onClick={() => {
-                // Already on this tab — don't wipe out whatever is prefilled.
-                if (poMode === "create") return;
+                // Pure view toggle — never resets the form. Whatever was
+                // filled/prefilled on either tab must survive switching back
+                // and forth; only the explicit Reset button or closing the
+                // modal (handleClosePOForm) clears anything.
                 setPoMode("create");
-                resetPOForm();
               }}
               className={`h-11 transition-colors ${poMode === "create" ? "bg-indigo-50 text-indigo-700 font-bold" : "hover:bg-slate-50"}`}
             >
@@ -1402,12 +1416,8 @@ export default function Stage5() {
             <button
               type="button"
               onClick={() => {
-                // Already on this tab (e.g. opened via a History row's Revise
-                // button, which already prefilled everything) — clicking it
-                // again must not reset the prefilled data back to blank.
-                if (poMode === "revise") return;
+                // Pure view toggle — never resets the form (see above).
                 setPoMode("revise");
-                resetPOForm();
               }}
               className={`h-11 transition-colors ${poMode === "revise" ? "bg-indigo-50 text-indigo-700 font-bold" : "hover:bg-slate-50"}`}
             >

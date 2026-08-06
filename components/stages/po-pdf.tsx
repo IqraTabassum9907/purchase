@@ -63,6 +63,8 @@ export interface POPdfDocumentProps {
   deliveryDate: string;
   quotationNumber: string;
   quotationDate: string;
+  paymentTerms: string;
+  advanceAmount: string;
   billingName: string;
   billingAddress: string;
   destinationName: string;
@@ -86,6 +88,8 @@ export const POPdfDocument = ({
   deliveryDate,
   quotationNumber,
   quotationDate,
+  paymentTerms,
+  advanceAmount,
   billingName,
   billingAddress,
   destinationName,
@@ -130,6 +134,8 @@ export const POPdfDocument = ({
               <View style={styles.infoLine}><Text style={styles.infoLabel}>Delivery Date:</Text><Text style={styles.infoValue}>{deliveryDate || '-'}</Text></View>
               <View style={styles.infoLine}><Text style={styles.infoLabel}>Quotation No:</Text><Text style={styles.infoValue}>{quotationNumber || '-'}</Text></View>
               <View style={styles.infoLine}><Text style={styles.infoLabel}>Quotation Date:</Text><Text style={styles.infoValue}>{quotationDate || '-'}</Text></View>
+              <View style={styles.infoLine}><Text style={styles.infoLabel}>Payment Terms:</Text><Text style={styles.infoValue}>{paymentTerms || '-'}</Text></View>
+              <View style={styles.infoLine}><Text style={styles.infoLabel}>Advance Amount:</Text><Text style={styles.infoValue}>{advanceAmount && parseFloat(advanceAmount) > 0 ? `Rs. ${advanceAmount}` : '-'}</Text></View>
             </View>
           </View>
         </View>

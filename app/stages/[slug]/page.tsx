@@ -14,9 +14,11 @@ import MaterialReceived from "@/components/stages/material-received";
 import BillingStage from "@/components/stages/billing";
 import PurchaseReturn from "@/components/stages/purchase-return";
 import OrderCancelPage from "@/components/stages/order-cancel";
+import SettingsPage from "@/components/stages/settings";
 
 const stageComponents: Record<string, React.ComponentType> = {
     "master": MasterPage,
+    "settings": SettingsPage,
     "create-indent": CreateIndent,
     "indent-approval": IndentApproval,
     "quotation": Quotation,

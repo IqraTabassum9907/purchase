@@ -159,6 +159,13 @@ export default function TransporterFollowUp() {
                 );
 
                 if (actualDispatchedLiftings.length === 0) {
+                    // Follow Up / Lifting hasn't logged anything for this PO yet
+                    // (no vendor_liftings row and no transporter_followups row) —
+                    // don't surface it here until Follow Up actually processes it.
+                    if (poLiftings.length === 0 && poTransporters.length === 0) {
+                        continue;
+                    }
+
                     const isDeliveredOrReceived = (latestTransporter && ["received", "delivered", "completed", "complete"].includes(String(latestTransporter.status || "").toLowerCase()));
                     const status = isDeliveredOrReceived ? "history" : "pending";
 
