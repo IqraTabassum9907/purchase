@@ -333,7 +333,6 @@ export default function TransporterFollowUp() {
     const historyPagination = usePagination(completed, 15);
 
     const pendingColumns = [
-        { key: "createdAtCol", label: "Timestamp" },
         { key: "indentNumber", label: "Indent No" },
         { key: "itemName", label: "Item Name" },
         { key: "plannedDate", label: "Expected Date" },

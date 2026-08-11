@@ -342,7 +342,6 @@ export default function Quotation() {
   const historyPagination = usePagination(completed, 15);
 
   const baseColumns = [
-    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent" },
     { key: "itemName", label: "Item" },
     { key: "quantity", label: "Qty" },

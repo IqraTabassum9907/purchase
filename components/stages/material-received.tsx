@@ -94,7 +94,6 @@ const generateGRN = async (): Promise<string> => {
 /*  COLUMNS FOR PENDING TAB (Same as Follow-Up Vendor History)     */
 /* --------------------------------------------------------------- */
 const PENDING_COLUMNS = [
-    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent No." },
     { key: "liftNo", label: "Unit Tracking No." },
     { key: "warehouse", label: "Warehouse" },
@@ -1162,13 +1161,6 @@ export default function Stage7() {
                                                             );
                                                         }
 
-                                                        if (col.key === "createdAtCol") {
-                                                            return (
-                                                                <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
-                                                                    {formatDateTimeFull(rec.data.enteredPendingAt || rec.createdAt)}
-                                                                </TableCell>
-                                                            );
-                                                        }
 
                                                         if (col.key === "planned6") {
                                                             return (
@@ -1250,13 +1242,6 @@ export default function Stage7() {
                                                                 ? historyData[col.key]
                                                                 : record.data[col.key];
 
-                                                            if (col.key === "createdAtCol") {
-                                                                return (
-                                                                    <TableCell key={col.key} className="border-b px-4 py-2 text-center text-slate-700 font-mono text-xs">
-                                                                        {formatDateTimeFull(record.data.receivedAt || record.data.actual6 || record.createdAt)}
-                                                                    </TableCell>
-                                                                );
-                                                            }
 
                                                             // Planned Date is TAT-calculated, not a stored field
                                                             if (col.key === "planned6") {
@@ -1441,6 +1426,7 @@ export default function Stage7() {
                                                 <TableHead className="w-[120px] text-xs font-bold text-slate-600 text-center">Received Qty <span className="text-red-500">*</span></TableHead>
                                                 <TableHead className="w-[100px] text-xs font-bold text-slate-600 text-center">Different Qty</TableHead>
                                                 <TableHead className="w-[130px] text-xs font-bold text-slate-600 text-center">Item Image</TableHead>
+                                                <TableHead className="w-[180px] text-xs font-bold text-slate-600 text-center">Damage</TableHead>
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody>
@@ -1525,6 +1511,51 @@ export default function Stage7() {
                                                                             <X className="w-3 h-3" />
                                                                         </button>
                                                                     </div>
+                                                                )}
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <div className="space-y-1.5">
+                                                                <Select
+                                                                    value={item.damageReceived || "no"}
+                                                                    onValueChange={(v) => {
+                                                                        const newItems = [...bulkItems];
+                                                                        newItems[idx].damageReceived = v;
+                                                                        setBulkItems(newItems);
+                                                                    }}
+                                                                >
+                                                                    <SelectTrigger className="h-8 text-xs bg-white">
+                                                                        <SelectValue />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        <SelectItem value="no">No Damage</SelectItem>
+                                                                        <SelectItem value="yes">Damaged</SelectItem>
+                                                                    </SelectContent>
+                                                                </Select>
+                                                                {item.damageReceived === "yes" && (
+                                                                    <>
+                                                                        <Input
+                                                                            type="number"
+                                                                            value={item.damagedQty}
+                                                                            onChange={(e) => {
+                                                                                const newItems = [...bulkItems];
+                                                                                newItems[idx].damagedQty = e.target.value;
+                                                                                setBulkItems(newItems);
+                                                                            }}
+                                                                            placeholder="Damaged qty"
+                                                                            className="h-8 text-xs rounded-md bg-white"
+                                                                        />
+                                                                        <Input
+                                                                            value={item.damageReason}
+                                                                            onChange={(e) => {
+                                                                                const newItems = [...bulkItems];
+                                                                                newItems[idx].damageReason = e.target.value;
+                                                                                setBulkItems(newItems);
+                                                                            }}
+                                                                            placeholder="Reason"
+                                                                            className="h-8 text-xs rounded-md bg-white"
+                                                                        />
+                                                                    </>
                                                                 )}
                                                             </div>
                                                         </TableCell>
@@ -1617,6 +1648,75 @@ export default function Stage7() {
                                             {singleDifferentQtyVal.toFixed(2)}
                                         </p>
                                     </div>
+                                </div>
+                            </div>
+
+                            {/* Card 3: Damage Report */}
+                            <div className="bg-white border border-slate-200/80 rounded-xl p-5 shadow-sm space-y-4">
+                                <div className="flex items-center justify-between border-b pb-2">
+                                    <div className="flex items-center gap-2">
+                                        <AlertCircle className="w-4 h-4 text-rose-600" />
+                                        <h4 className="text-xs font-bold text-slate-805 uppercase tracking-wider">Damage Report</h4>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-4 gap-3">
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] text-slate-700 font-bold uppercase tracking-wider">Damage Received?</Label>
+                                        <Select
+                                            value={form.damageReceived || "no"}
+                                            onValueChange={(v) => setForm({ ...form, damageReceived: v })}
+                                        >
+                                            <SelectTrigger className="h-9 text-xs bg-white">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="no">No</SelectItem>
+                                                <SelectItem value="yes">Yes</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    {form.damageReceived === "yes" && (
+                                        <>
+                                            <div className="space-y-1">
+                                                <Label className="text-[10px] text-slate-700 font-bold uppercase tracking-wider">Damaged Qty</Label>
+                                                <Input
+                                                    type="number"
+                                                    value={form.damagedQty}
+                                                    onChange={(e) => setForm({ ...form, damagedQty: e.target.value })}
+                                                    placeholder="0"
+                                                    className="h-9 text-xs font-semibold rounded-lg"
+                                                />
+                                            </div>
+                                            <div className="col-span-2 space-y-1">
+                                                <Label className="text-[10px] text-slate-700 font-bold uppercase tracking-wider">Damage Reason</Label>
+                                                <Input
+                                                    value={form.damageReason}
+                                                    onChange={(e) => setForm({ ...form, damageReason: e.target.value })}
+                                                    placeholder="e.g. Damaged in transit"
+                                                    className="h-9 text-xs rounded-lg"
+                                                />
+                                            </div>
+                                            <div className="col-span-4 space-y-1">
+                                                <Label className="text-[10px] text-slate-700 font-bold uppercase tracking-wider">Damage Image</Label>
+                                                <input
+                                                    id="damageImage"
+                                                    type="file"
+                                                    accept=".jpg,.jpeg,.png"
+                                                    onChange={(e) => setForm({ ...form, damageImage: e.target.files?.[0] ?? null })}
+                                                    className="hidden"
+                                                />
+                                                <label
+                                                    htmlFor="damageImage"
+                                                    className="flex items-center justify-center gap-2 w-full p-2 border-2 border-dashed border-rose-200 hover:border-rose-300 hover:bg-rose-50/50 rounded-lg cursor-pointer transition-all text-center"
+                                                >
+                                                    <Upload className="w-4 h-4 text-rose-400" />
+                                                    <span className="text-[11px] text-slate-600 font-bold">
+                                                        {form.damageImage ? form.damageImage.name : "Upload damage photo"}
+                                                    </span>
+                                                </label>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             </div>
 

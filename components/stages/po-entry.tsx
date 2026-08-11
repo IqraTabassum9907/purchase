@@ -173,6 +173,7 @@ export default function Stage5() {
       indentNumber: row.data.indentNumber,
       itemName: row.data.itemName,
       quantity: displayQty,
+      uom: row.data.uom || "",
       planned1: row.data.plan1 || "",
       actual1: row.data.actual1 || "",
       approvedBy: row.data.finalApprovedBy,
@@ -320,14 +321,20 @@ export default function Stage5() {
     setIsLoading(false);
   };
 
-  const [dbVendors, setDbVendors] = useState<Array<{ vendor_name: string; email?: string; address?: string }>>([]);
+  const [dbVendors, setDbVendors] = useState<Array<{
+    vendor_name: string;
+    email?: string;
+    address?: string;
+    contact_person?: string;
+    phone?: string;
+    billing_address?: string;
+    gstin?: string;
+    pan_number?: string;
+  }>>([]);
 
   // Our company's own addresses (Master → Addresses) — feeds the Billing /
   // Destination Address dropdowns below instead of a fixed hardcoded address.
   const [addressOptions, setAddressOptions] = useState<Array<{ name: string; address: string }>>([]);
-  // Delivery locations (Master → Delivery Locations) — same list Create Indent
-  // picks from; feeds the PO's Delivery Location dropdown.
-  const [deliveryLocationOptions, setDeliveryLocationOptions] = useState<string[]>([]);
   // HSN codes (Master → HSN Codes) — feeds the per-item HSN dropdown below.
   const [hsnOptions, setHsnOptions] = useState<string[]>([]);
 
@@ -353,16 +360,6 @@ export default function Stage5() {
         console.error("Error loading master addresses in PO entry:", err);
       }
     }
-    async function loadMasterDeliveryLocations() {
-      try {
-        const { data } = await supabase.from("master_delivery_locations").select("name").eq("is_active", true);
-        if (data && data.length > 0) {
-          setDeliveryLocationOptions(data.map((d: any) => d.name).filter(Boolean));
-        }
-      } catch (err) {
-        console.error("Error loading master delivery locations in PO entry:", err);
-      }
-    }
     async function loadMasterHsnCodes() {
       try {
         const { data } = await supabase.from("master_hsn_codes").select("name").eq("is_active", true);
@@ -375,7 +372,6 @@ export default function Stage5() {
     }
     loadMasterVendors();
     loadMasterAddresses();
-    loadMasterDeliveryLocations();
     loadMasterHsnCodes();
   }, []);
 
@@ -475,7 +471,6 @@ export default function Stage5() {
   }, [completed]);
 
   const baseColumns = [
-    { key: "createdAt", label: "Timestamp", icon: null },
     { key: "indentNumber", label: "Indent-No", icon: null },
     { key: "itemName", label: "Item", icon: null },
     { key: "quantity", label: "Qty", icon: null },
@@ -540,12 +535,30 @@ export default function Stage5() {
     return map;
   }, [dbVendors]);
 
+  // Extra vendor master fields (Master → Vendors) that don't have a
+  // hardcoded fallback — Contact Person / Phone / Billing Address / GSTIN /
+  // PAN. Looked up by vendor name to prefill the Supplier section in Create PO.
+  const vendorDetailsMap: Record<string, { contactPerson: string; phone: string; billingAddress: string; gstin: string; pan: string }> = useMemo(() => {
+    const map: Record<string, { contactPerson: string; phone: string; billingAddress: string; gstin: string; pan: string }> = {};
+    dbVendors.forEach((v) => {
+      if (!v.vendor_name) return;
+      map[v.vendor_name] = {
+        contactPerson: v.contact_person || "",
+        phone: v.phone || "",
+        billingAddress: v.billing_address || "",
+        gstin: v.gstin || "",
+        pan: v.pan_number || "",
+      };
+    });
+    return map;
+  }, [dbVendors]);
+
   const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
 
   const transportTypeOptions = [
-    { value: "Ex-Factory", label: "Ex-Factory" },
-    { value: "Ex-Factory + Transport", label: "Ex-Factory + Transport" },
-    { value: "F.O.R.", label: "F.O.R. (Free on Road)" },
+    { value: "Ex-Factory Only", label: "Ex-Factory Only" },
+    { value: "Ex-Factory in Transport Office", label: "Ex-Factory in Transport Office" },
+    { value: "F.O.R.", label: "F.O.R." },
   ];
 
   const defaultPOForm = {
@@ -559,7 +572,11 @@ export default function Stage5() {
     advanceAmount: "",
     supplierEmail: "",
     supplierAddress: "",
+    supplierContactPerson: "",
+    supplierPhone: "",
+    supplierBillingAddress: "",
     gstin: "",
+    supplierPan: "",
     quotationNumber: "",
     quotationDate: "",
     enquiryNumber: "",
@@ -581,16 +598,6 @@ export default function Stage5() {
       .map((id) => sheetRecords.find((r) => r.id === id))
       .filter(Boolean);
   }, [selectedRecordIds, sheetRecords]);
-
-  const completedPONumbers = useMemo(() => {
-    const set = new Set<string>();
-    completed.forEach((r) => {
-      if (r.data.poNumber && r.data.poNumber !== "-") {
-        set.add(r.data.poNumber);
-      }
-    });
-    return Array.from(set).sort();
-  }, [completed]);
 
   const handleRevisePONumberChange = (poNum: string) => {
     setCommonPONumber(poNum);
@@ -625,19 +632,24 @@ export default function Stage5() {
     // vendor quoted, so re-deriving from the quotation showed the wrong data
     // (or the wrong delivery date/address) once you came back to Revise.
     const actualSupplierName = firstRec.data.poSupplierName || (v.name !== "-" ? v.name : "");
+    const revisedVendorDetails = actualSupplierName ? vendorDetailsMap[actualSupplierName] : undefined;
 
     setPoForm({
       firmName: firstRec.data.warehouseLocation || "",
       supplierName: actualSupplierName,
       supplierEmail: actualSupplierName ? (vendorEmailMap[actualSupplierName] || "") : "",
       supplierAddress: firstRec.data.poDeliveryAddress || (actualSupplierName ? (vendorAddressMap[actualSupplierName] || "") : ""),
+      supplierContactPerson: revisedVendorDetails?.contactPerson || "",
+      supplierPhone: revisedVendorDetails?.phone || "",
+      supplierBillingAddress: revisedVendorDetails?.billingAddress || "",
+      supplierPan: revisedVendorDetails?.pan || "",
       poDate: firstRec.data.poDate ? formatInputDate(firstRec.data.poDate) : formatInputDate(firstRec.data.actual4),
       deliveryLocation: firstRec.data.deliveryLocation || "",
       transportType: firstRec.data.transportType || v.transportType || "",
       paymentTerms: normalizePaymentTerms(firstRec.data.paymentType || v.terms),
       advancePayment: (firstRec.data.paymentType || "").toLowerCase().includes("no advance") ? "no" : "yes",
       advanceAmount: firstRec.data.advanceAmount && firstRec.data.advanceAmount !== "0" ? firstRec.data.advanceAmount : "",
-      gstin: "",
+      gstin: revisedVendorDetails?.gstin || "",
       quotationNumber: `QUO-${firstRec.data.indentNumber || ""}`,
       quotationDate: new Date().toISOString().split("T")[0],
       enquiryNumber: "",
@@ -779,12 +791,18 @@ export default function Stage5() {
     setTerms(defaultTerms);
     const firstRecord = sheetRecords.find((r) => r.id === selectedRecordIds[0]);
     const firstVendor = firstRecord ? getVendorData(firstRecord) : null;
+    const firstVendorDetails = firstVendor?.name ? vendorDetailsMap[firstVendor.name] : undefined;
     setPoForm({
       ...defaultPOForm,
       firmName: firstRecord?.data.warehouseLocation || "",
       supplierName: firstVendor?.name && firstVendor.name !== "-" ? firstVendor.name : "",
       supplierEmail: firstVendor?.name ? (vendorEmailMap[firstVendor.name] || "") : "",
       supplierAddress: firstVendor?.name ? (vendorAddressMap[firstVendor.name] || "") : "",
+      supplierContactPerson: firstVendorDetails?.contactPerson || "",
+      supplierPhone: firstVendorDetails?.phone || "",
+      supplierBillingAddress: firstVendorDetails?.billingAddress || "",
+      gstin: firstVendorDetails?.gstin || "",
+      supplierPan: firstVendorDetails?.pan || "",
       deliveryLocation: firstRecord?.data.deliveryLocation || "",
       transportType: firstVendor?.transportType || "",
       paymentTerms: normalizePaymentTerms(firstVendor?.terms),
@@ -926,6 +944,7 @@ export default function Stage5() {
               delivery_address: poForm.supplierAddress || "",
               delivery_location: poForm.deliveryLocation || "",
               transport_type: poForm.transportType || "",
+              firm_name: poForm.firmName || "",
               po_copy_url: finalFileUrl || record.data.poCopy || "",
               gst_percent: data.gst || "",
               hsn: data.hsn || "",
@@ -1003,11 +1022,13 @@ export default function Stage5() {
                 itemName: record.data.itemName || "-",
                 indentNumber: record.data.indentNumber || "-",
                 quantity: record.data.quantity || "-",
+                uom: record.data.uom || "",
                 rate: data.rate !== undefined ? data.rate : (v.rate || "0"),
                 hsn: data.hsn || "",
                 gst: data.gst || "",
                 deliveryDate: data.deliveryDate ? formatDateDash(data.deliveryDate) : "-",
                 total: total.toFixed(2),
+                basicValue: data.basicValue || "0",
               };
             });
 
@@ -1015,13 +1036,15 @@ export default function Stage5() {
             <POPdfDocument
               logoUrl={`${window.location.origin}/nutech-logo.png`}
               companyAddress={NUTECH_ADDRESS}
-              poNumber={commonPONumber}
+              companyGstin={poForm.companyGstin}
+              poNumber={finalPONumber}
               poDate={formatDateDash(poForm.poDate)}
               supplierName={poForm.supplierName}
               supplierAddress={poForm.supplierAddress}
               supplierGstin={poForm.gstin}
               supplierEmail={poForm.supplierEmail}
               deliveryLocation={poForm.deliveryLocation}
+              transportType={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || ""}
               quotationNumber={poForm.quotationNumber}
               quotationDate={formatDateDash(poForm.quotationDate)}
               paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
@@ -1038,7 +1061,13 @@ export default function Stage5() {
             />
           ).toBlob();
 
-          const pdfPath = `po-pdfs/${commonPONumber.replace(/[^a-zA-Z0-9-_]/g, "_")}_${Date.now()}.pdf`;
+          // NOTE: must key off finalPONumber, not commonPONumber — on Revise,
+          // commonPONumber is still the OLD PO number (setCommonPONumber(finalPONumber)
+          // above doesn't take effect until the next render, so this closure's
+          // commonPONumber stays stale). Using it here was silently overwriting
+          // the OLD revision's PDF with the NEW one and leaving the new
+          // revision's own po_pdf_url empty — each revision now gets its own file.
+          const pdfPath = `po-pdfs/${finalPONumber.replace(/[^a-zA-Z0-9-_]/g, "_")}_${Date.now()}.pdf`;
           const { error: pdfUploadError } = await supabase.storage
             .from("po-documents")
             .upload(pdfPath, blob, { contentType: "application/pdf" });
@@ -1047,12 +1076,10 @@ export default function Stage5() {
             const { data: urlData } = supabase.storage.from("po-documents").getPublicUrl(pdfPath);
             const pdfUrl = urlData?.publicUrl || "";
             if (pdfUrl) {
-              // Replaces any previously generated copy for this PO number —
-              // on Revise, the old "Make Copy" PDF is overwritten by the new one.
               const { error: updateErr } = await supabase
                 .from("purchase_orders")
                 .update({ po_pdf_url: pdfUrl })
-                .eq("po_number", commonPONumber);
+                .eq("po_number", finalPONumber);
               if (updateErr) {
                 console.warn("Could not save po_pdf_url:", getErrorMessage(updateErr));
                 toast.warning(`PO saved, but "Make Copy" PDF link couldn't be attached: ${getErrorMessage(updateErr)}. Run the migration SQL (adds po_pdf_url) if you haven't yet.`);
@@ -1669,12 +1696,20 @@ export default function Stage5() {
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Name</Label>
                     <Select
                       value={poForm.supplierName || undefined}
-                      onValueChange={(value) => setPoForm((prev) => ({
-                        ...prev,
-                        supplierName: value,
-                        supplierEmail: vendorEmailMap[value] || `${value.toLowerCase().replace(/\s+/g, "")}@example.com`,
-                        supplierAddress: vendorAddressMap[value] || `${value} Business Park, Mumbai`
-                      }))}
+                      onValueChange={(value) => {
+                        const details = vendorDetailsMap[value];
+                        setPoForm((prev) => ({
+                          ...prev,
+                          supplierName: value,
+                          supplierEmail: vendorEmailMap[value] || `${value.toLowerCase().replace(/\s+/g, "")}@example.com`,
+                          supplierAddress: vendorAddressMap[value] || `${value} Business Park, Mumbai`,
+                          supplierContactPerson: details?.contactPerson || "",
+                          supplierPhone: details?.phone || "",
+                          supplierBillingAddress: details?.billingAddress || "",
+                          gstin: details?.gstin || "",
+                          supplierPan: details?.pan || "",
+                        }));
+                      }}
                     >
                       <SelectTrigger className="w-full"><SelectValue placeholder="Select Supplier" /></SelectTrigger>
                       <SelectContent>
@@ -1687,33 +1722,21 @@ export default function Stage5() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {poMode === "revise" && (
-                    <div className="space-y-1.5 col-span-2 bg-indigo-50/50 p-3 border border-indigo-100 rounded-xl">
-                      <Label className="text-xs font-bold uppercase tracking-wide text-indigo-700">Select Existing PO Number</Label>
-                      <Select value={commonPONumber} onValueChange={handleRevisePONumberChange}>
-                        <SelectTrigger className="bg-white border-indigo-200 h-9"><SelectValue placeholder="Choose PO from history..." /></SelectTrigger>
-                        <SelectContent>
-                          {completedPONumbers.map((poNum) => (
-                            <SelectItem key={poNum} value={poNum}>{poNum}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">PO Number</Label>
-                    <Input
-                      value={commonPONumber}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCommonPONumber(val);
-                        if (completedPONumbers.includes(val)) {
-                          handleRevisePONumberChange(val);
-                        }
-                      }}
-                      placeholder="Nutech/Store/26-27/21"
-                      required
-                    />
+                    {poMode === "revise" ? (
+                      // Locked once a revision is in progress — which PO you're
+                      // revising is decided by clicking "Revise" on that specific
+                      // History row, not by picking/typing a different number here.
+                      <Input value={commonPONumber} readOnly disabled className="bg-slate-100 text-slate-600 cursor-not-allowed" />
+                    ) : (
+                      <Input
+                        value={commonPONumber}
+                        onChange={(e) => setCommonPONumber(e.target.value)}
+                        placeholder="Nutech/Store/26-27/21"
+                        required
+                      />
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">PO Date</Label>
@@ -1721,35 +1744,28 @@ export default function Stage5() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Delivery Location</Label>
-                    <Select
-                      value={poForm.deliveryLocation || undefined}
-                      onValueChange={(value) => setPoForm((prev) => ({ ...prev, deliveryLocation: value }))}
-                    >
-                      <SelectTrigger className="w-full"><SelectValue placeholder="Select delivery location" /></SelectTrigger>
-                      <SelectContent>
-                        {deliveryLocationOptions.length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-slate-400">No locations configured (Master → Delivery Locations)</div>
-                        ) : (
-                          deliveryLocationOptions.map((loc) => (
-                            <SelectItem key={loc} value={loc}>{loc}</SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    {/* Prefilled from the indent (Create Indent's Delivery Location) —
+                        not editable here, so it can't drift from what was actually indented. */}
+                    <Input value={poForm.deliveryLocation || "-"} readOnly disabled className="bg-slate-100 text-slate-600 cursor-not-allowed" />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
-                    <Select
-                      value={poForm.transportType || undefined}
-                      onValueChange={(value) => setPoForm((prev) => ({ ...prev, transportType: value }))}
-                    >
-                      <SelectTrigger className="w-full"><SelectValue placeholder="Select transport type" /></SelectTrigger>
-                      <SelectContent>
-                        {transportTypeOptions.map((t) => (
-                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {/* Prefilled from the vendor's accepted quotation — not editable
+                        here, so it can't drift from what the vendor actually quoted. */}
+                    <Input
+                      value={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || "-"}
+                      readOnly
+                      disabled
+                      className="bg-slate-100 text-slate-600 cursor-not-allowed"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Contact Person</Label>
+                    <Input value={poForm.supplierContactPerson || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierContactPerson: e.target.value }))} placeholder="Prefilled from Master → Vendors" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Contact Number</Label>
+                    <Input value={poForm.supplierPhone || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierPhone: e.target.value }))} placeholder="Prefilled from Master → Vendors" />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Email</Label>
@@ -1760,8 +1776,16 @@ export default function Stage5() {
                     <Input value={poForm.supplierAddress || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierAddress: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Billing Address</Label>
+                    <Input value={poForm.supplierBillingAddress || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierBillingAddress: e.target.value }))} placeholder="Prefilled from Master → Vendors" />
+                  </div>
+                  <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">GSTIN</Label>
-                    <Input value={poForm.gstin || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, gstin: e.target.value }))} />
+                    <Input value={poForm.gstin || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, gstin: e.target.value }))} placeholder="Prefilled from Master → Vendors" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier PAN Number</Label>
+                    <Input value={poForm.supplierPan || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, supplierPan: e.target.value }))} placeholder="Prefilled from Master → Vendors" />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Quotation Number</Label>

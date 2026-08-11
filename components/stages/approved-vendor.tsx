@@ -189,11 +189,11 @@ export default function ApprovedVendor() {
   const historyPagination = usePagination(completed, 15);
 
   const baseColumns = [
-    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent" },
     { key: "itemName", label: "Item" },
     { key: "quantity", label: "Qty" },
     { key: "actual3", label: "Planned Date" },
+    { key: "quotationPdf", label: "Quotation PDF" },
   ];
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>(
@@ -253,9 +253,9 @@ export default function ApprovedVendor() {
   ];
 
   const transportTypeOptions = [
-    { value: "Ex-Factory", label: "Ex-Factory" },
-    { value: "Ex-Factory + Transport", label: "Ex-Factory + Transport" },
-    { value: "F.O.R.", label: "F.O.R. (Free on Road)" },
+    { value: "Ex-Factory Only", label: "Ex-Factory Only" },
+    { value: "Ex-Factory in Transport Office", label: "Ex-Factory in Transport Office" },
+    { value: "F.O.R.", label: "F.O.R." },
   ];
 
   const gstOptions = [
@@ -360,6 +360,21 @@ export default function ApprovedVendor() {
       }
     }
     return list;
+  };
+
+  const computeVendorPdfsForGroup = (group: any) => {
+    if (!group || !group.records || group.records.length === 0) return [];
+    const pdfsMap = new Map<string, { name: string; url: string }>();
+    group.records.forEach((rec: any) => {
+      for (const num of [1, 2, 3]) {
+        const name = rec.data[`vendor${num}Name`];
+        const url = rec.data[`vendor${num}PdfUrl`];
+        if (url && !pdfsMap.has(url)) {
+          pdfsMap.set(url, { name: name && name !== "-" ? name : `Vendor ${num}`, url });
+        }
+      }
+    });
+    return Array.from(pdfsMap.values());
   };
 
   const groupVendorOptions = useMemo(() => computeVendorOptionsForGroup(currentGroup), [currentGroup]);
@@ -601,11 +616,6 @@ export default function ApprovedVendor() {
                     <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                       Actions
                     </TableHead>
-                    {selectedColumns.includes("createdAtCol") && (
-                      <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
-                        Timestamp
-                      </TableHead>
-                    )}
                     {selectedColumns.includes("indentNumber") && (
                       <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                         Indent IDs
@@ -626,6 +636,11 @@ export default function ApprovedVendor() {
                         Planned Date
                       </TableHead>
                     )}
+                    {selectedColumns.includes("quotationPdf") && (
+                      <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
+                        Quotation PDF
+                      </TableHead>
+                    )}
                     <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                       Vendor Options
                     </TableHead>
@@ -641,6 +656,7 @@ export default function ApprovedVendor() {
                   ) : (
                     pendingPagination.pageData.map((group) => {
                       const vendorOptions = computeVendorOptionsForGroup(group);
+                      const pdfs = computeVendorPdfsForGroup(group);
                       return (
                       <TableRow key={group.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
                         <TableCell className="px-4 py-3">
@@ -653,11 +669,6 @@ export default function ApprovedVendor() {
                             Approve
                           </Button>
                         </TableCell>
-                        {selectedColumns.includes("createdAtCol") && (
-                          <TableCell className="text-xs text-slate-700 px-4 font-mono">
-                            {formatDateTimeFull(group.records[0]?.data?.actual3 || group.records[0]?.createdAt)}
-                          </TableCell>
-                        )}
                         {selectedColumns.includes("indentNumber") && (
                           <TableCell className="text-sm font-semibold text-slate-900 font-mono px-4">
                             {group.indentNumbers}
@@ -676,6 +687,28 @@ export default function ApprovedVendor() {
                         {selectedColumns.includes("actual3") && (
                           <TableCell className="text-xs text-slate-700 px-4 font-mono">
                             {getPlannedDateForRecord(group.records[0]?.data, "Approved Vendor", tatRules, group.records[0]?.createdAt)}
+                          </TableCell>
+                        )}
+                        {selectedColumns.includes("quotationPdf") && (
+                          <TableCell className="px-4 py-3">
+                            {pdfs.length === 0 ? (
+                              <span className="text-xs text-slate-400">-</span>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                {pdfs.map((v, i) => (
+                                  <a
+                                    key={i}
+                                    href={v.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                                    <span>{v.name || "PDF"}</span>
+                                  </a>
+                                ))}
+                              </div>
+                            )}
                           </TableCell>
                         )}
                         <TableCell className="px-4 py-3">
@@ -764,8 +797,31 @@ export default function ApprovedVendor() {
                       <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
                         {baseColumns.filter((col) => selectedColumns.includes(col.key)).map((col) => (
                           <TableCell key={col.key} className="text-sm text-slate-700 px-4">
-                            {col.key === "createdAtCol"
-                              ? formatDateTimeFull(record.data.plan4 || record.createdAt)
+                            {col.key === "quotationPdf"
+                              ? (() => {
+                                  const pdfs = [
+                                    { name: record.data.vendor1Name, url: record.data.vendor1PdfUrl },
+                                    { name: record.data.vendor2Name, url: record.data.vendor2PdfUrl },
+                                    { name: record.data.vendor3Name, url: record.data.vendor3PdfUrl },
+                                  ].filter((v) => v.url);
+                                  if (pdfs.length === 0) return "-";
+                                  return (
+                                    <div className="flex flex-col gap-1">
+                                      {pdfs.map((v, i) => (
+                                        <a
+                                          key={i}
+                                          href={v.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
+                                        >
+                                          <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                                          <span>{v.name || "PDF"}</span>
+                                        </a>
+                                      ))}
+                                    </div>
+                                  );
+                                })()
                               : col.key === "actual3"
                               ? getPlannedDateForRecord(record.data, "Approved Vendor", tatRules, record.createdAt)
                               : String(record.data[col.key] ?? "-")}

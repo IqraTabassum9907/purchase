@@ -89,7 +89,7 @@ export default function PurchaseDashboard() {
   const [dateTo, setDateTo] = useState("");
   const [selectedParty, setSelectedParty] = useState("all");
   const [selectedMaterial, setSelectedMaterial] = useState("all");
-  const [selectedStatus, setSelectedStatus] = useState("all");
+  const [selectedDivision, setSelectedDivision] = useState("all");
 
   // Search states
   const [inTransitSearch, setInTransitSearch] = useState("");
@@ -182,6 +182,18 @@ export default function PurchaseDashboard() {
           if (po.indent_id && !poByIndent.has(po.indent_id)) {
             poByIndent.set(po.indent_id, po);
           }
+        });
+
+        // Division (indent's warehouseLocation) keyed by PO id, so tabs
+        // built off purchase_orders/transporter_followups/material_receipts
+        // (which don't store the division themselves) can still be filtered
+        // by Division like the Pending tab already could.
+        const warehouseByIndentId = new Map<string, string>(
+          indentWorkflow.map((r: any) => [r.id, r.data.warehouseLocation || ""])
+        );
+        const warehouseByPoId = new Map<string, string>();
+        pos.forEach((po: any) => {
+          if (po.id) warehouseByPoId.set(po.id, warehouseByIndentId.get(po.indent_id) || "");
         });
 
         const paymentsByPo = new Map<string, any[]>();
@@ -299,6 +311,7 @@ export default function PurchaseDashboard() {
             party: r.data.selectedVendorName || r.data.category,
             qty: r.data.quantity,
             warehouse: r.data.warehouseLocation,
+            firm: "",
             leadTime: r.data.leadTime,
             expDelivery: "",
           }));
@@ -335,6 +348,8 @@ export default function PurchaseDashboard() {
               truck: t.vehicle_number || "",
               date: t.dispatch_date || "",
               qty: po?.quantity || 0,
+              warehouse: po?.id ? warehouseByPoId.get(po.id) || "" : "",
+              firm: po?.firm_name || "",
             };
           });
         setInTransitItems(parsedInTransit);
@@ -349,6 +364,8 @@ export default function PurchaseDashboard() {
             truck: "",
             date: r.received_date || r.created_at || "",
             qty: r.received_quantity || r.quantity || 0,
+            warehouse: po?.id ? warehouseByPoId.get(po.id) || "" : "",
+            firm: po?.firm_name || "",
           };
         });
 
@@ -364,6 +381,8 @@ export default function PurchaseDashboard() {
             truck: "",
             date: p.created_at || "",
             qty: p.quantity || 1,
+            warehouse: p.id ? warehouseByPoId.get(p.id) || "" : "",
+            firm: p.firm_name || "",
           }));
         }
 
@@ -379,6 +398,8 @@ export default function PurchaseDashboard() {
               truck: "",
               date: r.data.createdAt || "",
               qty: parseFloat(String(r.data.approvedQty || r.data.quantity || "1").replace(/,/g, "")) || 1,
+              warehouse: r.data.warehouseLocation || "",
+              firm: "",
             }));
         }
 
@@ -442,6 +463,10 @@ export default function PurchaseDashboard() {
     [...new Set(allData.map((item) => item.material))].filter(Boolean).sort()
     , [allData]);
 
+  const uniqueDivisions = useMemo(() =>
+    [...new Set(allData.map((item) => item.warehouse))].filter(Boolean).sort()
+    , [allData]);
+
   // Filtering function
   const applyFilters = (data: any[], dataType: string) => {
     return data.filter((item: any) => {
@@ -475,11 +500,11 @@ export default function PurchaseDashboard() {
       )
         return false;
 
-      // Status filter
+      // Division filter
       if (
-        selectedStatus &&
-        selectedStatus !== "all" &&
-        selectedStatus !== dataType
+        selectedDivision &&
+        selectedDivision !== "all" &&
+        item.warehouse !== selectedDivision
       )
         return false;
 
@@ -505,10 +530,10 @@ export default function PurchaseDashboard() {
   };
 
   // Apply filters to data
-  const filteredInTransitData = useMemo(() => applyFilters(inTransitItems, "intransit"), [inTransitItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedStatus]);
-  const filteredReceivedData = useMemo(() => applyFilters(receivedItems, "received"), [receivedItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedStatus]);
-  const filteredPendingData = useMemo(() => applyFilters(purchaseItems, "pending"), [purchaseItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedStatus]);
-  const filteredWarrantyData = useMemo(() => applyFilters(warrantyItems, "warranty"), [warrantyItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedStatus, warrantyMonthsFilter]);
+  const filteredInTransitData = useMemo(() => applyFilters(inTransitItems, "intransit"), [inTransitItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedDivision]);
+  const filteredReceivedData = useMemo(() => applyFilters(receivedItems, "received"), [receivedItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedDivision]);
+  const filteredPendingData = useMemo(() => applyFilters(purchaseItems, "pending"), [purchaseItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedDivision]);
+  const filteredWarrantyData = useMemo(() => applyFilters(warrantyItems, "warranty"), [warrantyItems, dateFrom, dateTo, selectedParty, selectedMaterial, selectedDivision, warrantyMonthsFilter]);
 
   // Sorting function
   const sortData = (data: any[], sortConfig: any) => {
@@ -920,7 +945,7 @@ export default function PurchaseDashboard() {
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
                 <Input
-                  placeholder="dd-mm-yyyy"
+                  type="date"
                   className="h-9 text-xs"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
@@ -929,7 +954,7 @@ export default function PurchaseDashboard() {
                   to
                 </span>
                 <Input
-                  placeholder="dd-mm-yyyy"
+                  type="date"
                   className="h-9 text-xs"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
@@ -965,15 +990,17 @@ export default function PurchaseDashboard() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+            <Select value={selectedDivision} onValueChange={setSelectedDivision}>
               <SelectTrigger className="h-9 text-xs">
-                <SelectValue placeholder="All Statuses" />
+                <SelectValue placeholder="All Divisions" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="intransit">In-Transit</SelectItem>
-                <SelectItem value="received">Received</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="all">All Divisions</SelectItem>
+                {uniqueDivisions.map((division) => (
+                  <SelectItem key={division} value={division}>
+                    {division}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Button
@@ -985,7 +1012,7 @@ export default function PurchaseDashboard() {
                 setDateTo("");
                 setSelectedParty("all");
                 setSelectedMaterial("all");
-                setSelectedStatus("all");
+                setSelectedDivision("all");
               }}
             >
               Clear All

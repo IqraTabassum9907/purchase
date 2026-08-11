@@ -346,6 +346,14 @@ export default function PublicQuotationForm() {
                       <td className="p-3 text-right font-bold text-slate-900">₹{itemTotals[index]?.total.toFixed(2)}</td>
                     </tr>
                   ))}
+                  <tr className="border-b">
+                    <td className="p-3 font-semibold text-slate-600" colSpan={6}>Sub Total</td>
+                    <td className="p-3 text-right font-semibold text-slate-800">₹{subtotal.toFixed(2)}</td>
+                  </tr>
+                  <tr className="border-b">
+                    <td className="p-3 font-semibold text-slate-600" colSpan={6}>GST Amount</td>
+                    <td className="p-3 text-right font-semibold text-slate-800">₹{gstAmount.toFixed(2)}</td>
+                  </tr>
                   <tr className="bg-slate-100/70">
                     <td className="p-3 font-bold text-slate-800" colSpan={6}>Grand Total</td>
                     <td className="p-3 text-right font-bold text-slate-900">₹{grandTotal.toFixed(2)}</td>
@@ -474,9 +482,11 @@ export default function PublicQuotationForm() {
 
               {indentItems.length > 1 && (
                 <div className="flex justify-end pr-1">
-                  <span className="text-sm font-bold text-slate-700">
-                    Grand Total: <span className="text-slate-900">₹{grandTotal.toFixed(2)}</span>
-                  </span>
+                  <div className="text-sm text-slate-700 space-y-1 text-right">
+                    <div>Sub Total: <span className="font-semibold text-slate-900">₹{subtotal.toFixed(2)}</span></div>
+                    <div>GST Amount: <span className="font-semibold text-slate-900">₹{gstAmount.toFixed(2)}</span></div>
+                    <div className="font-bold">Grand Total: <span className="text-slate-900">₹{grandTotal.toFixed(2)}</span></div>
+                  </div>
                 </div>
               )}
             </div>

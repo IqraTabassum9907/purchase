@@ -264,7 +264,6 @@ export default function FollowUpLifting() {
   };
 
   const baseColumns = [
-    { key: "createdAtCol", label: "Timestamp", icon: null },
     { key: "indentNumber", label: "Indent No.", icon: null },
     { key: "itemName", label: "Item", icon: null },
     { key: "supplierName", label: "Supplier", icon: null },
@@ -524,9 +523,12 @@ export default function FollowUpLifting() {
                 vendor3Name: row.data.vendor3Name,
                 vendor3PoNumber: po.po_number,
                 finalVendorName: po.vendor_name || row.data.selectedVendorName,
-                estimatedDate: latestLifting?.expected_lifting_date || "",
+                // "Next Follow Up Date" = the date actually chosen in the Follow-Up
+                // form (followup_date); "Last Follow Up Date" = when that follow-up
+                // was logged (its own record timestamp) — these were swapped before.
+                estimatedDate: latestLifting?.followup_date || "",
                 remarksFollowUp: latestLifting?.remarks || "",
-                lastFollowUpDate: latestLifting?.followup_date || "",
+                lastFollowUpDate: latestLifting?.updated_at || "",
                 totalLifted: String(totalLiftedSoFar),
                 cancelledQty: String(cancelledQty),
                 pendingLifted: String(pendingLiftQty),
@@ -1263,6 +1265,12 @@ export default function FollowUpLifting() {
     return null;
   };
 
+  // "Arrange Logistics" only applies when WE have to arrange the transport
+  // ("Ex-Factory in Transport Office" / "F.O.R.") — "Ex-Factory Only" means
+  // the vendor handles their own pickup, so that tab has nothing to do there.
+  const activeModalRecord = sheetRecords.find((r) => r.id === bulkFormData[0]?.recordId);
+  const logisticsNeededForModal = String(activeModalRecord?.data?.transportType || "").trim().toLowerCase() === "ex-factory in transport office";
+
   return (
     <div className="p-6 h-[calc(100vh-4.5rem)] flex flex-col overflow-hidden">
       {/* Header Card */}
@@ -1589,18 +1597,20 @@ export default function FollowUpLifting() {
                 >
                   Follow-UP
                 </button>
-                <button
-                  type="button"
-                  onClick={() => toggleDialogMode("arrange-logistics")}
-                  className={cn(
-                    "px-6 py-1.5 text-xs font-semibold rounded-md transition-all duration-200",
-                    processMode === "arrange-logistics"
-                      ? "bg-white text-slate-950 shadow-sm"
-                      : "text-slate-500 hover:text-slate-900"
-                  )}
-                >
-                  Arrange Logistics
-                </button>
+                {logisticsNeededForModal && (
+                  <button
+                    type="button"
+                    onClick={() => toggleDialogMode("arrange-logistics")}
+                    className={cn(
+                      "px-6 py-1.5 text-xs font-semibold rounded-md transition-all duration-200",
+                      processMode === "arrange-logistics"
+                        ? "bg-white text-slate-950 shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    )}
+                  >
+                    Arrange Logistics
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => toggleDialogMode("lift-material")}
@@ -1736,38 +1746,6 @@ export default function FollowUpLifting() {
                             }}
                             options={transporterList}
                           />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
-                            Transport Type
-                          </Label>
-                          <Select
-                            value={
-                              (isUnifiedMode ? unifiedFormData?.liftingData.transportType : null) ||
-                              bulkFormData[0]?.liftingData.transportType ||
-                              ""
-                            }
-                            onValueChange={(val) => {
-                              setUnifiedFormData((prev) => ({
-                                status: "arrange-logistics",
-                                followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
-                                remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
-                                liftingData: { ...(prev?.liftingData || bulkFormData[0]?.liftingData || defaultLiftingData()), transportType: val },
-                              }));
-                              setBulkFormData((prev) =>
-                                prev.map((item) => ({ ...item, status: "arrange-logistics", liftingData: { ...item.liftingData, transportType: val } }))
-                              );
-                            }}
-                          >
-                            <SelectTrigger className="bg-white border-slate-200 h-10 shadow-sm w-full">
-                              <SelectValue placeholder="Select transport type" />
-                            </SelectTrigger>
-                            <SelectContent className="bg-white border">
-                              <SelectItem value="Ex-Factory">Ex-Factory</SelectItem>
-                              <SelectItem value="Ex-Factory + Transport">Ex-Factory + Transport</SelectItem>
-                              <SelectItem value="F.O.R.">F.O.R. (Free on Road)</SelectItem>
-                            </SelectContent>
-                          </Select>
                         </div>
                         <div className="space-y-2">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
@@ -2074,22 +2052,6 @@ export default function FollowUpLifting() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TRANSPORTING RATE (PER KG)</Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="From Arrange Logistics"
-                            className="bg-white border-green-200 h-10 shadow-sm w-full"
-                            value={unifiedFormData.liftingData.transportRatePerKg || ""}
-                            onChange={(e) =>
-                              setUnifiedFormData((prev) => prev ? {
-                                ...prev,
-                                liftingData: { ...prev.liftingData, transportRatePerKg: e.target.value }
-                              } : null)
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1.5">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TRANSPORT TYPE</Label>
                           <Select
                             value={unifiedFormData.liftingData.transportType || ""}
@@ -2104,9 +2066,9 @@ export default function FollowUpLifting() {
                               <SelectValue placeholder="Select transport type" />
                             </SelectTrigger>
                             <SelectContent className="bg-white border">
-                              <SelectItem value="Ex-Factory">Ex-Factory</SelectItem>
-                              <SelectItem value="Ex-Factory + Transport">Ex-Factory + Transport</SelectItem>
-                              <SelectItem value="F.O.R.">F.O.R. (Free on Road)</SelectItem>
+                              <SelectItem value="Ex-Factory Only">Ex-Factory Only</SelectItem>
+                              <SelectItem value="Ex-Factory in Transport Office">Ex-Factory in Transport Office</SelectItem>
+                              <SelectItem value="F.O.R.">F.O.R.</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>

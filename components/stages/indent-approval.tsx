@@ -257,7 +257,6 @@ export default function Stage2() {
   const historyPagination = usePagination(history, 15);
 
   const columns = [
-    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent" },
     { key: "createdBy", label: "Created By" },
     { key: "category", label: "Category" },

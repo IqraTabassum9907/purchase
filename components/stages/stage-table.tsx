@@ -192,9 +192,6 @@ export function StageTable({
                           <TableHead className="min-w-[120px] font-bold text-slate-900 border-b border-slate-300 sticky top-0 z-30 bg-slate-200 px-4 py-3 whitespace-nowrap">
                             {columns[0]?.label}
                           </TableHead>
-                          <TableHead className="min-w-[120px] font-bold text-slate-900 border-b border-slate-300 sticky top-0 z-30 bg-slate-200 px-4 py-3 whitespace-nowrap">
-                            Date
-                          </TableHead>
                           <TableHead className="min-w-[140px] font-bold text-slate-900 border-b border-slate-300 sticky top-0 z-30 bg-slate-200 px-4 py-3 whitespace-nowrap">
                             Planned Date
                           </TableHead>
@@ -223,9 +220,6 @@ export function StageTable({
                             </TableCell>
                             <TableCell className="text-sm font-medium text-slate-900 border-b border-slate-100 px-4">
                               {String(record.data[columns[0]?.key] || "-")}
-                            </TableCell>
-                            <TableCell className="text-sm text-slate-600 border-b border-slate-100 px-4">
-                              {getStageTimestamp(record)}
                             </TableCell>
                             <TableCell className="text-xs font-mono text-slate-600 border-b border-slate-100 px-4">
                               {getPlannedDateForRecord(record.data, "Create Indent", tatRules, record.createdAt)}

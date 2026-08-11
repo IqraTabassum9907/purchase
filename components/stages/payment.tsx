@@ -1319,7 +1319,6 @@ export default function UnifiedPaymentHub() {
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
                     <TableHead className="font-bold p-3">Action</TableHead>
-                    <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">Indent</TableHead>
                     <TableHead className="font-bold p-3">Item Details</TableHead>
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
@@ -1336,7 +1335,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
                         No pending advance payments found.
                       </TableCell>
                     </TableRow>
@@ -1353,7 +1352,6 @@ export default function UnifiedPaymentHub() {
                             {r.data.advancePaidAmount > 0 ? "Pay Remaining" : "Pay"}
                           </Button>
                         </TableCell>
-                        <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.createdAt)}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName}</TableCell>
                         <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
@@ -1395,6 +1393,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">PO Number</TableHead>
                     <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
                     <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Receive Amount</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">Actual Payment Date</TableHead>
                     <TableHead className="font-bold p-3">Payment Reference</TableHead>
@@ -1406,7 +1405,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={14} className="h-32 text-center text-slate-400 font-medium">
                         No advance payment history found.
                       </TableCell>
                     </TableRow>
@@ -1420,6 +1419,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
+                        <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.data.advancePaidAmount)}</TableCell>
                         <TableCell className="p-3 text-slate-500 font-mono text-xs">
                           {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
                         </TableCell>
@@ -1449,7 +1449,6 @@ export default function UnifiedPaymentHub() {
               <Table className="text-xs min-w-[1400px]">
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
-                    <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">Invoice No</TableHead>
                     <TableHead className="font-bold p-3">Supplier</TableHead>
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
@@ -1467,7 +1466,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredVendorPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
                         No pending vendor invoices found.
                       </TableCell>
                     </TableRow>
@@ -1476,7 +1475,6 @@ export default function UnifiedPaymentHub() {
                       const overdue = isDueDateOverdueOrToday(r.data.dueDate);
                       return (
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
-                          <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.createdAt)}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-800">{r.data.invoiceNo}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-900">{r.data.vendor}</TableCell>
                           <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
@@ -1574,7 +1572,6 @@ export default function UnifiedPaymentHub() {
               <table className="w-full caption-bottom text-xs min-w-[1250px]">
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
-                    <TableHead className="font-bold p-3">Timestamp</TableHead>
                     <TableHead className="font-bold p-3">LR No.</TableHead>
                     <TableHead className="font-bold p-3">Transporter</TableHead>
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
@@ -1589,14 +1586,13 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredFreightPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
                         No pending freight payments found.
                       </TableCell>
                     </TableRow>
                   ) : (
                     freightPendingPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
-                        <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.data.createdAt)}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.data.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.transporter}</TableCell>
                         <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>

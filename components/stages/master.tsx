@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabase/client";
+import { isMissingColumnError } from "@/lib/supabase/queries";
 import { cn } from "@/lib/utils";
 import { usePagination } from "@/lib/use-pagination";
 import { PaginationBar } from "@/components/ui/pagination-bar";
@@ -72,6 +73,9 @@ interface VendorInfo {
   phone: string;
   email: string;
   address: string;
+  billingAddress: string;
+  gstin: string;
+  panNumber: string;
 }
 
 interface AddressInfo {
@@ -251,7 +255,7 @@ export default function MasterPage() {
   // Complex items catalog
   const [items, setItems] = useState<ItemOption[]>([]);
   const [vendors, setVendors] = useState<VendorInfo[]>([]);
-  const [newVendor, setNewVendor] = useState<VendorInfo>({ vendorName: "", contactPerson: "", phone: "", email: "", address: "" });
+  const [newVendor, setNewVendor] = useState<VendorInfo>({ vendorName: "", contactPerson: "", phone: "", email: "", address: "", billingAddress: "", gstin: "", panNumber: "" });
   const [vendorSearch, setVendorSearch] = useState<string>("");
 
   // Our company's own addresses (billing / destination), used as a shared
@@ -357,10 +361,13 @@ export default function MasterPage() {
             phone: v.phone || "-",
             email: v.email || "-",
             address: v.address || "-",
+            billingAddress: v.billing_address || "-",
+            gstin: v.gstin || "-",
+            panNumber: v.pan_number || "-",
           }))
         : [
-            { vendorName: "INFOSYS TECH", contactPerson: "Nandan Nilekani", phone: "9876543210", email: "infosys@company.com", address: "Electronic City, Bangalore" },
-            { vendorName: "KOTAK MAHINDRA", contactPerson: "Uday Kotak", phone: "9876501234", email: "kotak@company.com", address: "Bandra Kurla Complex, Mumbai" },
+            { vendorName: "INFOSYS TECH", contactPerson: "Nandan Nilekani", phone: "9876543210", email: "infosys@company.com", address: "Electronic City, Bangalore", billingAddress: "-", gstin: "-", panNumber: "-" },
+            { vendorName: "KOTAK MAHINDRA", contactPerson: "Uday Kotak", phone: "9876501234", email: "kotak@company.com", address: "Bandra Kurla Complex, Mumbai", billingAddress: "-", gstin: "-", panNumber: "-" },
           ];
       setVendors(parsedVendors);
 
@@ -778,29 +785,56 @@ export default function MasterPage() {
     const ph = newVendor.phone.trim();
     const mail = newVendor.email.trim();
     const addr = newVendor.address.trim();
+    const billingAddr = newVendor.billingAddress.trim();
+    const gstinVal = newVendor.gstin.trim();
+    const panVal = newVendor.panNumber.trim();
 
     if (!name || !contact || !ph || !addr) {
       toast.error("Please fill out all required fields!");
       return;
     }
 
-    const { error } = await supabase.from("master_vendors").upsert({
+    let payload: Record<string, any> = {
       vendor_name: name,
       contact_person: contact,
       phone: ph,
       email: mail,
       address: addr,
+      billing_address: billingAddr,
+      gstin: gstinVal,
+      pan_number: panVal,
       is_active: true,
-    }, { onConflict: "vendor_name" });
+    };
+    let extendedFieldsMissing = false;
+
+    let { error } = await supabase.from("master_vendors").upsert(payload, { onConflict: "vendor_name" });
+    // billing_address / gstin / pan_number may not exist yet on deployments
+    // that haven't run the migration — drop them and retry rather than
+    // failing to save the vendor at all.
+    while (error && isMissingColumnError(error)) {
+      const missingCol = error.message?.match(/column\s+"?([a-zA-Z_]+)"?/i)?.[1];
+      if (!missingCol || !(missingCol in payload)) break;
+      extendedFieldsMissing = true;
+      const { [missingCol]: _drop, ...rest } = payload;
+      payload = rest;
+      ({ error } = await supabase.from("master_vendors").upsert(payload, { onConflict: "vendor_name" }));
+    }
 
     if (error) {
       toast.error("Error saving vendor.");
       return;
     }
 
-    setVendors(prev => [...prev.filter(v => v.vendorName !== name), { vendorName: name, contactPerson: contact, phone: ph, email: mail, address: addr }]);
-    setNewVendor({ vendorName: "", contactPerson: "", phone: "", email: "", address: "" });
-    toast.success("Vendor added successfully!");
+    setVendors(prev => [
+      ...prev.filter(v => v.vendorName !== name),
+      { vendorName: name, contactPerson: contact, phone: ph, email: mail, address: addr, billingAddress: billingAddr || "-", gstin: gstinVal || "-", panNumber: panVal || "-" },
+    ]);
+    setNewVendor({ vendorName: "", contactPerson: "", phone: "", email: "", address: "", billingAddress: "", gstin: "", panNumber: "" });
+    if (extendedFieldsMissing) {
+      toast.warning("Vendor saved, but Billing Address/GSTIN/PAN couldn't be saved — run the pending database migration.");
+    } else {
+      toast.success("Vendor added successfully!");
+    }
   };
 
   const handleRemoveVendor = async (nameToRemove: string) => {
@@ -1592,6 +1626,34 @@ export default function MasterPage() {
                               required
                             />
                           </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 font-semibold">Billing Address</Label>
+                            <textarea
+                              placeholder="Enter billing address (if different)"
+                              value={newVendor.billingAddress}
+                              onChange={(e) => setNewVendor({ ...newVendor, billingAddress: e.target.value })}
+                              rows={3}
+                              className="w-full px-3 py-2 border text-xs rounded-xl bg-slate-50 border-slate-200 resize-none outline-none focus:border-indigo-500 transition-colors"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 font-semibold">GSTIN</Label>
+                            <Input
+                              placeholder="e.g. 27ABCDE1234A1Z5"
+                              value={newVendor.gstin}
+                              onChange={(e) => setNewVendor({ ...newVendor, gstin: e.target.value })}
+                              className="h-10 text-xs rounded-xl"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 font-semibold">PAN Number</Label>
+                            <Input
+                              placeholder="e.g. ABCDE1234A"
+                              value={newVendor.panNumber}
+                              onChange={(e) => setNewVendor({ ...newVendor, panNumber: e.target.value })}
+                              className="h-10 text-xs rounded-xl"
+                            />
+                          </div>
                           <Button
                             type="submit"
                             disabled={isSubmitting}
@@ -1626,13 +1688,16 @@ export default function MasterPage() {
                                 <TableHead className="text-xs font-bold text-slate-600">Phone</TableHead>
                                 <TableHead className="text-xs font-bold text-slate-600">Email</TableHead>
                                 <TableHead className="text-xs font-bold text-slate-600">Address</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Billing Address</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">GSTIN</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">PAN</TableHead>
                                 <TableHead className="w-20 text-xs font-bold text-slate-600 text-center">Action</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {filteredVendors.length === 0 ? (
                                 <TableRow>
-                                  <TableCell colSpan={6} className="text-center text-slate-400 py-12 text-xs">
+                                  <TableCell colSpan={9} className="text-center text-slate-400 py-12 text-xs">
                                     No vendors found.
                                   </TableCell>
                                 </TableRow>
@@ -1644,6 +1709,9 @@ export default function MasterPage() {
                                     <TableCell className="text-xs text-slate-600 font-mono">{v.phone}</TableCell>
                                     <TableCell className="text-xs text-slate-600 font-semibold">{v.email || "-"}</TableCell>
                                     <TableCell className="text-xs text-slate-700 font-medium truncate max-w-[150px]">{v.address}</TableCell>
+                                    <TableCell className="text-xs text-slate-700 font-medium truncate max-w-[150px]">{v.billingAddress}</TableCell>
+                                    <TableCell className="text-xs text-slate-600 font-mono">{v.gstin}</TableCell>
+                                    <TableCell className="text-xs text-slate-600 font-mono">{v.panNumber}</TableCell>
                                     <TableCell className="text-center">
                                       <Button
                                         onClick={() => handleRemoveVendor(v.vendorName)}

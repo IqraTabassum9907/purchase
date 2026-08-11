@@ -542,7 +542,6 @@ export default function OrderCancelPage() {
             <Table>
               <TableHeader className="bg-white sticky top-0 z-20">
                 <TableRow className="hover:bg-transparent border-b border-slate-200">
-                  <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Timestamp</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Cancelled At</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Planned Date</TableHead>
                   <TableHead className="font-bold text-slate-700 uppercase text-[10px]">Indent-No.</TableHead>
@@ -563,7 +562,7 @@ export default function OrderCancelPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="h-48 text-center">
+                    <TableCell colSpan={14} className="h-48 text-center">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Loader2 className="w-8 h-8 animate-spin text-red-600" />
                         <span className="text-slate-500 font-medium">Loading cancelled orders...</span>
@@ -572,16 +571,13 @@ export default function OrderCancelPage() {
                   </TableRow>
                 ) : filteredCancelledOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="h-32 text-center text-slate-400 font-medium">
+                    <TableCell colSpan={14} className="h-32 text-center text-slate-400 font-medium">
                       No cancelled orders found.
                     </TableCell>
                   </TableRow>
                 ) : (
                   cancelledOrdersPagination.pageData.map((order) => (
                     <TableRow key={order.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 group">
-                      <TableCell className="text-[11px] text-slate-500 font-mono py-4">
-                        {formatDateTimeFull(order.createdAt)}
-                      </TableCell>
                       <TableCell className="text-[11px] text-slate-500 font-mono py-4">
                         {parseGoogleSheetsDate(order.timestamp)}
                       </TableCell>

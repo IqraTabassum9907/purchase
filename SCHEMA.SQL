@@ -23,7 +23,7 @@ CREATE TABLE public.master_categories ( id uuid PRIMARY KEY DEFAULT uuid_generat
 CREATE TABLE public.master_checklists ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_reject_reasons ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), name text NOT NULL UNIQUE, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_transporters ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), transporter_name text NOT NULL UNIQUE, contact_person text, phone text, vehicle_type text, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
-CREATE TABLE public.master_vendors ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), vendor_name text NOT NULL UNIQUE, contact_person text, phone text, email text, address text, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
+CREATE TABLE public.master_vendors ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), vendor_name text NOT NULL UNIQUE, contact_person text, phone text, email text, address text, billing_address text, gstin text, pan_number text, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_items ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), item_code text NOT NULL UNIQUE, category text, item_name text NOT NULL, uom text, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 CREATE TABLE public.master_tat_rules ( id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), system_name text NOT NULL, section_name text NOT NULL, time_unit text NOT NULL, completion_time numeric NOT NULL, is_active boolean DEFAULT true, created_at timestamptz DEFAULT now() );
 
@@ -113,6 +113,11 @@ CREATE TABLE public.purchase_orders (
   advance_amount numeric DEFAULT 0,
   delivery_date date,
   delivery_address text,
+  delivery_location text,
+  transport_type text,
+  gst_percent text,
+  hsn text,
+  firm_name text,
   po_copy_url text,
   created_by character varying,
   status character varying DEFAULT 'PO Issued'::character varying,

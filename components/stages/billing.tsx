@@ -351,7 +351,6 @@ export default function Stage9() {
 
   // Pending columns
   const pendingColumns = [
-    { key: "createdAtCol", label: "Timestamp" },
     { key: "indentNumber", label: "Indent No." },
     { key: "createdBy", label: "Created By" },
     { key: "category", label: "Category" },

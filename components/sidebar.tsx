@@ -75,11 +75,16 @@ export default function Sidebar() {
         queries.push(safeQuery(fetchIndentWorkflow(), "indents"));
         queries.push(safeQuery(supabase.from("indent_delegations").select("indent_id"), "delegations"));
       }
-      if (needsPayment || needsReceivingData) {
-        queries.push(safeQuery(supabase.from("purchase_orders").select("id, payment_type"), "pos"));
+      if (needsPayment || needsReceivingData || needsFollowUp) {
+        queries.push(safeQuery(supabase.from("purchase_orders").select("id, indent_id, payment_type"), "pos"));
       }
-      if (needsPayment) {
-        queries.push(safeQuery(supabase.from("vendor_payments").select("po_id, payment_type, status, transaction_utr, payment_mode, paid_by"), "vp"));
+      if (needsPayment || needsFollowUp) {
+        queries.push(safeQuery(
+          supabase.from("vendor_payments")
+            .select("po_id, payment_type, status, transaction_utr, payment_mode, paid_by, advance_status, created_at")
+            .order("created_at", { ascending: true }),
+          "vp"
+        ));
       }
       if (needsFollowUp) {
         queries.push(safeQuery(supabase.from("vendor_liftings").select("po_id, lifting_status, actual_lifting_date"), "vl"));
@@ -108,12 +113,17 @@ export default function Sidebar() {
           !r.data.plan4 &&
           !r.data.selectedVendor
         ).length;
-        newCounts["Approved Vendor"] = rows.filter((r: any) =>
+        // Approved Vendor's own Pending tab groups rows that share the same
+        // actual3 (quotation-approval) timestamp into a single row — count
+        // distinct actual3 values here too, not raw indent rows, or the
+        // badge over-counts vs. what the page actually shows.
+        const approvedVendorPendingRows = rows.filter((r: any) =>
           r.data.actual3 &&
           r.data.vendorType?.toLowerCase() !== "regular" &&
           !r.data.plan4 &&
           !r.data.selectedVendor
-        ).length;
+        );
+        newCounts["Approved Vendor"] = new Set(approvedVendorPendingRows.map((r: any) => r.data.actual3)).size;
         newCounts["Make PO"] = rows.filter((r: any) =>
           ((r.data.vendorType?.toLowerCase() === "regular" && r.data.actual1) || r.data.plan4 || r.data.selectedVendor) &&
           !r.data.poNumber
@@ -127,7 +137,21 @@ export default function Sidebar() {
             .map((v: any) => v.po_id)
             .filter(Boolean)
         );
-        newCounts["Follow UP / Lifting"] = g.pos.filter((p: any) => !actualLiftedPoIds.has(p.id)).length;
+        // Latest Advance-payment decision per PO — mirrors follow-up-lifting.tsx:
+        // a PO whose payment plan needs an advance stays parked in Payment's
+        // own Pending tab (not counted here) until "Need Advance Payment
+        // Again" is explicitly recorded.
+        const advanceStatusByPoId = new Map<string, string>();
+        (g.vp || []).forEach((p: any) => {
+          if (!p.po_id || p.payment_type !== "Advance") return;
+          advanceStatusByPoId.set(p.po_id, p.advance_status || ""); // ascending order — last write wins = latest
+        });
+        newCounts["Follow UP / Lifting"] = g.pos.filter((p: any) => {
+          if (actualLiftedPoIds.has(p.id)) return false;
+          const requiresAdvanceDecision = !String(p.payment_type || "").toLowerCase().includes("no advance");
+          if (requiresAdvanceDecision && advanceStatusByPoId.get(p.id) !== "need_again") return false;
+          return true;
+        }).length;
       }
 
       if (g.pos && g.vl && g.tf) {
@@ -160,8 +184,23 @@ export default function Sidebar() {
       }
 
       if (g.pos && g.vp && g.tb) {
+        // A revision never edits its old PO row — it inserts a new one
+        // against the same indent_id. Payment's own Advance tab already
+        // collapses these to one row per indent (first PO found per
+        // indent_id); count it the same way here, or every revised PO gets
+        // counted twice (once as its now-superseded original, once as the
+        // revision) and inflates this badge past what that tab shows.
+        const advPosByIndentId = new Map<string, any>();
+        (g.pos || []).forEach((p: any) => {
+          if (p.indent_id && !advPosByIndentId.has(p.indent_id)) advPosByIndentId.set(p.indent_id, p);
+        });
         // 1. Pending Advance Payments
-        const advPos = (g.pos || []).filter((p: any) => p.payment_type?.toLowerCase().includes("advance"));
+        // payment_type reads like "Advance Payment (...)" or "No Advance -
+        // ...", and "No Advance" itself contains the substring "advance" —
+        // matching on that substring alone wrongly counted every No-Advance
+        // PO as needing one too, inflating this badge well past what the
+        // page's own Advance Payment > Pending tab actually shows.
+        const advPos = Array.from(advPosByIndentId.values()).filter((p: any) => !String(p.payment_type || "").toLowerCase().includes("no advance"));
         const paidAdvPoIds = new Set(
           (g.vp || [])
             .filter((v: any) => v.payment_type === "Advance" && (v.status === "Paid" || v.status === "completed"))
