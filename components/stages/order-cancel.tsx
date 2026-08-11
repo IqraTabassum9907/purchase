@@ -9,7 +9,27 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import { RefreshCw, Search, Plus, Loader2, AlertCircle, XCircle } from "lucide-react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { RefreshCw, Search, Plus, Loader2, AlertCircle, XCircle, Check, ChevronsUpDown } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { supabase } from "@/lib/supabase/client"
@@ -17,6 +37,67 @@ import { fetchIndentWorkflow } from "@/lib/supabase/queries"
 import { getPlannedDateForRecord, formatDateTimeFull } from "@/lib/utils"
 import { usePagination } from "@/lib/use-pagination"
 import { PaginationBar } from "@/components/ui/pagination-bar"
+
+const VendorSearchCombobox = ({
+  value,
+  onChange,
+  options,
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: string[]
+}) => {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full h-10 justify-between bg-white border-slate-200 shadow-sm font-normal"
+        >
+          {value ? value : "All Vendors"}
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-white" align="start">
+        <Command>
+          <CommandInput placeholder="Search vendor..." />
+          <CommandList>
+            <CommandEmpty>No vendor found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="__all__"
+                onSelect={() => {
+                  onChange("")
+                  setOpen(false)
+                }}
+              >
+                <Check className={cn("mr-2 h-4 w-4", !value ? "opacity-100" : "opacity-0")} />
+                All Vendors
+              </CommandItem>
+              {options.map((option) => (
+                <CommandItem
+                  key={option}
+                  value={option}
+                  onSelect={(currentValue) => {
+                    onChange(currentValue === value ? "" : option)
+                    setOpen(false)
+                  }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", value === option ? "opacity-100" : "opacity-0")} />
+                  {option}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 export default function OrderCancelPage() {
   // Cancellation is only ever done off the Follow UP / Lifting pending set
@@ -34,14 +115,17 @@ export default function OrderCancelPage() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  // Search is by Indent Number only, and only against indents that are
-  // currently Pending in the Follow UP / Lifting stage — this is the same
-  // "still has quantity left to lift" set that page itself shows, so an
-  // order can only be cancelled while it's genuinely still pending there.
-  const [searchQuery, setSearchQuery] = useState("")
-  const [searchResults, setSearchResults] = useState<any[]>([])
+  // The Indent No. and Vendor Name pickers below are both sourced directly
+  // from indents that are currently Pending in the Follow UP / Lifting stage
+  // — this is the same "still has quantity left to lift" set that page
+  // itself shows, so an order can only be cancelled while it's genuinely
+  // still pending there. Both filters narrow the same underlying list and
+  // can be used together or on their own.
+  const [allPendingRows, setAllPendingRows] = useState<any[]>([])
+  const [pendingRowsLoading, setPendingRowsLoading] = useState(false)
+  const [selectedIndentFilter, setSelectedIndentFilter] = useState("")
+  const [selectedVendorFilter, setSelectedVendorFilter] = useState("")
   const [selectedSearchRowIds, setSelectedSearchRowIds] = useState<string[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState("")
 
@@ -195,14 +279,9 @@ export default function OrderCancelPage() {
 
   const cancelledOrdersPagination = usePagination(filteredCancelledOrders, 15)
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      toast.error("Please select or enter a search query")
-      return
-    }
-
-    setSearchLoading(true)
-    setSearchResults([])
+  const fetchPendingRows = async () => {
+    setPendingRowsLoading(true)
+    setAllPendingRows([])
     setSelectedSearchRowIds([])
 
     try {
@@ -239,12 +318,11 @@ export default function OrderCancelPage() {
         cancelledByPoId.set(c.po_id, (cancelledByPoId.get(c.po_id) || 0) + (parseFloat(c.financial_impact) || 0));
       });
 
-      const query = searchQuery.toLowerCase().trim()
       const results: any[] = []
 
       indentRows.forEach((row: any) => {
         const indentNumber = row.data.indentNumber;
-        if (!indentNumber || !indentNumber.toLowerCase().includes(query)) return;
+        if (!indentNumber) return;
 
         const posForIndent = posByIndentId.get(row.id) || [];
         posForIndent.forEach((po: any) => {
@@ -260,11 +338,13 @@ export default function OrderCancelPage() {
           // (rate x qty), not a true per-unit rate — divide back out by
           // qty to get the actual per-unit rate for display.
           const rate = poQty > 0 ? (parseFloat(po.unit_rate) || 0) / poQty : 0;
+          const vendorName = po.vendor_name || row.data.selectedVendorName || row.data.finalVendorName || row.data.vendor1Name || "-";
 
           results.push({
-            id: row.id,
+            id: `${row.id}__${po.id}`,
             poId: po.id,
             indentNumber,
+            vendorName,
             poNumber: po.po_number || "—",
             itemName: po.item_name || row.data.itemName,
             poQty,
@@ -276,17 +356,30 @@ export default function OrderCancelPage() {
         });
       });
 
-      setSearchResults(results);
-      if (results.length === 0) {
-        toast.info("No matching pending Follow-Up records found")
-      }
+      setAllPendingRows(results);
     } catch (err: any) {
-      console.error("Error during search:", err)
-      toast.error(`Search error: ${err.message}`)
+      console.error("Error fetching pending Follow-Up records:", err)
+      toast.error(`Failed to load pending records: ${err.message}`)
     } finally {
-      setSearchLoading(false)
+      setPendingRowsLoading(false)
     }
   }
+
+  const indentNumberOptions = useMemo(
+    () => Array.from(new Set(allPendingRows.map((r) => r.indentNumber))).sort(),
+    [allPendingRows]
+  )
+  const vendorNameOptions = useMemo(
+    () => Array.from(new Set(allPendingRows.map((r) => r.vendorName).filter((v) => v && v !== "-"))).sort(),
+    [allPendingRows]
+  )
+
+  const searchResults = useMemo(() => {
+    return allPendingRows.filter((r) =>
+      (!selectedIndentFilter || r.indentNumber === selectedIndentFilter) &&
+      (!selectedVendorFilter || r.vendorName === selectedVendorFilter)
+    )
+  }, [allPendingRows, selectedIndentFilter, selectedVendorFilter])
 
   const submitCancellation = async () => {
     if (selectedSearchRowIds.length === 0) {
@@ -332,8 +425,9 @@ export default function OrderCancelPage() {
       const { error } = await supabase.from("order_cancellations").insert(insertRows)
       if (error) throw error
 
-      setSearchQuery("")
-      setSearchResults([])
+      setSelectedIndentFilter("")
+      setSelectedVendorFilter("")
+      setAllPendingRows([])
       setSelectedSearchRowIds([])
       setCancelStage(FIXED_CANCEL_STAGE)
       setCancelReason("")
@@ -352,13 +446,14 @@ export default function OrderCancelPage() {
   }
 
   const handleNewCancellation = () => {
-    setSearchQuery("")
-    setSearchResults([])
+    setSelectedIndentFilter("")
+    setSelectedVendorFilter("")
     setSelectedSearchRowIds([])
     setCancelStage(FIXED_CANCEL_STAGE)
     setCancelReason("")
     setCancelQuantities({})
     setIsDialogOpen(true)
+    fetchPendingRows()
   }
 
   const handleRefresh = async () => {
@@ -578,39 +673,41 @@ export default function OrderCancelPage() {
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto pr-1 space-y-4 py-2">
-            {/* Search Section */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200">
-              <div className="md:col-span-10 space-y-1.5">
-                <Label>Search by Indent Number *</Label>
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Enter Indent Number (e.g. IN-...)"
-                  className="bg-white border-slate-200"
-                />
+            {/* Filter Section — both pickers are sourced from Follow UP / Lifting's Pending set */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end bg-slate-50 p-4 rounded-lg border border-slate-200">
+              <div className="space-y-1.5">
+                <Label>Indent No.</Label>
+                <Select
+                  value={selectedIndentFilter || "__all__"}
+                  onValueChange={(v) => setSelectedIndentFilter(v === "__all__" ? "" : v)}
+                >
+                  <SelectTrigger className="w-full bg-white border-slate-200">
+                    <SelectValue placeholder="All Pending Indents" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-white border">
+                    <SelectItem value="__all__">All Pending Indents</SelectItem>
+                    {indentNumberOptions.map((num) => (
+                      <SelectItem key={num} value={num}>{num}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="md:col-span-2">
-                <Button
-                  onClick={handleSearch}
-                  disabled={searchLoading || !searchQuery.trim()}
-                  className="w-full bg-blue-700 hover:bg-blue-800 text-white font-medium flex items-center justify-center gap-2 h-10"
-                >
-                  {searchLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Search className="w-4 h-4" />
-                  )}
-                  Search
-                </Button>
+              <div className="space-y-1.5">
+                <Label>Vendor Name</Label>
+                <VendorSearchCombobox
+                  value={selectedVendorFilter}
+                  onChange={setSelectedVendorFilter}
+                  options={vendorNameOptions}
+                />
               </div>
             </div>
 
             {/* Results Table Section */}
-            {searchLoading ? (
+            {pendingRowsLoading ? (
               <div className="flex flex-col items-center justify-center py-10 gap-2 border border-dashed rounded-lg">
                 <Loader2 className="w-8 h-8 animate-spin text-red-600" />
-                <span className="text-sm text-slate-500 font-medium">Searching FMS Sheet...</span>
+                <span className="text-sm text-slate-500 font-medium">Loading pending Follow-Up records...</span>
               </div>
             ) : searchResults.length > 0 ? (
               <div className="space-y-2">
@@ -642,6 +739,7 @@ export default function OrderCancelPage() {
                           />
                         </TableHead>
                         <TableHead className="text-xs uppercase font-semibold text-slate-600">Indent No.</TableHead>
+                        <TableHead className="text-xs uppercase font-semibold text-slate-600">Vendor Name</TableHead>
                         <TableHead className="text-xs uppercase font-semibold text-slate-600">PO Number</TableHead>
                         <TableHead className="text-xs uppercase font-semibold text-slate-600">Item Name</TableHead>
                         <TableHead className="text-center text-xs uppercase font-semibold text-slate-600">PO Qty</TableHead>
@@ -678,6 +776,9 @@ export default function OrderCancelPage() {
                             />
                           </TableCell>
                           <TableCell className="font-medium text-xs text-slate-900">{row.indentNumber}</TableCell>
+                          <TableCell className="text-xs text-slate-700 max-w-[130px] truncate" title={row.vendorName}>
+                            {row.vendorName}
+                          </TableCell>
                           <TableCell className="font-mono text-[11px] text-slate-500">{row.poNumber}</TableCell>
                           <TableCell className="text-xs text-slate-700 max-w-[150px] truncate" title={row.itemName}>
                             {row.itemName}
@@ -720,11 +821,13 @@ export default function OrderCancelPage() {
                   </Table>
                 </div>
               </div>
-            ) : searchQuery.trim() && !searchLoading ? (
+            ) : (
               <div className="text-center py-6 text-sm text-slate-500 border border-dashed rounded-lg">
-                No search results yet. Click Search to retrieve matching rows.
+                {selectedIndentFilter || selectedVendorFilter
+                  ? "No matching pending Follow-Up records found."
+                  : "No pending Follow-Up records available to cancel."}
               </div>
-            ) : null}
+            )}
 
             {/* Cancellation Details Form (Visible only when rows are selected) */}
             {selectedSearchRowIds.length > 0 && (

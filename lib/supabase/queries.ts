@@ -17,6 +17,7 @@ export interface FlatIndentRow {
     warehouseLocation: string;
     itemCode: string;
     leadTime: string;
+    deliveryLocation: string;
     // Stage 2: Approval
     plan1: string;
     actual1: string;
@@ -32,18 +33,27 @@ export interface FlatIndentRow {
     vendor1Delivery: string;
     vendor1Approved: string;
     vendor1Remarks: string;
+    vendor1Gst: string;
+    vendor1TransportType: string;
+    vendor1PdfUrl: string;
     vendor2Name: string;
     vendor2Rate: string;
     vendor2Terms: string;
     vendor2Delivery: string;
     vendor2Approved: string;
     vendor2Remarks: string;
+    vendor2Gst: string;
+    vendor2TransportType: string;
+    vendor2PdfUrl: string;
     vendor3Name: string;
     vendor3Rate: string;
     vendor3Terms: string;
     vendor3Delivery: string;
     vendor3Approved: string;
     vendor3Remarks: string;
+    vendor3Gst: string;
+    vendor3TransportType: string;
+    vendor3PdfUrl: string;
     plan3: string;
     actual3: string;
     selectedVendor: string;
@@ -188,6 +198,7 @@ export async function fetchIndentWorkflow(): Promise<FlatIndentRow[]> {
         warehouseLocation: indent.warehouse_location || "",
         itemCode: indent.item_code || "",
         leadTime: indent.required_date || "",
+        deliveryLocation: indent.delivery_location || "",
         // Stage 2
         plan1: "",
         actual1: lastApproval ? formatDate(lastApproval.approved_at) : "",
@@ -202,19 +213,28 @@ export async function fetchIndentWorkflow(): Promise<FlatIndentRow[]> {
         vendor1Terms: q1?.payment_terms || "",
         vendor1Delivery: q1?.delivery_terms || "",
         vendor1Approved: q1?.is_selected ? "Yes" : "No",
-        vendor1Remarks: "",
+        vendor1Remarks: q1?.remarks || "",
+        vendor1Gst: q1?.gst_percent != null ? String(q1.gst_percent) : "",
+        vendor1TransportType: q1?.transport_type || "",
+        vendor1PdfUrl: q1?.quotation_pdf_url || "",
         vendor2Name: q2?.vendor_name || "",
         vendor2Rate: q2 ? String(q2.quoted_rate || "") : "",
         vendor2Terms: q2?.payment_terms || "",
         vendor2Delivery: q2?.delivery_terms || "",
         vendor2Approved: q2?.is_selected ? "Yes" : "No",
-        vendor2Remarks: "",
+        vendor2Remarks: q2?.remarks || "",
+        vendor2Gst: q2?.gst_percent != null ? String(q2.gst_percent) : "",
+        vendor2TransportType: q2?.transport_type || "",
+        vendor2PdfUrl: q2?.quotation_pdf_url || "",
         vendor3Name: q3?.vendor_name || "",
         vendor3Rate: q3 ? String(q3.quoted_rate || "") : "",
         vendor3Terms: q3?.payment_terms || "",
         vendor3Delivery: q3?.delivery_terms || "",
         vendor3Approved: q3?.is_selected ? "Yes" : "No",
-        vendor3Remarks: "",
+        vendor3Remarks: q3?.remarks || "",
+        vendor3Gst: q3?.gst_percent != null ? String(q3.gst_percent) : "",
+        vendor3TransportType: q3?.transport_type || "",
+        vendor3PdfUrl: q3?.quotation_pdf_url || "",
         plan3: vendorQuots.length > 0 ? formatDate(vendorQuots[0].created_at) : "",
         actual3: submittedQuots.length > 0 ? formatDate(submittedQuots[submittedQuots.length - 1].created_at) : "",
         selectedVendor: av ? `vendor${vendorQuots.findIndex((q) => q.id === av.selected_quotation_id) + 1}` : "",
@@ -248,6 +268,7 @@ export async function createIndentRow(data: {
   warehouseLocation: string;
   itemCode: string;
   leadTime: string;
+  deliveryLocation?: string;
   priority: string;
   attachmentUrl: string;
   uom: string;
@@ -277,6 +298,7 @@ export async function createIndentRow(data: {
     warehouse_location: data.warehouseLocation,
     item_code: data.itemCode,
     required_date: data.leadTime || null,
+    delivery_location: data.deliveryLocation || "",
     urgency: data.priority || "Medium",
     attachment_url: data.attachmentUrl || "",
     uom: data.uom || "",
@@ -301,6 +323,7 @@ export async function updateIndentRow(
     warehouseLocation?: string;
     itemCode?: string;
     leadTime?: string;
+    deliveryLocation?: string;
     priority?: string;
     attachmentUrl?: string;
     uom?: string;
@@ -314,11 +337,88 @@ export async function updateIndentRow(
   if (data.warehouseLocation !== undefined) update.warehouse_location = data.warehouseLocation;
   if (data.itemCode !== undefined) update.item_code = data.itemCode;
   if (data.leadTime !== undefined) update.required_date = data.leadTime || null;
+  if (data.deliveryLocation !== undefined) update.delivery_location = data.deliveryLocation || "";
   if (data.priority !== undefined) update.urgency = data.priority;
   if (data.attachmentUrl !== undefined) update.attachment_url = data.attachmentUrl;
   if (data.uom !== undefined) update.uom = data.uom;
 
   const { error } = await supabase.from("indents").update(update).eq("id", indentId);
+  if (error) throw error;
+}
+
+/**
+ * A single "this indent was delegated to this approver" record
+ * (Stage 1.5: Delegate for Approval). One indent can be delegated to
+ * several approvers at once — each shows up in that approver's own tab
+ * on the Indent Approval page.
+ */
+export interface IndentDelegation {
+  id: string;
+  indentId: string;
+  approverUsername: string;
+  approverName: string;
+  createdAt: string;
+}
+
+/**
+ * Fetch all delegation records, joined across every indent.
+ */
+export async function fetchIndentDelegations(): Promise<IndentDelegation[]> {
+  const { data, error } = await supabase.from("indent_delegations").select("*");
+  if (error) throw error;
+
+  return (data || []).map((d: any) => ({
+    id: d.id,
+    indentId: d.indent_id,
+    approverUsername: d.approver_username,
+    approverName: d.approver_name || d.approver_username,
+    createdAt: d.created_at,
+  }));
+}
+
+/**
+ * Delegate one or more pending indents to one or more approvers.
+ * Skips any (indent, approver) pair that's already delegated.
+ */
+export async function delegateIndents(
+  indentIds: string[],
+  approvers: { username: string; fullName: string }[],
+  delegatedBy: string
+): Promise<void> {
+  if (indentIds.length === 0 || approvers.length === 0) return;
+
+  const { data: existing, error: fetchErr } = await supabase
+    .from("indent_delegations")
+    .select("indent_id, approver_username")
+    .in("indent_id", indentIds);
+  if (fetchErr) throw fetchErr;
+
+  const existingPairs = new Set(
+    (existing || []).map((e: any) => `${e.indent_id}::${e.approver_username}`)
+  );
+
+  const rows = indentIds.flatMap((indentId) =>
+    approvers
+      .filter((a) => !existingPairs.has(`${indentId}::${a.username}`))
+      .map((a) => ({
+        indent_id: indentId,
+        approver_username: a.username,
+        approver_name: a.fullName || a.username,
+        delegated_by: delegatedBy,
+      }))
+  );
+
+  if (rows.length === 0) return;
+
+  const { error } = await supabase.from("indent_delegations").insert(rows);
+  if (error) throw error;
+}
+
+/**
+ * Undo a single delegation (e.g. removing an approver assigned by mistake).
+ */
+export async function removeIndentDelegation(delegationId: string): Promise<void> {
+  const { error } = await supabase.from("indent_delegations").delete().eq("id", delegationId);
   if (error) throw error;
 }
 
@@ -387,7 +487,21 @@ export async function approveIndent(
 }
 
 /**
+ * True when a Supabase/Postgres error is "column does not exist" — the
+ * signature of a migration not having been run yet. Callers use this to
+ * degrade gracefully instead of failing the whole save.
+ */
+export function isMissingColumnError(error: any): boolean {
+  return error?.code === "42703" || /column .* does not exist/i.test(error?.message || "");
+}
+
+/**
  * Submit a vendor quotation (Stage 3 - public form).
+ *
+ * Resilient to the GST/transport/remarks columns not existing yet (i.e. the
+ * migration hasn't been run in Supabase): retries with just the original
+ * core fields so the quotation itself still saves, and reports back whether
+ * the extended fields made it in so the caller can warn the user.
  */
 export async function submitQuotation(
   indentId: string,
@@ -398,9 +512,12 @@ export async function submitQuotation(
     paymentTerms: string;
     deliveryTerms: string;
     submittedBy?: string;
+    gstPercent?: number;
+    transportType?: string;
+    remarks?: string;
   }
-): Promise<void> {
-  const { error } = await supabase.from("quotation_submissions").insert({
+): Promise<{ id: string; extendedFieldsSaved: boolean }> {
+  const baseRow = {
     indent_id: indentId,
     vendor_name: data.vendorName,
     vendor_code: data.vendorCode || "",
@@ -408,8 +525,37 @@ export async function submitQuotation(
     payment_terms: data.paymentTerms,
     delivery_terms: data.deliveryTerms,
     submitted_by: data.submittedBy || "",
-  });
+  };
+  const extendedRow = {
+    ...baseRow,
+    gst_percent: data.gstPercent ?? null,
+    transport_type: data.transportType || "",
+    remarks: data.remarks || "",
+  };
 
+  const { data: inserted, error } = await supabase.from("quotation_submissions").insert(extendedRow).select("id").single();
+
+  if (!error) return { id: inserted.id, extendedFieldsSaved: true };
+  if (!isMissingColumnError(error)) throw error;
+
+  // Migration not run yet — fall back to the core fields so the quotation
+  // itself still gets saved.
+  const { data: fallbackInserted, error: fallbackError } = await supabase
+    .from("quotation_submissions")
+    .insert(baseRow)
+    .select("id")
+    .single();
+  if (fallbackError) throw fallbackError;
+  return { id: fallbackInserted.id, extendedFieldsSaved: false };
+}
+
+/**
+ * Attach the auto-generated quotation PDF link to one or more quotation
+ * submissions (called right after a successful public-form submit).
+ */
+export async function updateQuotationPdfUrl(quotationIds: string[], pdfUrl: string): Promise<void> {
+  if (quotationIds.length === 0) return;
+  const { error } = await supabase.from("quotation_submissions").update({ quotation_pdf_url: pdfUrl }).in("id", quotationIds);
   if (error) throw error;
 }
 

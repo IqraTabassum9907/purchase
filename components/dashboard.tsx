@@ -75,7 +75,6 @@ const purchaseStages = [
   { id: 7, name: "Follow UP / Lifting", color: "bg-emerald-500" },
   { id: 8, name: "Transporter Follow-Up", color: "bg-green-500" },
   { id: 9, name: "Material Received", color: "bg-lime-500" },
-  { id: 11, name: "Purchase Return", color: "bg-violet-500" },
   { id: 10, name: "Billing", color: "bg-orange-550" }, // Keep it near original values
   { id: 12, name: "Vendor Payment", color: "bg-slate-500" },
   { id: 13, name: "Freight Payments", color: "bg-zinc-500" },
@@ -159,7 +158,6 @@ export default function PurchaseDashboard() {
           vendorPayRes,
           cancellationsRes,
           billingRes,
-          returnsRes,
         ] = await Promise.all([
           fetchIndentWorkflow(),
           supabase.from("purchase_orders").select("*"),
@@ -169,7 +167,6 @@ export default function PurchaseDashboard() {
           supabase.from("vendor_payments").select("*"),
           supabase.from("order_cancellations").select("*"),
           supabase.from("tally_billing").select("*"),
-          supabase.from("purchase_returns").select("*"),
         ]);
 
         const pos = poRes.data || [];
@@ -179,7 +176,6 @@ export default function PurchaseDashboard() {
         const vendorPayments = vendorPayRes.data || [];
         const cancellations = cancellationsRes.data || [];
         const billings = billingRes.data || [];
-        const returns = returnsRes.data || [];
 
         const poByIndent = new Map<string, any>();
         pos.forEach((po: any) => {
@@ -279,9 +275,6 @@ export default function PurchaseDashboard() {
           !receiptsByPo.has(t.po_id)
         ).length;
         overdueCounts["Material Received"] = 0;
-
-        counts["Purchase Return"] = returns.length;
-        overdueCounts["Purchase Return"] = 0;
 
         counts["Billing"] = receipts.filter((r: any) => r.po_id && !billingsByPo.has(r.po_id)).length;
         overdueCounts["Billing"] = 0;
@@ -615,7 +608,6 @@ export default function PurchaseDashboard() {
         vendorPayRes,
         cancellationsRes,
         billingRes,
-        returnsRes,
         masterRes,
       ] = await Promise.all([
         fetchIndentWorkflow(),
@@ -626,7 +618,6 @@ export default function PurchaseDashboard() {
         supabase.from("vendor_payments").select("*"),
         supabase.from("order_cancellations").select("*"),
         supabase.from("tally_billing").select("*"),
-        supabase.from("purchase_returns").select("*"),
         supabase.from("master_items").select("*"),
       ]);
 
@@ -636,7 +627,6 @@ export default function PurchaseDashboard() {
       const transports = transportRes.data || [];
       const vendorPayments = vendorPayRes.data || [];
       const billings = billingRes.data || [];
-      const returns = returnsRes.data || [];
       const masterData = masterRes.data || [];
 
       const poByIndent = new Map<string, any>();
@@ -867,25 +857,10 @@ export default function PurchaseDashboard() {
         }
       });
 
-      returns.forEach((ret: any) => {
-        const po = ret.po_id ? pos.find((p: any) => p.id === ret.po_id) : null;
-        totalCounts["Purchase Return"]++;
-        overdueCounts["Purchase Return"]++;
-        detailed.push({
-          indent: "-",
-          party: ret.vendor_name || po?.vendor_name || "-",
-          item: po?.item_name || "-",
-          qty: ret.returned_quantity || "-",
-          stage: "Purchase Return",
-          delay: "0",
-          poNumber: po?.po_number || "-",
-        });
-      });
-
       totalCounts["Order Cancel"] = 0;
       overdueCounts["Order Cancel"] = 0;
 
-      const allowedStages = ["Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up", "Material Received", "Purchase Return", "Billing"];
+      const allowedStages = ["Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up", "Material Received", "Billing"];
       const summaryData = purchaseStages
         .filter((s) => allowedStages.includes(s.name) && overdueCounts[s.name] > 0)
         .map((s) => ({

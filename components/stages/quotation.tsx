@@ -83,6 +83,14 @@ export default function Quotation() {
   const [generatedLinks, setGeneratedLinks] = useState<Array<{ name: string; link: string }>>([]);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [divisionFilter, setDivisionFilter] = useState<string>("all");
+  const [warehouseOptions, setWarehouseOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    supabase.from("master_warehouses").select("name").eq("is_active", true).then(({ data }) => {
+      setWarehouseOptions((data || []).map((w: any) => w.name).filter(Boolean));
+    });
+  }, []);
 
   const [dbVendors, setDbVendors] = useState<Array<{ vendor_name: string; email?: string }>>([]);
 
@@ -98,6 +106,24 @@ export default function Quotation() {
       }
     }
     loadMasterVendors();
+  }, []);
+
+  // Our company's own addresses (Master → Addresses) — feeds the Billing /
+  // Destination Address dropdowns below instead of freehand typing.
+  const [addressOptions, setAddressOptions] = useState<Array<{ name: string; address: string }>>([]);
+
+  useEffect(() => {
+    async function loadMasterAddresses() {
+      try {
+        const { data } = await supabase.from("master_addresses").select("*").eq("is_active", true);
+        if (data && data.length > 0) {
+          setAddressOptions(data.map((a: any) => ({ name: a.name, address: a.address || "" })));
+        }
+      } catch (err) {
+        console.error("Error loading master addresses:", err);
+      }
+    }
+    loadMasterAddresses();
   }, []);
 
   const defaultVendorOptions = [
@@ -145,11 +171,9 @@ export default function Quotation() {
 
   const [billingCompany, setBillingCompany] = useState("M/S Nutech Pvt. Ltd.");
   const [billingAddress, setBillingAddress] = useState(NUTECH_ADDRESS);
-  const [isEditingBilling, setIsEditingBilling] = useState(false);
 
   const [destCompany, setDestCompany] = useState("M/S Nutech Pvt. Ltd.");
   const [destAddress, setDestAddress] = useState(NUTECH_ADDRESS);
-  const [isEditingDest, setIsEditingDest] = useState(false);
 
   // Description / Letter Note
   const [descriptionNote, setDescriptionNote] = useState("");
@@ -207,16 +231,19 @@ export default function Quotation() {
             vendor1Terms: row.data.vendor1Terms,
             vendor1DeliveryDate: row.data.vendor1Delivery,
             vendor1Remarks: row.data.vendor1Remarks,
+            vendor1PdfUrl: row.data.vendor1PdfUrl,
             vendor2Name: row.data.vendor2Name,
             vendor2Rate: row.data.vendor2Rate,
             vendor2Terms: row.data.vendor2Terms,
             vendor2DeliveryDate: row.data.vendor2Delivery,
             vendor2Remarks: row.data.vendor2Remarks,
+            vendor2PdfUrl: row.data.vendor2PdfUrl,
             vendor3Name: row.data.vendor3Name,
             vendor3Rate: row.data.vendor3Rate,
             vendor3Terms: row.data.vendor3Terms,
             vendor3DeliveryDate: row.data.vendor3Delivery,
             vendor3Remarks: row.data.vendor3Remarks,
+            vendor3PdfUrl: row.data.vendor3PdfUrl,
           },
           _quotationIds: row._quotationIds,
         };
@@ -289,25 +316,27 @@ export default function Quotation() {
 
   const pending = useMemo(() => sheetRecords
     .filter((r) => r.status === "pending")
+    .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter)
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       return (
         r.data.indentNumber?.toLowerCase().includes(searchLower) ||
         r.data.itemName?.toLowerCase().includes(searchLower)
       );
-    }), [sheetRecords, searchTerm]);
+    }), [sheetRecords, searchTerm, divisionFilter]);
 
   useEffect(() => { reportPendingCount("Quotation", pending.length); }, [pending.length]);
 
   const completed = useMemo(() => sheetRecords
     .filter((r) => r.status === "completed")
+    .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter)
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       return (
         r.data.indentNumber?.toLowerCase().includes(searchLower) ||
         r.data.itemName?.toLowerCase().includes(searchLower)
       );
-    }), [sheetRecords, searchTerm]);
+    }), [sheetRecords, searchTerm, divisionFilter]);
 
   const pendingPagination = usePagination(pending, 15);
   const historyPagination = usePagination(completed, 15);
@@ -609,10 +638,8 @@ export default function Quotation() {
     setPan("ABCDE1234A");
     setBillingCompany("M/S Nutech Pvt. Ltd.");
     setBillingAddress(NUTECH_ADDRESS);
-    setIsEditingBilling(false);
     setDestCompany("M/S Nutech Pvt. Ltd.");
     setDestAddress(NUTECH_ADDRESS);
-    setIsEditingDest(false);
     setDescriptionNote("");
     setItemSelected(true);
     setTerms([
@@ -649,6 +676,18 @@ export default function Quotation() {
                 className="pl-9 bg-white"
               />
             </div>
+
+            <Select value={divisionFilter} onValueChange={setDivisionFilter}>
+              <SelectTrigger className="w-44 bg-white shrink-0">
+                <SelectValue placeholder="Division" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Divisions</SelectItem>
+                {warehouseOptions.map((w) => (
+                  <SelectItem key={w} value={w}>{w}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <div className="flex items-center gap-3">
               <Label className="text-sm font-semibold text-slate-600 hidden md:inline-block">Show Columns:</Label>
@@ -791,18 +830,26 @@ export default function Quotation() {
                     <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                       Approved Vendor
                     </TableHead>
+                    <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
+                      Quotation PDF
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {completed.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={selectedColumns.length + 2} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={selectedColumns.length + 3} className="h-32 text-center text-gray-500 font-medium">
                         No completed quotations found.
                       </TableCell>
                     </TableRow>
                   ) : (
                     historyPagination.pageData.map((record) => {
                     const approvedName = record.data.selectedVendorName || "Decision pending";
+                    const vendorPdfs = [
+                      { name: record.data.vendor1Name, url: record.data.vendor1PdfUrl },
+                      { name: record.data.vendor2Name, url: record.data.vendor2PdfUrl },
+                      { name: record.data.vendor3Name, url: record.data.vendor3PdfUrl },
+                    ].filter((v) => v.url);
 
                     return (
                       <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
@@ -820,6 +867,26 @@ export default function Quotation() {
                         </TableCell>
                         <TableCell className="text-sm text-slate-700 px-4 font-semibold">
                           {approvedName}
+                        </TableCell>
+                        <TableCell className="text-sm text-slate-700 px-4">
+                          {vendorPdfs.length === 0 ? (
+                            <span className="text-slate-400">-</span>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {vendorPdfs.map((v, i) => (
+                                <a
+                                  key={i}
+                                  href={v.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                  {v.name || "PDF"}
+                                </a>
+                              ))}
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -938,92 +1005,62 @@ export default function Quotation() {
                     </div>
                   </div>
 
-                  {/* Billing Address Card */}
-                  <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 space-y-3 relative group">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                        Billing Address
-                      </h3>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingBilling(!isEditingBilling)}
-                        className="text-slate-400 hover:text-slate-700 transition-colors"
-                      >
-                        {isEditingBilling ? (
-                          <span className="text-xs text-slate-900 font-semibold">Done</span>
+                  {/* Billing Address Card — sourced from Master → Addresses */}
+                  <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 space-y-3">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      Billing Address
+                    </h3>
+                    <Select
+                      value={billingCompany}
+                      onValueChange={(val) => {
+                        const opt = addressOptions.find((a) => a.name === val);
+                        setBillingCompany(val);
+                        setBillingAddress(opt?.address || "");
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs bg-white border-slate-200">
+                        <SelectValue placeholder="Select address" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {addressOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-slate-400">No addresses configured (Master → Addresses)</div>
                         ) : (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                          </svg>
+                          addressOptions.map((a) => (
+                            <SelectItem key={a.name} value={a.name} className="text-xs">{a.name}</SelectItem>
+                          ))
                         )}
-                      </button>
-                    </div>
-                    {isEditingBilling ? (
-                      <div className="space-y-2">
-                        <Input
-                          size={24}
-                          value={billingCompany}
-                          onChange={(e) => setBillingCompany(e.target.value)}
-                          className="h-8 text-xs border-slate-200"
-                          placeholder="Company name"
-                        />
-                        <Textarea
-                          value={billingAddress}
-                          onChange={(e) => setBillingAddress(e.target.value)}
-                          className="text-xs min-h-[50px] border-slate-200"
-                          placeholder="Billing Address details"
-                        />
-                      </div>
-                    ) : (
-                      <div className="text-xs space-y-1">
-                        <p className="font-bold text-slate-800">{billingCompany}</p>
-                        <p className="text-slate-600 font-medium leading-relaxed line-clamp-2 wrap-break-word" title={billingAddress}>{billingAddress}</p>
-                      </div>
-                    )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-slate-600 font-medium leading-relaxed line-clamp-2 wrap-break-word text-xs" title={billingAddress}>{billingAddress}</p>
                   </div>
 
-                  {/* Destination Address Card */}
-                  <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 space-y-3 relative group">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                        Destination Address
-                      </h3>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingDest(!isEditingDest)}
-                        className="text-slate-400 hover:text-slate-700 transition-colors"
-                      >
-                        {isEditingDest ? (
-                          <span className="text-xs text-slate-900 font-semibold">Done</span>
+                  {/* Destination Address Card — sourced from Master → Addresses */}
+                  <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 space-y-3">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      Destination Address
+                    </h3>
+                    <Select
+                      value={destCompany}
+                      onValueChange={(val) => {
+                        const opt = addressOptions.find((a) => a.name === val);
+                        setDestCompany(val);
+                        setDestAddress(opt?.address || "");
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs bg-white border-slate-200">
+                        <SelectValue placeholder="Select address" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {addressOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-slate-400">No addresses configured (Master → Addresses)</div>
                         ) : (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                          </svg>
+                          addressOptions.map((a) => (
+                            <SelectItem key={a.name} value={a.name} className="text-xs">{a.name}</SelectItem>
+                          ))
                         )}
-                      </button>
-                    </div>
-                    {isEditingDest ? (
-                      <div className="space-y-2">
-                        <Input
-                          size={24}
-                          value={destCompany || ""}
-                          onChange={(e) => setDestCompany(e.target.value)}
-                          className="h-8 text-xs border-slate-200"
-                          placeholder="Company name"
-                        />
-                        <Textarea
-                          value={destAddress || ""}
-                          onChange={(e) => setDestAddress(e.target.value)}
-                          className="text-xs min-h-[50px] border-slate-200"
-                          placeholder="Destination Address details"
-                        />
-                      </div>
-                    ) : (
-                      <div className="text-xs space-y-1">
-                        <p className="font-bold text-slate-800">{destCompany}</p>
-                        <p className="text-slate-600 font-medium leading-relaxed line-clamp-2 wrap-break-word" title={destAddress}>{destAddress}</p>
-                      </div>
-                    )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-slate-600 font-medium leading-relaxed line-clamp-2 wrap-break-word text-xs" title={destAddress}>{destAddress}</p>
                   </div>
                 </div>
 

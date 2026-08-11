@@ -42,6 +42,9 @@ import {
   Edit3,
   Check,
   Layers,
+  Building2,
+  Navigation,
+  Hash,
 } from "lucide-react";
 import { STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabase/client";
@@ -68,6 +71,11 @@ interface VendorInfo {
   contactPerson: string;
   phone: string;
   email: string;
+  address: string;
+}
+
+interface AddressInfo {
+  name: string;
   address: string;
 }
 
@@ -237,12 +245,20 @@ export default function MasterPage() {
   const [cancelStages, setCancelStages] = useState<string[]>([]);
   const [tatSystems, setTatSystems] = useState<string[]>([]);
   const [tatUnits, setTatUnits] = useState<string[]>([]);
+  const [deliveryLocations, setDeliveryLocations] = useState<string[]>([]);
+  const [hsnCodes, setHsnCodes] = useState<string[]>([]);
   
   // Complex items catalog
   const [items, setItems] = useState<ItemOption[]>([]);
   const [vendors, setVendors] = useState<VendorInfo[]>([]);
   const [newVendor, setNewVendor] = useState<VendorInfo>({ vendorName: "", contactPerson: "", phone: "", email: "", address: "" });
   const [vendorSearch, setVendorSearch] = useState<string>("");
+
+  // Our company's own addresses (billing / destination), used as a shared
+  // dropdown source in the Quotation RFQ form and the Create PO form.
+  const [addresses, setAddresses] = useState<AddressInfo[]>([]);
+  const [newAddress, setNewAddress] = useState<AddressInfo>({ name: "", address: "" });
+  const [addressSearch, setAddressSearch] = useState<string>("");
 
   // Categories are now their own dedicated master list (Category Master), same as UOMs
   const [categoryList, setCategoryList] = useState<string[]>([]);
@@ -264,7 +280,7 @@ export default function MasterPage() {
     try {
       const [
         cbRes, whRes, apRes, qcRes, acRes, uomRes, catRes, chRes, rjRes,
-        csRes, tsRes, tuRes, transRes, venRes, itemRes
+        csRes, tsRes, tuRes, transRes, venRes, itemRes, addrRes, dlRes, hsnRes
       ] = await Promise.all([
         supabase.from("master_created_by").select("name").eq("is_active", true),
         supabase.from("master_warehouses").select("name").eq("is_active", true),
@@ -281,6 +297,9 @@ export default function MasterPage() {
         supabase.from("master_transporters").select("*").eq("is_active", true),
         supabase.from("master_vendors").select("*").eq("is_active", true),
         supabase.from("master_items").select("*").eq("is_active", true),
+        supabase.from("master_addresses").select("*").eq("is_active", true),
+        supabase.from("master_delivery_locations").select("name").eq("is_active", true),
+        supabase.from("master_hsn_codes").select("name").eq("is_active", true),
       ]);
 
       const mapNames = (res: any, defaults: string[]) => {
@@ -297,9 +316,11 @@ export default function MasterPage() {
       let catList = mapNames(catRes, ["Raw Material", "Hardware", "Electronics", "Office Supplies", "General"]);
       let chList = mapNames(chRes, ["Check Packaging", "Check Quality Standards", "Quantity Audit"]);
       let rjList = mapNames(rjRes, ["Damaged Material", "Specification Mismatch", "Short Supply"]);
-      let csList = mapNames(csRes, ["Create Indent", "Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up", "Material Received", "Billing", "Purchase Return", "Order Cancel"]);
+      let csList = mapNames(csRes, ["Create Indent", "Indent Approval", "Quotation", "Approved Vendor", "Make PO", "Payment", "Follow UP / Lifting", "Transporter Follow-Up", "Material Received", "Billing", "Order Cancel"]);
       let tsList = mapNames(tsRes, ["Purchase FMS", "IMS", "FMS", "FMS Portal"]);
       let tuList = mapNames(tuRes, ["minute", "hour", "day"]);
+      let dlList = mapNames(dlRes, ["Raipur Warehouse", "Bhilai Factory Gate", "Durg Site Office", "Naya Raipur HQ"]);
+      let hsnList = mapNames(hsnRes, ["7308", "7326", "8481", "3926"]);
 
       setCreatedBy(cbList);
       setWarehouse(whList);
@@ -312,6 +333,8 @@ export default function MasterPage() {
       setRejectReason(rjList);
       setCancelStages(csList);
       setTatSystems(tsList);
+      setDeliveryLocations(dlList);
+      setHsnCodes(hsnList);
       setTatUnits(tuList);
 
       const parsedTransporters: TransporterInfo[] = (transRes.data && transRes.data.length > 0)
@@ -340,6 +363,16 @@ export default function MasterPage() {
             { vendorName: "KOTAK MAHINDRA", contactPerson: "Uday Kotak", phone: "9876501234", email: "kotak@company.com", address: "Bandra Kurla Complex, Mumbai" },
           ];
       setVendors(parsedVendors);
+
+      const parsedAddresses: AddressInfo[] = (addrRes.data && addrRes.data.length > 0)
+        ? addrRes.data.map((a: any) => ({
+            name: a.name,
+            address: a.address || "-",
+          }))
+        : [
+            { name: "M/S Nutech Pvt. Ltd.", address: "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN" },
+          ];
+      setAddresses(parsedAddresses);
 
       const parsedItems: ItemOption[] = (itemRes.data && itemRes.data.length > 0)
         ? itemRes.data.map((i: any) => ({
@@ -575,6 +608,8 @@ export default function MasterPage() {
     cancelStage: "master_cancel_stages",
     tatSystem: "master_tat_systems",
     tatUnit: "master_tat_units",
+    deliveryLocation: "master_delivery_locations",
+    hsnCode: "master_hsn_codes",
   };
 
   // Add simple value
@@ -605,6 +640,8 @@ export default function MasterPage() {
       case "cancelStage": setCancelStages(prev => Array.from(new Set([...prev, val]))); break;
       case "tatSystem": setTatSystems(prev => Array.from(new Set([...prev, val]))); break;
       case "tatUnit": setTatUnits(prev => Array.from(new Set([...prev, val]))); break;
+      case "deliveryLocation": setDeliveryLocations(prev => Array.from(new Set([...prev, val]))); break;
+      case "hsnCode": setHsnCodes(prev => Array.from(new Set([...prev, val]))); break;
     }
 
     toast.success(`Added '${val}' successfully!`);
@@ -635,6 +672,8 @@ export default function MasterPage() {
       case "cancelStage": setCancelStages(prev => prev.filter(item => item !== valToRemove)); break;
       case "tatSystem": setTatSystems(prev => prev.filter(item => item !== valToRemove)); break;
       case "tatUnit": setTatUnits(prev => prev.filter(item => item !== valToRemove)); break;
+      case "deliveryLocation": setDeliveryLocations(prev => prev.filter(item => item !== valToRemove)); break;
+      case "hsnCode": setHsnCodes(prev => prev.filter(item => item !== valToRemove)); break;
     }
 
     toast.success(`Removed '${valToRemove}' successfully!`);
@@ -787,6 +826,52 @@ export default function MasterPage() {
     });
   }, [vendors, vendorSearch]);
 
+  const handleAddAddress = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newAddress.name.trim();
+    const addr = newAddress.address.trim();
+
+    if (!name || !addr) {
+      toast.error("Please fill out all required fields!");
+      return;
+    }
+
+    const { error } = await supabase.from("master_addresses").upsert({
+      name,
+      address: addr,
+      is_active: true,
+    }, { onConflict: "name" });
+
+    if (error) {
+      toast.error("Error saving address.");
+      return;
+    }
+
+    setAddresses(prev => [...prev.filter(a => a.name !== name), { name, address: addr }]);
+    setNewAddress({ name: "", address: "" });
+    toast.success("Address added successfully!");
+  };
+
+  const handleRemoveAddress = async (nameToRemove: string) => {
+    const { error } = await supabase.from("master_addresses").delete().eq("name", nameToRemove);
+    if (error) {
+      toast.error("Error deleting address.");
+      return;
+    }
+    setAddresses(prev => prev.filter(a => a.name !== nameToRemove));
+    toast.success("Address removed successfully!");
+  };
+
+  const filteredAddresses = useMemo(() => {
+    return addresses.filter(a => {
+      const search = addressSearch.toLowerCase();
+      return (
+        a.name.toLowerCase().includes(search) ||
+        a.address.toLowerCase().includes(search)
+      );
+    });
+  }, [addresses, addressSearch]);
+
   const handleAddTransporter = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = newTransporter.transporterName.trim();
@@ -850,6 +935,7 @@ export default function MasterPage() {
     { id: "warehouse", label: "Division / Area", icon: MapPin, desc: "Warehouse depots and lifting destination zones." },
     { id: "items", label: "Product Catalog", icon: Boxes, desc: "Registered inventory items, categories, and item codes." },
     { id: "vendor", label: "Vendors", icon: Users, desc: "Approved material suppliers and service vendors." },
+    { id: "address", label: "Addresses", icon: Building2, desc: "Our company's billing & destination addresses used in Quotation RFQ and Create PO." },
     { id: "approver", label: "Approvers", icon: ShieldCheck, desc: "Authorized personnel who approve indents and vendors." },
     { id: "transporter", label: "Transporters", icon: Truck, desc: "Lifting logistics and transporting suppliers." },
     { id: "qcEngineer", label: "QC Engineers", icon: Wrench, desc: "Engineers inspecting items on arrival." },
@@ -861,6 +947,8 @@ export default function MasterPage() {
     { id: "cancelStage", label: "Cancel Stages", icon: XCircle, desc: "Stage options for Order Cancellation." },
     { id: "tatSystem", label: "TAT Systems", icon: Settings, desc: "System names for Turn Around Time rules." },
     { id: "tatUnit", label: "TAT Time Units", icon: Clock, desc: "Time duration units for Turn Around Time limits." },
+    { id: "deliveryLocation", label: "Delivery Locations", icon: Navigation, desc: "Where an indent's items should be delivered — used in Create Indent and Create PO." },
+    { id: "hsnCode", label: "HSN Codes", icon: Hash, desc: "HSN codes used per line item when creating a Purchase Order." },
   ];
 
   const activeTabConfig = tabsConfig.find(t => t.id === activeTab);
@@ -881,9 +969,11 @@ export default function MasterPage() {
       case "cancelStage": return cancelStages;
       case "tatSystem": return tatSystems;
       case "tatUnit": return tatUnits;
+      case "deliveryLocation": return deliveryLocations;
+      case "hsnCode": return hsnCodes;
       default: return [];
     }
-  }, [activeTab, createdBy, warehouse, approver, qcEngineer, accountant, uom, categoryList, checklist, rejectReason, cancelStages, tatSystems, tatUnits]);
+  }, [activeTab, createdBy, warehouse, approver, qcEngineer, accountant, uom, categoryList, checklist, rejectReason, cancelStages, tatSystems, tatUnits, deliveryLocations, hsnCodes]);
 
   // Preserve each TAT rule's true index (in the full `tatRules` array) through pagination,
   // since handleStartEditTatRule/handleDeleteTatRule operate on that original index.
@@ -893,6 +983,7 @@ export default function MasterPage() {
   const transportersPagination = usePagination(filteredTransporters, 15);
   const catalogPagination = usePagination(filteredCatalog, 15);
   const vendorsPagination = usePagination(filteredVendors, 15);
+  const addressesPagination = usePagination(filteredAddresses, 15);
   const simpleListPagination = usePagination(currentSimpleList, 15);
 
   return (
@@ -1579,6 +1670,109 @@ export default function MasterPage() {
                         />
                       </div>
                     </div>
+                  ) : activeTab === "address" ? (
+                    /* ADDRESS MANAGEMENT */
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start flex-1">
+                      {/* Left panel: Address Form */}
+                      <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4 xl:col-span-1">
+                        <div className="flex items-center gap-2 border-b pb-2">
+                          <Plus className="w-4 h-4 text-indigo-600" />
+                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Add Address</h4>
+                        </div>
+                        <form onSubmit={handleAddAddress} className="space-y-4">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 font-semibold">Company / Location Name *</Label>
+                            <Input
+                              placeholder="e.g. M/S Nutech Pvt. Ltd. (Warehouse)"
+                              value={newAddress.name}
+                              onChange={(e) => setNewAddress({ ...newAddress, name: e.target.value })}
+                              className="h-10 text-xs rounded-xl"
+                              required
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600 font-semibold">Address *</Label>
+                            <textarea
+                              placeholder="Enter complete address"
+                              value={newAddress.address}
+                              onChange={(e) => setNewAddress({ ...newAddress, address: e.target.value })}
+                              rows={3}
+                              className="w-full px-3 py-2 border text-xs rounded-xl bg-slate-50 border-slate-200 resize-none outline-none focus:border-indigo-500 transition-colors"
+                              required
+                            />
+                          </div>
+                          <Button
+                            type="submit"
+                            disabled={isSubmitting}
+                            className="w-full h-10 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs shadow-md transition-all mt-2"
+                          >
+                            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                            Save Address
+                          </Button>
+                        </form>
+                      </div>
+
+                      {/* Right panel: Addresses Table list */}
+                      <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden xl:col-span-2 flex flex-col h-auto min-h-[400px]">
+                        <div className="p-4 border-b bg-slate-50 flex items-center justify-between gap-4">
+                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Addresses ({addresses.length})</h4>
+                          <div className="relative w-64">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                            <Input
+                              placeholder="Search addresses..."
+                              value={addressSearch}
+                              onChange={(e) => setAddressSearch(e.target.value)}
+                              className="pl-9 h-9 text-xs bg-white"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <Table>
+                            <TableHeader className="bg-slate-50/50">
+                              <TableRow>
+                                <TableHead className="text-xs font-bold text-slate-600">Name</TableHead>
+                                <TableHead className="text-xs font-bold text-slate-600">Address</TableHead>
+                                <TableHead className="w-20 text-xs font-bold text-slate-600 text-center">Action</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {filteredAddresses.length === 0 ? (
+                                <TableRow>
+                                  <TableCell colSpan={3} className="text-center text-slate-400 py-12 text-xs">
+                                    No addresses found.
+                                  </TableCell>
+                                </TableRow>
+                              ) : (
+                                addressesPagination.pageData.map((a, idx) => (
+                                  <TableRow key={idx} className="hover:bg-slate-50/50">
+                                    <TableCell className="text-xs text-slate-800 font-bold">{a.name}</TableCell>
+                                    <TableCell className="text-xs text-slate-700 font-medium truncate max-w-[300px]">{a.address}</TableCell>
+                                    <TableCell className="text-center">
+                                      <Button
+                                        onClick={() => handleRemoveAddress(a.name)}
+                                        variant="ghost"
+                                        size="icon"
+                                        disabled={isSubmitting}
+                                        className="w-8 h-8 rounded-lg hover:bg-red-50 hover:text-red-600 text-slate-400 transition-colors"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                        </div>
+                        <PaginationBar
+                          page={addressesPagination.page}
+                          pageSize={addressesPagination.pageSize}
+                          totalCount={addressesPagination.totalCount}
+                          onPageChange={addressesPagination.setPage}
+                          onPageSizeChange={addressesPagination.setPageSize}
+                        />
+                      </div>
+                    </div>
                   ) : (
                     /* SIMPLE VALUES MANAGEMENT (Created By, Warehouse, Approver, etc.) */
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start flex-1">
@@ -1626,7 +1820,9 @@ export default function MasterPage() {
                               activeTab === "rejectReason" ? rejectReason.length :
                               activeTab === "cancelStage" ? cancelStages.length :
                               activeTab === "tatSystem" ? tatSystems.length :
-                              activeTab === "tatUnit" ? tatUnits.length : 0
+                              activeTab === "tatUnit" ? tatUnits.length :
+                              activeTab === "deliveryLocation" ? deliveryLocations.length :
+                              activeTab === "hsnCode" ? hsnCodes.length : 0
                             })
                           </h4>
                         </div>

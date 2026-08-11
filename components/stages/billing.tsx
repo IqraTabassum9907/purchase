@@ -49,7 +49,6 @@ export default function Stage9() {
     submissionDate: new Date().toISOString().split("T")[0],
     remarks: "",
     checkedStatus: "",
-    checkedByAcc: "",
   });
 
   // Open Modal with Bulk Validation
@@ -72,7 +71,6 @@ export default function Stage9() {
 
     // Prefill from the first record
     const rec = selectedRecords[0];
-    const hasCheckedBy = !!rec.data.checkedByAcc && rec.data.checkedByAcc !== "-";
     const doneByExists = !!rec.data.doneBy && rec.data.doneBy !== "-";
 
     let status = "";
@@ -87,7 +85,6 @@ export default function Stage9() {
       submissionDate: new Date().toISOString().split("T")[0],
       remarks: (rec.data.remarks && rec.data.remarks !== "-") ? rec.data.remarks : "",
       checkedStatus: status,
-      checkedByAcc: hasCheckedBy ? rec.data.checkedByAcc : "",
     });
     setIsModalOpen(true);
   };
@@ -95,7 +92,6 @@ export default function Stage9() {
   // Submit Handler
   const handleSubmit = async () => {
     if (selectedRows.size === 0 || !formData.doneBy || !formData.checkedStatus) return;
-    if (formData.checkedStatus === "Yes" && !formData.checkedByAcc) return;
     if (bulkError) return;
 
     setIsSubmitting(true);
@@ -129,7 +125,7 @@ export default function Stage9() {
           const { error: updateErr } = await supabase
             .from("tally_billing")
             .update({
-              accountant_name: formData.checkedStatus === "Yes" ? formData.checkedByAcc : formData.doneBy,
+              accountant_name: formData.doneBy,
               verification_status: formData.checkedStatus === "Yes" ? "Verified" : "Pending",
               vendor_invoice_number: rec.data.invoiceNumber || "",
               invoice_amount: parseFloat(rec.data.totalWithTax) || parseFloat(rec.data.basicValue) || 0,
@@ -152,7 +148,7 @@ export default function Stage9() {
             vendor_invoice_number: rec.data.invoiceNumber || "",
             invoice_date: validInvoiceDate,
             invoice_amount: parseFloat(rec.data.totalWithTax) || 0,
-            accountant_name: formData.checkedStatus === "Yes" ? formData.checkedByAcc : formData.doneBy,
+            accountant_name: formData.doneBy,
             verification_status: formData.checkedStatus === "Yes" ? "Verified" : "Pending",
           });
           if (insertErr) throw new Error(`Insert failed for ${rec.data.indentNumber}: ${getErrorMessage(insertErr)}`);
@@ -635,28 +631,6 @@ export default function Stage9() {
                 </div>
               </div>
 
-              {/* Checked By (Conditional) */}
-              {formData.checkedStatus === "Yes" && (
-                <div className="space-y-1.5 animate-in fade-in-50 slide-in-from-top-1 duration-200">
-                  <Label className="text-xs font-bold text-slate-650 flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5 text-emerald-650" />
-                    Verified By *
-                  </Label>
-                  <Select
-                    value={formData.checkedByAcc}
-                    onValueChange={(v) => setFormData({ ...formData, checkedByAcc: v })}
-                  >
-                    <SelectTrigger className="bg-slate-50/50 border-slate-200/80 rounded-xl h-10 text-xs focus:ring-2 focus:ring-emerald-500">
-                      <SelectValue placeholder="Select Verifying Accountant" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-white border rounded-xl shadow-lg text-xs">
-                      {accountantList.map((n) => (
-                        <SelectItem key={n} value={n}>{n}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
             </div>
           </div>
 
@@ -674,7 +648,6 @@ export default function Stage9() {
               disabled={
                 !formData.doneBy ||
                 !formData.checkedStatus ||
-                (formData.checkedStatus === "Yes" && !formData.checkedByAcc) ||
                 isSubmitting ||
                 !!bulkError
               }

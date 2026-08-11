@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -16,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { fetchIndentWorkflow, submitQuotation } from "@/lib/supabase/queries";
+import { fetchIndentWorkflow, submitQuotation, updateQuotationPdfUrl, isMissingColumnError } from "@/lib/supabase/queries";
 import { supabase } from "@/lib/supabase/client";
 
 const paymentTermsOptions = [
@@ -24,6 +25,19 @@ const paymentTermsOptions = [
   { value: "30", label: "30 days" },
   { value: "60", label: "60 days" },
   { value: "90", label: "90 days" }
+];
+
+const transportTypeOptions = [
+  { value: "Ex-Factory", label: "Ex-Factory" },
+  { value: "Ex-Factory + Transport", label: "Ex-Factory + Transport" },
+  { value: "F.O.R.", label: "F.O.R. (Free on Road)" },
+];
+
+const gstOptions = [
+  { value: "5", label: "5%" },
+  { value: "12", label: "12%" },
+  { value: "18", label: "18%" },
+  { value: "28", label: "28%" },
 ];
 
 const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
@@ -50,10 +64,32 @@ export default function PublicQuotationForm() {
   }>>([]);
 
   const [formRates, setFormRates] = useState<string[]>([]);
+  const [formGst, setFormGst] = useState<string[]>([]);
   const [commonTerms, setCommonTerms] = useState("30");
   const [commonDeliveryDate, setCommonDeliveryDate] = useState("");
+  const [commonTransportType, setCommonTransportType] = useState("");
+  const [commonRemarks, setCommonRemarks] = useState("");
 
   const vendorSlot = parseInt(vParam || "1", 10);
+
+  // Per-item total = rate * qty, plus that item's own GST% — shown right next
+  // to its Rate field instead of one combined summary.
+  const itemTotals = useMemo(
+    () =>
+      indentItems.map((item, index) => {
+        const rate = parseFloat(formRates[index]) || 0;
+        const qty = parseFloat(item.quantity) || 0;
+        const gstPct = parseFloat(formGst[index]) || 0;
+        const base = rate * qty;
+        const gstAmt = base * (gstPct / 100);
+        return { base, gstAmt, total: base + gstAmt };
+      }),
+    [indentItems, formRates, formGst]
+  );
+
+  const subtotal = useMemo(() => itemTotals.reduce((sum, t) => sum + t.base, 0), [itemTotals]);
+  const gstAmount = useMemo(() => itemTotals.reduce((sum, t) => sum + t.gstAmt, 0), [itemTotals]);
+  const grandTotal = subtotal + gstAmount;
 
   useEffect(() => {
     const rawIds = idsParam ? idsParam.split(",") : (idParam ? [idParam] : []);
@@ -86,6 +122,7 @@ export default function PublicQuotationForm() {
         if (fetchedItems.length > 0) {
           setIndentItems(fetchedItems);
           setFormRates(fetchedItems.map(() => ""));
+          setFormGst(fetchedItems.map(() => ""));
         } else {
           setErrorMsg("Indent details not found.");
         }
@@ -102,10 +139,14 @@ export default function PublicQuotationForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     for (let i = 0; i < indentItems.length; i++) {
       if (!formRates[i]?.trim()) {
         toast.error(`Please fill in Rate Per Qty for ${indentItems[i].itemName}.`);
+        return;
+      }
+      if (!formGst[i]?.trim()) {
+        toast.error(`Please fill in GST % for ${indentItems[i].itemName}.`);
         return;
       }
     }
@@ -113,36 +154,125 @@ export default function PublicQuotationForm() {
       toast.error("Please select Expected Delivery Date.");
       return;
     }
+    if (!commonTransportType) {
+      toast.error("Please select Transport Type.");
+      return;
+    }
 
     if (indentItems.length === 0) return;
 
     setIsSubmitting(true);
     try {
-      const updatePromises = indentItems.map(async (item, index) => {
-        const quotationId = item._quotationIds?.[`vendor${vendorSlot}`];
-        if (quotationId) {
-          const { error } = await supabase
-            .from("quotation_submissions")
-            .update({
+      const results = await Promise.all(
+        indentItems.map(async (item, index): Promise<{ id: string; extendedFieldsSaved: boolean }> => {
+          const gstPercentNum = parseFloat(formGst[index]) || 0;
+          const existingId = item._quotationIds?.[`vendor${vendorSlot}`];
+          if (existingId) {
+            const baseUpdate = {
               quoted_rate: parseFloat(formRates[index]),
               payment_terms: commonTerms,
               delivery_terms: commonDeliveryDate,
-            })
-            .eq("id", quotationId);
-          if (error) throw error;
-        } else {
-          await submitQuotation(item.id, {
+            };
+            const { error } = await supabase
+              .from("quotation_submissions")
+              .update({
+                ...baseUpdate,
+                gst_percent: gstPercentNum,
+                transport_type: commonTransportType,
+                remarks: commonRemarks || "",
+              })
+              .eq("id", existingId);
+            if (!error) return { id: existingId, extendedFieldsSaved: true };
+            if (!isMissingColumnError(error)) throw error;
+
+            // Migration not run yet — fall back so the core update still saves.
+            const { error: fallbackError } = await supabase
+              .from("quotation_submissions")
+              .update(baseUpdate)
+              .eq("id", existingId);
+            if (fallbackError) throw fallbackError;
+            return { id: existingId, extendedFieldsSaved: false };
+          }
+          return submitQuotation(item.id, {
             vendorName: item.vendorName,
             quotedRate: parseFloat(formRates[index]),
             paymentTerms: commonTerms,
             deliveryTerms: commonDeliveryDate,
+            gstPercent: gstPercentNum,
+            transportType: commonTransportType,
+            remarks: commonRemarks || "",
           });
-        }
-      });
+        })
+      );
 
-      await Promise.all(updatePromises);
+      const quotationIds = results.map((r) => r.id);
+      const extendedFieldsMissing = results.some((r) => !r.extendedFieldsSaved);
+
       setSubmitted(true);
-      toast.success("All quotations submitted successfully!");
+      if (extendedFieldsMissing) {
+        toast.warning(
+          "Quotation saved, but GST / Transport Type / Remarks couldn't be saved — ask the admin to run the pending database migration."
+        );
+      } else {
+        toast.success("All quotations submitted successfully!");
+      }
+
+      // Auto-generate a PDF copy of this quotation and attach it to the
+      // submitted rows. Non-blocking: the quotation itself is already saved
+      // above even if the PDF step fails (e.g. the storage bucket or the
+      // new columns haven't been set up yet).
+      try {
+        const { pdf } = await import("@react-pdf/renderer");
+        const { QuotationPdfDocument } = await import("@/components/stages/quotation-pdf");
+
+        const pdfItems = indentItems.map((item, index) => {
+          const rate = parseFloat(formRates[index]) || 0;
+          return {
+            srNo: index + 1,
+            itemName: item.itemName,
+            indentNumber: item.indentNumber,
+            quantity: item.quantity,
+            rate: rate.toFixed(2),
+            gstPercent: formGst[index] || "0",
+            amount: itemTotals[index].total.toFixed(2),
+          };
+        });
+
+        const blob = await pdf(
+          <QuotationPdfDocument
+            logoUrl={`${window.location.origin}/nutech-logo.png`}
+            companyAddress={NUTECH_ADDRESS}
+            vendorName={indentItems[0]?.vendorName || ""}
+            submissionDate={new Date().toLocaleDateString("en-GB")}
+            paymentTerms={paymentTermsOptions.find((o) => o.value === commonTerms)?.label || commonTerms}
+            deliveryDate={commonDeliveryDate}
+            transportType={transportTypeOptions.find((o) => o.value === commonTransportType)?.label || commonTransportType}
+            remarks={commonRemarks}
+            items={pdfItems}
+            subtotal={subtotal.toFixed(2)}
+            gstAmount={gstAmount.toFixed(2)}
+            grandTotal={grandTotal.toFixed(2)}
+          />
+        ).toBlob();
+
+        const safeVendor = (indentItems[0]?.vendorName || "vendor").replace(/[^a-zA-Z0-9-_]/g, "_");
+        const pdfPath = `quotation-pdfs/${safeVendor}_${Date.now()}.pdf`;
+        const { error: uploadError } = await supabase.storage
+          .from("quotation-documents")
+          .upload(pdfPath, blob, { contentType: "application/pdf" });
+
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage.from("quotation-documents").getPublicUrl(pdfPath);
+          const pdfUrl = urlData?.publicUrl || "";
+          if (pdfUrl) {
+            await updateQuotationPdfUrl(quotationIds, pdfUrl);
+          }
+        } else {
+          console.warn("Quotation PDF upload failed:", uploadError.message);
+        }
+      } catch (pdfErr) {
+        console.error("Failed to auto-generate quotation PDF (non-blocking):", pdfErr);
+      }
     } catch (err: any) {
       console.error("Quotation submit error:", err);
       toast.error(err.message || "Failed to submit quotation.");
@@ -199,7 +329,9 @@ export default function PublicQuotationForm() {
                     <th className="p-3">Item</th>
                     <th className="p-3">Category</th>
                     <th className="p-3 text-right">Qty</th>
-                    <th className="p-3 text-right text-slate-900">Rate</th>
+                    <th className="p-3 text-right">Rate</th>
+                    <th className="p-3 text-right">GST %</th>
+                    <th className="p-3 text-right text-slate-900">Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -209,9 +341,15 @@ export default function PublicQuotationForm() {
                       <td className="p-3">{item.itemName}</td>
                       <td className="p-3">{item.category}</td>
                       <td className="p-3 text-right">{item.quantity}</td>
-                      <td className="p-3 text-right font-bold text-slate-900">₹{formRates[index]}</td>
+                      <td className="p-3 text-right">₹{formRates[index]}</td>
+                      <td className="p-3 text-right">{formGst[index]}%</td>
+                      <td className="p-3 text-right font-bold text-slate-900">₹{itemTotals[index]?.total.toFixed(2)}</td>
                     </tr>
                   ))}
+                  <tr className="bg-slate-100/70">
+                    <td className="p-3 font-bold text-slate-800" colSpan={6}>Grand Total</td>
+                    <td className="p-3 text-right font-bold text-slate-900">₹{grandTotal.toFixed(2)}</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -225,6 +363,16 @@ export default function PublicQuotationForm() {
                 <span className="font-semibold text-slate-500">Expected Delivery Date:</span>
                 <span className="font-semibold text-slate-800">{commonDeliveryDate}</span>
               </div>
+              <div className="flex justify-between">
+                <span className="font-semibold text-slate-500">Transport Type:</span>
+                <span className="font-semibold text-slate-800">{transportTypeOptions.find(o => o.value === commonTransportType)?.label || commonTransportType}</span>
+              </div>
+              {commonRemarks && (
+                <div className="flex justify-between gap-4">
+                  <span className="font-semibold text-slate-500 shrink-0">Remarks:</span>
+                  <span className="font-semibold text-slate-800 text-right">{commonRemarks}</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -260,7 +408,7 @@ export default function PublicQuotationForm() {
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <Label className="text-xs uppercase font-extrabold text-slate-500 tracking-wider block">
-                Item-wise Rates (Enter rate per unit for each item)
+                Item-wise Rates (Enter rate, GST % and see the total per item)
               </Label>
               {indentItems.map((item, index) => (
                 <div key={item.id} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -269,12 +417,12 @@ export default function PublicQuotationForm() {
                     <h4 className="font-bold text-slate-800 text-sm mt-0.5">{item.itemName}</h4>
                     <span className="text-xs text-slate-500">Category: {item.category}</span>
                   </div>
-                  
-                  <div className="flex items-center gap-4 shrink-0">
-                    <Badge className="bg-slate-200 text-slate-800 text-xs font-bold px-2.5 py-1 rounded-full shrink-0">
+
+                  <div className="flex items-end gap-3 shrink-0 flex-wrap">
+                    <Badge className="bg-slate-200 text-slate-800 text-xs font-bold px-2.5 py-1 rounded-full shrink-0 mb-1.5">
                       Qty: {item.quantity}
                     </Badge>
-                    
+
                     <div className="space-y-1">
                       <Label htmlFor={`rate-${index}`} className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Rate Per Qty (₹) *</Label>
                       <Input
@@ -288,12 +436,49 @@ export default function PublicQuotationForm() {
                         }}
                         placeholder="Rate in INR"
                         required
-                        className="bg-white w-36 h-9"
+                        className="bg-white w-28 h-9"
                       />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor={`gst-${index}`} className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">GST (%) *</Label>
+                      <Input
+                        id={`gst-${index}`}
+                        list={`gst-options-${index}`}
+                        value={formGst[index] || ""}
+                        onChange={(e) => {
+                          const updated = [...formGst];
+                          updated[index] = e.target.value;
+                          setFormGst(updated);
+                        }}
+                        placeholder="e.g. 18"
+                        className="bg-white w-24 h-9"
+                        required
+                      />
+                      <datalist id={`gst-options-${index}`}>
+                        {gstOptions.map((g) => (
+                          <option key={g.value} value={g.value} label={g.label} />
+                        ))}
+                      </datalist>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Total (₹)</Label>
+                      <div className="h-9 w-28 flex items-center justify-end px-3 rounded-md border border-slate-200 bg-slate-100 text-sm font-bold text-slate-800">
+                        {itemTotals[index]?.total.toFixed(2) || "0.00"}
+                      </div>
                     </div>
                   </div>
                 </div>
               ))}
+
+              {indentItems.length > 1 && (
+                <div className="flex justify-end pr-1">
+                  <span className="text-sm font-bold text-slate-700">
+                    Grand Total: <span className="text-slate-900">₹{grandTotal.toFixed(2)}</span>
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Common Commercial Terms Section */}
@@ -301,7 +486,7 @@ export default function PublicQuotationForm() {
               <Label className="text-xs uppercase font-extrabold text-slate-800 tracking-wider block border-b pb-2">
                 Common Commercial Details (Applies to all items)
               </Label>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Common Payment Terms */}
                 <div className="space-y-1.5">
@@ -332,6 +517,36 @@ export default function PublicQuotationForm() {
                     required
                   />
                 </div>
+
+                {/* Transport Type */}
+                <div className="space-y-1.5">
+                  <Label htmlFor="commonTransportType" className="text-xs font-bold text-slate-500 uppercase tracking-wider">Transport Type <span className="text-red-500">*</span></Label>
+                  <Select
+                    value={commonTransportType}
+                    onValueChange={(v) => setCommonTransportType(v)}
+                  >
+                    <SelectTrigger id="commonTransportType">
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {transportTypeOptions.map(t => (
+                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Remarks */}
+              <div className="space-y-1.5">
+                <Label htmlFor="commonRemarks" className="text-xs font-bold text-slate-500 uppercase tracking-wider">Remarks</Label>
+                <Textarea
+                  id="commonRemarks"
+                  value={commonRemarks}
+                  onChange={(e) => setCommonRemarks(e.target.value)}
+                  placeholder="Any additional notes for this quotation..."
+                  className="bg-white resize-none min-h-[70px]"
+                />
               </div>
             </div>
 

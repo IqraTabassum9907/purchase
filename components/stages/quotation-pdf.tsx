@@ -9,8 +9,8 @@ const styles = StyleSheet.create({
   companyName: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
   companyAddress: { fontSize: 7.5, color: '#64748b', marginTop: 2, maxWidth: 220 },
   headerRight: { alignItems: 'flex-end' },
-  poTitle: { fontSize: 16, fontWeight: 'bold', color: '#4338ca' },
-  poMeta: { fontSize: 8, color: '#64748b', marginTop: 2 },
+  docTitle: { fontSize: 16, fontWeight: 'bold', color: '#4338ca' },
+  docMeta: { fontSize: 8, color: '#64748b', marginTop: 2 },
   section: { marginBottom: 10 },
   sectionTitle: { fontSize: 8, fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', marginBottom: 4 },
   infoBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 4, padding: 8 },
@@ -25,83 +25,60 @@ const styles = StyleSheet.create({
   th: { padding: 5, fontSize: 7.5, fontWeight: 'bold', color: '#475569' },
   td: { padding: 5, fontSize: 8 },
   colSn: { width: '6%' },
-  colItem: { width: '25%' },
-  colQty: { width: '9%', textAlign: 'right' },
-  colRate: { width: '12%', textAlign: 'right' },
-  colHsn: { width: '10%' },
-  colGst: { width: '8%' },
-  colDelivery: { width: '15%' },
-  colTotal: { width: '15%', textAlign: 'right' },
-  summaryBox: { alignSelf: 'flex-end', width: 200, marginTop: 8 },
+  colItem: { width: '30%' },
+  colQty: { width: '12%', textAlign: 'right' },
+  colRate: { width: '16%', textAlign: 'right' },
+  colGst: { width: '13%', textAlign: 'right' },
+  colTotal: { width: '23%', textAlign: 'right' },
+  summaryBox: { alignSelf: 'flex-end', width: 220, marginTop: 8 },
   summaryLine: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
   summaryTotal: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 4, marginTop: 2 },
   summaryTotalText: { fontWeight: 'bold', fontSize: 10, color: '#4338ca' },
-  terms: { fontSize: 7.5, color: '#64748b', marginTop: 2 },
+  remarksText: { fontSize: 8, color: '#475569', marginTop: 2 },
   signature: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 30, paddingTop: 12, borderTopWidth: 1, borderColor: '#e2e8f0' },
   signatureRight: { alignItems: 'flex-end' },
 });
 
-interface POPdfItem {
+interface QuotationPdfItem {
   srNo: number;
   itemName: string;
   indentNumber: string;
   quantity: string | number;
   rate: string | number;
-  hsn: string;
-  gst: string;
-  deliveryDate: string;
-  total: string | number;
+  gstPercent: string | number;
+  /** Total for this line, GST included. */
+  amount: string | number;
 }
 
-export interface POPdfDocumentProps {
+export interface QuotationPdfDocumentProps {
   logoUrl: string;
   companyAddress: string;
-  poNumber: string;
-  poDate: string;
-  supplierName: string;
-  supplierAddress: string;
-  supplierGstin: string;
-  supplierEmail: string;
-  deliveryLocation: string;
-  quotationNumber: string;
-  quotationDate: string;
+  vendorName: string;
+  submissionDate: string;
   paymentTerms: string;
-  advanceAmount: string;
-  billingName: string;
-  billingAddress: string;
-  destinationName: string;
-  destinationAddress: string;
-  items: POPdfItem[];
+  deliveryDate: string;
+  transportType: string;
+  remarks: string;
+  items: QuotationPdfItem[];
   subtotal: string;
-  gst: string;
+  gstAmount: string;
   grandTotal: string;
-  terms: string[];
 }
 
-export const POPdfDocument = ({
+export const QuotationPdfDocument = ({
   logoUrl,
   companyAddress,
-  poNumber,
-  poDate,
-  supplierName,
-  supplierAddress,
-  supplierGstin,
-  supplierEmail,
-  deliveryLocation,
-  quotationNumber,
-  quotationDate,
+  vendorName,
+  submissionDate,
   paymentTerms,
-  advanceAmount,
-  billingName,
-  billingAddress,
-  destinationName,
-  destinationAddress,
+  deliveryDate,
+  transportType,
+  remarks,
   items,
   subtotal,
-  gst,
+  gstAmount,
   grandTotal,
-  terms,
-}: POPdfDocumentProps) => (
+}: QuotationPdfDocumentProps) => (
   <Document>
     <Page size="A4" style={styles.page}>
       <View style={styles.headerRow}>
@@ -113,50 +90,25 @@ export const POPdfDocument = ({
           </View>
         </View>
         <View style={styles.headerRight}>
-          <Text style={styles.poTitle}>PURCHASE ORDER</Text>
-          <Text style={styles.poMeta}>Ref: {poNumber || 'DRAFT'}</Text>
-          <Text style={styles.poMeta}>Date: {poDate}</Text>
+          <Text style={styles.docTitle}>VENDOR QUOTATION</Text>
+          <Text style={styles.docMeta}>Date: {submissionDate}</Text>
         </View>
       </View>
 
       <View style={styles.section}>
         <View style={styles.infoGrid}>
           <View style={styles.infoCol}>
-            <Text style={styles.sectionTitle}>Supplier Info</Text>
+            <Text style={styles.sectionTitle}>Vendor</Text>
             <View style={styles.infoBox}>
-              <Text style={{ fontWeight: 'bold', marginBottom: 2 }}>{supplierName || '-'}</Text>
-              <Text style={{ color: '#475569', marginBottom: 2 }}>{supplierAddress || '-'}</Text>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>GSTIN:</Text><Text style={styles.infoValue}>{supplierGstin || '-'}</Text></View>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Email:</Text><Text style={styles.infoValue}>{supplierEmail || '-'}</Text></View>
+              <Text style={{ fontWeight: 'bold' }}>{vendorName || '-'}</Text>
             </View>
           </View>
           <View style={styles.infoCol}>
-            <Text style={styles.sectionTitle}>Delivery & Order References</Text>
+            <Text style={styles.sectionTitle}>Commercial Terms</Text>
             <View style={styles.infoBox}>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Delivery Location:</Text><Text style={styles.infoValue}>{deliveryLocation || '-'}</Text></View>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Quotation No:</Text><Text style={styles.infoValue}>{quotationNumber || '-'}</Text></View>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Quotation Date:</Text><Text style={styles.infoValue}>{quotationDate || '-'}</Text></View>
               <View style={styles.infoLine}><Text style={styles.infoLabel}>Payment Terms:</Text><Text style={styles.infoValue}>{paymentTerms || '-'}</Text></View>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Advance Amount:</Text><Text style={styles.infoValue}>{advanceAmount && parseFloat(advanceAmount) > 0 ? `Rs. ${advanceAmount}` : '-'}</Text></View>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.infoGrid}>
-          <View style={styles.infoCol}>
-            <Text style={styles.sectionTitle}>Billing Address</Text>
-            <View style={styles.infoBox}>
-              <Text style={{ fontWeight: 'bold', marginBottom: 2 }}>{billingName}</Text>
-              <Text style={{ color: '#475569' }}>{billingAddress}</Text>
-            </View>
-          </View>
-          <View style={styles.infoCol}>
-            <Text style={styles.sectionTitle}>Destination / Ship-To Address</Text>
-            <View style={styles.infoBox}>
-              <Text style={{ fontWeight: 'bold', marginBottom: 2 }}>{destinationName}</Text>
-              <Text style={{ color: '#475569' }}>{destinationAddress}</Text>
+              <View style={styles.infoLine}><Text style={styles.infoLabel}>Expected Delivery:</Text><Text style={styles.infoValue}>{deliveryDate || '-'}</Text></View>
+              <View style={styles.infoLine}><Text style={styles.infoLabel}>Transport Type:</Text><Text style={styles.infoValue}>{transportType || '-'}</Text></View>
             </View>
           </View>
         </View>
@@ -168,11 +120,9 @@ export const POPdfDocument = ({
             <Text style={[styles.th, styles.colSn]}>S/N</Text>
             <Text style={[styles.th, styles.colItem]}>Item Description</Text>
             <Text style={[styles.th, styles.colQty]}>Qty</Text>
-            <Text style={[styles.th, styles.colRate]}>Unit Price</Text>
-            <Text style={[styles.th, styles.colHsn]}>HSN</Text>
+            <Text style={[styles.th, styles.colRate]}>Rate</Text>
             <Text style={[styles.th, styles.colGst]}>GST</Text>
-            <Text style={[styles.th, styles.colDelivery]}>Delivery</Text>
-            <Text style={[styles.th, styles.colTotal]}>Total Price</Text>
+            <Text style={[styles.th, styles.colTotal]}>Total</Text>
           </View>
           {items.map((it) => (
             <View style={styles.tableRow} key={it.srNo} wrap={false}>
@@ -183,17 +133,15 @@ export const POPdfDocument = ({
               </View>
               <Text style={[styles.td, styles.colQty]}>{it.quantity}</Text>
               <Text style={[styles.td, styles.colRate]}>Rs. {it.rate}</Text>
-              <Text style={[styles.td, styles.colHsn]}>{it.hsn || '-'}</Text>
-              <Text style={[styles.td, styles.colGst]}>{it.gst || '0%'}</Text>
-              <Text style={[styles.td, styles.colDelivery]}>{it.deliveryDate || '-'}</Text>
-              <Text style={[styles.td, styles.colTotal]}>Rs. {it.total}</Text>
+              <Text style={[styles.td, styles.colGst]}>{it.gstPercent || '0'}%</Text>
+              <Text style={[styles.td, styles.colTotal]}>Rs. {it.amount}</Text>
             </View>
           ))}
         </View>
 
         <View style={styles.summaryBox}>
           <View style={styles.summaryLine}><Text>Subtotal</Text><Text>Rs. {subtotal}</Text></View>
-          <View style={styles.summaryLine}><Text>GST</Text><Text>Rs. {gst}</Text></View>
+          <View style={styles.summaryLine}><Text>GST Total</Text><Text>Rs. {gstAmount}</Text></View>
           <View style={styles.summaryTotal}>
             <Text style={styles.summaryTotalText}>GRAND TOTAL</Text>
             <Text style={styles.summaryTotalText}>Rs. {grandTotal}</Text>
@@ -201,21 +149,21 @@ export const POPdfDocument = ({
         </View>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Terms & Conditions</Text>
-        {terms.filter((t) => t.trim() !== '').map((t, i) => (
-          <Text key={i} style={styles.terms}>{i + 1}. {t}</Text>
-        ))}
-      </View>
+      {remarks ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Remarks</Text>
+          <Text style={styles.remarksText}>{remarks}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.signature}>
         <View>
-          <Text style={{ fontSize: 7.5, color: '#64748b' }}>Prepared By: Procurement Department</Text>
+          <Text style={{ fontSize: 7.5, color: '#64748b' }}>Submitted By: {vendorName || '-'}</Text>
           <Text style={{ fontSize: 6.5, color: '#94a3b8', marginTop: 2 }}>FMS System Generated Document</Text>
         </View>
         <View style={styles.signatureRight}>
           <Text style={{ fontWeight: 'bold', color: '#334155' }}>For Nutech</Text>
-          <Text style={{ fontSize: 7.5, color: '#94a3b8' }}>Authorized Signatory</Text>
+          <Text style={{ fontSize: 7.5, color: '#94a3b8' }}>Purchase Department</Text>
         </View>
       </View>
     </Page>

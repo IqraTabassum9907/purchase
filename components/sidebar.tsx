@@ -53,15 +53,13 @@ export default function Sidebar() {
       const newCounts: Record<string, number> = {};
 
       const needsIndentData = activeStageNames.some(name =>
-        ["Indent Approval", "Quotation", "Approved Vendor", "Make PO"].includes(name)
+        ["Delegate for Approval", "Indent Approval", "Quotation", "Approved Vendor", "Make PO"].includes(name)
       );
       const needsPayment = activeStageNames.includes("Payment");
       const needsFollowUp = activeStageNames.includes("Follow UP / Lifting");
       const needsReceivingData = activeStageNames.some(name =>
         ["Transporter Follow-Up", "Material Received", "Billing", "Payment"].includes(name)
       );
-      const needsPurchaseReturn = activeStageNames.includes("Purchase Return");
-
       const queries: Promise<{ k: string; d: any; e: any }>[] = [];
 
       const safeQuery = async (queryPromise: PromiseLike<any>, key: string) => {
@@ -75,6 +73,7 @@ export default function Sidebar() {
 
       if (needsIndentData) {
         queries.push(safeQuery(fetchIndentWorkflow(), "indents"));
+        queries.push(safeQuery(supabase.from("indent_delegations").select("indent_id"), "delegations"));
       }
       if (needsPayment || needsReceivingData) {
         queries.push(safeQuery(supabase.from("purchase_orders").select("id, payment_type"), "pos"));
@@ -90,18 +89,18 @@ export default function Sidebar() {
         queries.push(safeQuery(supabase.from("material_receipts").select("po_id"), "mr"));
         queries.push(safeQuery(supabase.from("tally_billing").select("po_id, verification_status, accountant_name"), "tb"));
       }
-      if (needsPurchaseReturn) {
-        queries.push(safeQuery(supabase.from("material_receipts").select("id, rejected_quantity"), "mr_pr"));
-        queries.push(safeQuery(supabase.from("purchase_returns").select("material_receipt_id"), "pr"));
-      }
-
       const results = await Promise.all(queries);
       const g: Record<string, any> = {};
       results.forEach(r => { g[r.k] = r.e ? null : r.d; });
 
       if (g.indents) {
         const rows = g.indents;
-        newCounts["Indent Approval"] = rows.filter((r: any) => !r.data.actual1).length;
+        const delegatedIds = new Set((g.delegations || []).map((d: any) => d.indent_id));
+        // Delegate for Approval's own Pending tab = not yet delegated to anyone.
+        newCounts["Delegate for Approval"] = rows.filter((r: any) => !r.data.actual1 && !delegatedIds.has(r.id)).length;
+        // Only counts as awaiting Indent Approval once it's been delegated —
+        // matches the Pending-tab filter on that page.
+        newCounts["Indent Approval"] = rows.filter((r: any) => !r.data.actual1 && delegatedIds.has(r.id)).length;
         newCounts["Quotation"] = rows.filter((r: any) =>
           r.data.actual1 &&
           r.data.vendorType?.toLowerCase() !== "regular" &&
@@ -158,13 +157,6 @@ export default function Sidebar() {
             .filter(Boolean)
         );
         newCounts["Billing"] = (g.mr || []).filter((m: any) => !verifiedTbPoIds.has(m.po_id)).length;
-      }
-
-      if (g.mr_pr && g.pr) {
-        const returnedReceiptIds = new Set((g.pr || []).map((p: any) => p.material_receipt_id).filter(Boolean));
-        newCounts["Purchase Return"] = (g.mr_pr || []).filter(
-          (m: any) => (m.rejected_quantity || 0) > 0 && !returnedReceiptIds.has(m.id)
-        ).length;
       }
 
       if (g.pos && g.vp && g.tb) {

@@ -199,7 +199,9 @@ export default function UnifiedPaymentHub() {
   const [currentAdvRecord, setCurrentAdvRecord] = useState<any>(null);
   const [advForm, setAdvForm] = useState({
     paymentRef: "",
+    payAmount: "",
     paymentDate: new Date().toISOString().split("T")[0],
+    status: "" as "" | "need_again" | "not_needed_again",
     remarks: "",
     attachment: null as File | null,
   });
@@ -305,8 +307,11 @@ export default function UnifiedPaymentHub() {
         .filter((row: any) => poByIndent.has(row.id))
         .map((row: any) => {
           const po = poByIndent.get(row.id);
+          // All Advance-type payments made so far for this PO — partial
+          // payments insert a new row each time rather than editing one, so
+          // this can be more than one entry.
           const payments = (paymentsByPo.get(po.id) || []).filter((p: any) => p.payment_type === "Advance");
-          const advPay = payments[0];
+          const advPay = payments[payments.length - 1]; // most recent transaction, for display
 
           const selectedVendor = row.data.selectedVendor;
           let terms = "";
@@ -318,19 +323,31 @@ export default function UnifiedPaymentHub() {
           const isNoAdvance = poPayType.includes("no advance");
           const isAdvance = !isNoAdvance && (poPayType.includes("advance") || terms?.toLowerCase().includes("advance") || terms?.toLowerCase().includes("pi"));
           const hasPlanPayment = isAdvance || !!advPay;
-          const hasActualPayment = !!advPay && advPay.status === "Paid";
 
-          let status = "not_ready";
-          if (hasPlanPayment) {
-            status = hasActualPayment ? "completed" : "pending";
-          }
-
-          let advanceAmount = parseFloat(po?.advance_amount || po?.advance_amt || advPay?.amount || "0") || 0;
+          let advanceAmount = parseFloat(po?.advance_amount || po?.advance_amt || "0") || 0;
           if (!advanceAmount && po?.payment_type) {
             const match = String(po.payment_type).match(/₹?\s*([\d,]+(?:\.\d+)?)/);
             if (match && match[1]) {
               advanceAmount = parseFloat(match[1].replace(/,/g, "")) || 0;
             }
+          }
+          if (!advanceAmount && advPay?.amount) advanceAmount = parseFloat(advPay.amount) || 0;
+
+          // Sum every partial payment made so far, and see how much is left.
+          const advancePaidAmount = payments.reduce((sum: number, p: any) => sum + (parseFloat(p.amount) || 0), 0);
+          const advancePendingAmount = Math.max(0, advanceAmount - advancePaidAmount);
+          const isFullyPaid = advancePaidAmount > 0 && advancePendingAmount <= 0.01;
+
+          // The explicit business decision recorded with the latest payment
+          // is what actually gates progression to Follow UP / Lifting now —
+          // not just whether the amount is fully paid. Older records with no
+          // decision recorded yet fall back to the amount-based check.
+          const advanceStatus = advPay?.advance_status || "";
+          let status = "not_ready";
+          if (hasPlanPayment) {
+            if (advanceStatus === "need_again") status = "completed";
+            else if (advanceStatus === "not_needed_again") status = "pending";
+            else status = isFullyPaid ? "completed" : "pending";
           }
 
           return {
@@ -348,9 +365,13 @@ export default function UnifiedPaymentHub() {
               poNumber: po.po_number || "-",
               totalValue: po.total_amount || "-",
               advanceAmount: advanceAmount,
+              advancePaidAmount,
+              advancePendingAmount,
+              advanceStatus,
+              poPdfUrl: po?.po_pdf_url || "",
               paymentTerms: terms || po.payment_type || "Advance",
               plannedPayment: advPay?.payment_date || null,
-              actualPayment: advPay?.status === "Paid" ? advPay.payment_date : null,
+              actualPayment: (status === "completed") ? advPay?.payment_date : null,
               paymentMode: advPay?.payment_mode || "-",
               transactionRef: advPay?.transaction_utr || "-",
               paymentProof: advPay?.proof_url || null,
@@ -745,9 +766,15 @@ export default function UnifiedPaymentHub() {
   // 1. Submit PO Advance
   const handleOpenAdvForm = (record: any) => {
     setCurrentAdvRecord(record);
+    // Prefill with whatever's still outstanding (falls back to the full
+    // advance amount if nothing's been paid yet) — editable, so a partial
+    // payment can be entered instead.
+    const pendingAmt = record.data.advancePendingAmount ?? record.data.advanceAmount ?? 0;
     setAdvForm({
       paymentRef: "",
+      payAmount: pendingAmt ? String(pendingAmt) : "",
       paymentDate: new Date().toISOString().split("T")[0],
+      status: "",
       remarks: "",
       attachment: null,
     });
@@ -761,10 +788,23 @@ export default function UnifiedPaymentHub() {
       return;
     }
 
+    const advAmt = parseFloat(advForm.payAmount) || 0;
+    if (advAmt <= 0) {
+      toast.error("Please enter a valid Pay Amount.");
+      return;
+    }
+    const pendingAmt = currentAdvRecord.data.advancePendingAmount ?? currentAdvRecord.data.advanceAmount ?? 0;
+    if (pendingAmt > 0 && advAmt > pendingAmt + 0.01) {
+      toast.error(`Pay Amount (₹${advAmt}) cannot exceed the pending advance amount (₹${pendingAmt}).`);
+      return;
+    }
+    if (!advForm.status) {
+      toast.error("Please choose whether advance payment will be needed again or not.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const advAmt = parseFloat(String(currentAdvRecord.data.advanceAmount || currentAdvRecord.data.totalValue || "0").replace(/[^0-9.]/g, "")) || 0;
-
       let proofUrl = "";
       if (advForm.attachment) {
         const ext = advForm.attachment.name.split('.').pop() || 'bin';
@@ -788,19 +828,38 @@ export default function UnifiedPaymentHub() {
         proof_url: proofUrl,
         remarks: advForm.remarks || "",
         status: "Paid",
+        advance_status: advForm.status,
       };
 
-      let { error } = await supabase.from("vendor_payments").insert(advPayload);
-      if (error && (error.code === "PGRST204" || error.message?.includes("remarks"))) {
-        // "remarks" column not migrated yet on this deployment — retry without it.
-        const fallbackPayload = { ...advPayload };
-        delete fallbackPayload.remarks;
-        const retryRes = await supabase.from("vendor_payments").insert(fallbackPayload);
-        error = retryRes.error;
+      // Some deployments may not have run the migration adding remarks /
+      // advance_status yet — if Postgres reports a missing column, strip it
+      // and retry rather than failing the whole payment for a column we
+      // can't control here.
+      let payload = { ...advPayload };
+      let error: any = null;
+      for (let attempt = 0; attempt < Object.keys(payload).length; attempt++) {
+        const res = await supabase.from("vendor_payments").insert(payload);
+        error = res.error;
+        if (!error) break;
+        const missingCol = error.message?.match(/'([a-zA-Z_]+)'\s+column/)?.[1]
+          || (error.code === "PGRST204" ? error.message?.match(/column\s+"?([a-zA-Z_]+)"?/)?.[1] : null);
+        if (missingCol && missingCol in payload) {
+          const next = { ...payload };
+          delete next[missingCol];
+          payload = next;
+          continue;
+        }
+        break;
       }
 
       if (error) throw error;
-      toast.success("Advance Payment recorded and transitioned successfully!");
+      const remainingAfter = Math.max(0, pendingAmt - advAmt);
+      const amountNote = remainingAfter > 0.01 ? ` (₹${remainingAfter.toFixed(2)} of the advance still unpaid)` : "";
+      toast.success(
+        advForm.status === "need_again"
+          ? `Payment recorded${amountNote} — this indent now moves on to Follow UP / Lifting.`
+          : `Payment recorded${amountNote} — staying in Pending until advance is no longer needed.`
+      );
       setAdvOpen(false);
       await fetchData();
     } catch (err: any) {
@@ -1268,6 +1327,8 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">PO Number</TableHead>
                     <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
                     <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Paid So Far</TableHead>
+                    <TableHead className="font-bold p-3 text-right">Pending Amt</TableHead>
                     <TableHead className="font-bold p-3">Payment Terms</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                   </TableRow>
@@ -1275,7 +1336,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
                         No pending advance payments found.
                       </TableCell>
                     </TableRow>
@@ -1289,7 +1350,7 @@ export default function UnifiedPaymentHub() {
                             onClick={() => handleOpenAdvForm(r)}
                             className="h-7 text-xs font-semibold px-2.5 hover:bg-slate-100 hover:text-black"
                           >
-                            Pay
+                            {r.data.advancePaidAmount > 0 ? "Pay Remaining" : "Pay"}
                           </Button>
                         </TableCell>
                         <TableCell className="p-3 text-slate-500 font-mono text-xs">{formatDateTimeFull(r.createdAt)}</TableCell>
@@ -1300,6 +1361,8 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
+                        <TableCell className="p-3 text-right font-semibold text-blue-700">{formatAmount(r.data.advancePaidAmount || 0)}</TableCell>
+                        <TableCell className="p-3 text-right font-bold text-rose-700">{formatAmount(r.data.advancePendingAmount ?? r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-slate-500">{r.data.paymentTerms}</TableCell>
                         <TableCell className="p-3 text-slate-600 font-mono text-xs">
                           {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
@@ -1337,12 +1400,13 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Payment Reference</TableHead>
                     <TableHead className="font-bold p-3">Remarks</TableHead>
                     <TableHead className="font-bold p-3">Attachment</TableHead>
+                    <TableHead className="font-bold p-3">PO Copy</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredAdvHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
                         No advance payment history found.
                       </TableCell>
                     </TableRow>
@@ -1363,6 +1427,7 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.data.transactionRef}</TableCell>
                         <TableCell className="p-3 text-slate-500 max-w-[160px] truncate">{r.data.remarks}</TableCell>
                         <TableCell className="p-3">{renderSafeValue(r.data.paymentProof)}</TableCell>
+                        <TableCell className="p-3">{renderSafeValue(r.data.poPdfUrl)}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -1626,6 +1691,23 @@ export default function UnifiedPaymentHub() {
           </DialogHeader>
           <form onSubmit={handleAdvSubmit} className="space-y-4 pt-2">
             <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Pay Amount (₹)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={advForm.payAmount}
+                onChange={(e) => setAdvForm({ ...advForm, payAmount: e.target.value })}
+                placeholder="Amount being paid now"
+                required
+                className="border-slate-200 focus-visible:ring-slate-400"
+              />
+              <p className="text-[11px] text-slate-500">
+                Advance due: {formatAmount(currentAdvRecord?.data?.advanceAmount)} · Paid so far: {formatAmount(currentAdvRecord?.data?.advancePaidAmount || 0)} · Pending: {formatAmount(currentAdvRecord?.data?.advancePendingAmount ?? currentAdvRecord?.data?.advanceAmount)}
+                <br />Prefilled with the pending amount — edit it to record a partial payment; the record stays in Pending until fully paid.
+              </p>
+            </div>
+            <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-slate-700">Payment Reference Number / Transaction ID</Label>
               <Input
                 value={advForm.paymentRef}
@@ -1644,6 +1726,24 @@ export default function UnifiedPaymentHub() {
                 required
                 className="border-slate-200 focus-visible:ring-slate-400"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Status <span className="text-red-500">*</span></Label>
+              <Select
+                value={advForm.status}
+                onValueChange={(v) => setAdvForm({ ...advForm, status: v as "need_again" | "not_needed_again" })}
+              >
+                <SelectTrigger className="w-full border-slate-200">
+                  <SelectValue placeholder="Choose advance status..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="need_again">Need Advance Payment Again</SelectItem>
+                  <SelectItem value="not_needed_again">Not Need Advance Payment Again</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-slate-500">
+                "Need Advance Payment Again" sends this on to Follow UP / Lifting now. "Not Need Advance Payment Again" keeps it here in Pending.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-slate-700">Remarks</Label>

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useWorkflow } from "@/lib/workflow-context";
+import { useAuth } from "@/lib/auth-context";
 import { StageTable } from "./stage-table";
 import {
   Dialog,
@@ -48,6 +49,8 @@ export default function Stage1() {
     indentCounter,
     setIndentCounter,
   } = useWorkflow();
+  const { fullName, user } = useAuth();
+  const loggedInName = fullName || user || "";
 
   const [sheetRecords, setSheetRecords] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -87,6 +90,7 @@ export default function Stage1() {
           category: r.data.category,
           warehouseLocation: r.data.warehouseLocation,
           leadTime: r.data.leadTime,
+          deliveryLocation: r.data.deliveryLocation,
           itemName: r.data.itemName,
           quantity: r.data.quantity,
           itemCode: r.data.itemCode,
@@ -237,6 +241,7 @@ export default function Stage1() {
     createdBy: "",
     warehouseLocation: "",
     leadTime: "",
+    deliveryLocation: "",
     category: "",
     itemName: "",
     quantity: "",
@@ -251,6 +256,7 @@ export default function Stage1() {
     createdBy: "",
     warehouseLocation: "",
     leadTime: "",
+    deliveryLocation: "",
     attachment: null as File | null,
     items: [] as Array<{
       category: string;
@@ -271,6 +277,13 @@ export default function Stage1() {
     itemPriority: "",
   });
 
+  // Prefill "Created By" with the logged-in user's name (once auth resolves)
+  useEffect(() => {
+    if (loggedInName) {
+      setFormData((prev) => (prev.createdBy ? prev : { ...prev, createdBy: loggedInName }));
+    }
+  }, [loggedInName]);
+
 
 
 
@@ -281,17 +294,20 @@ export default function Stage1() {
   const [warehouseOptions, setWarehouseOptions] = useState<string[]>([]);
   // Fetch "UOM" options from Dropdown sheet column N (Index 13)
   const [uomOptions, setUomOptions] = useState<string[]>([]);
+  // Fetch "Delivery Location" options from Master → Delivery Locations
+  const [deliveryLocationOptions, setDeliveryLocationOptions] = useState<string[]>([]);
   // Fetch dropdown data for Category (D), Item Name (E), Item Code (C)
   const [dropdownData, setDropdownData] = useState<Array<{ itemCode: string; category: string; itemName: string }>>([]);
 
   useEffect(() => {
     const fetchDropdownOptions = async () => {
       try {
-        const [cbRes, whRes, uomRes, itemRes] = await Promise.all([
+        const [cbRes, whRes, uomRes, itemRes, addrRes] = await Promise.all([
           supabase.from("master_created_by").select("name").eq("is_active", true),
           supabase.from("master_warehouses").select("name").eq("is_active", true),
           supabase.from("master_uoms").select("name").eq("is_active", true),
           supabase.from("master_items").select("item_code, category, item_name, uom").eq("is_active", true),
+          supabase.from("master_delivery_locations").select("name").eq("is_active", true),
         ]);
 
         const cbOpts = (cbRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
@@ -302,6 +318,9 @@ export default function Stage1() {
 
         const uomOpts = (uomRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
         setUomOptions(uomOpts);
+
+        const addrOpts = (addrRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
+        setDeliveryLocationOptions(addrOpts);
 
         const itemData = (itemRes.data || []).map((r: any) => ({
           category: r.category || "",
@@ -385,6 +404,7 @@ export default function Stage1() {
         warehouseLocation: data.warehouseLocation,
         itemCode: item.itemCode || "",
         leadTime: data.leadTime,
+        deliveryLocation: data.deliveryLocation || "",
         priority: item.itemPriority || "",
         attachmentUrl: attachmentUrl || "",
         uom: item.uom || "",
@@ -430,7 +450,7 @@ export default function Stage1() {
         if (maxFromGenerated > 0) setIndentCounter(maxFromGenerated + 1);
 
         fetchData();
-        setFormData({ createdBy: "", warehouseLocation: "", leadTime: "", attachment: null, items: [] });
+        setFormData({ createdBy: loggedInName, warehouseLocation: "", leadTime: "", deliveryLocation: "", attachment: null, items: [] });
         setOpen(false);
         return true;
       })();
@@ -509,6 +529,7 @@ export default function Stage1() {
       createdBy: record.data.createdBy || "",
       warehouseLocation: record.data.warehouseLocation || "",
       leadTime: record.data.leadTime || "",
+      deliveryLocation: record.data.deliveryLocation || "",
       category: record.data.category || "",
       itemName: record.data.itemName || "",
       quantity: record.data.quantity || "",
@@ -543,6 +564,7 @@ export default function Stage1() {
         warehouseLocation: editFormData.warehouseLocation,
         itemCode: editFormData.itemCode,
         leadTime: editFormData.leadTime,
+        deliveryLocation: editFormData.deliveryLocation,
         priority: editFormData.itemPriority,
         attachmentUrl: finalAttachmentUrl,
         uom: editFormData.uom,
@@ -586,23 +608,14 @@ export default function Stage1() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="createdBy">Created By <span className="text-red-500">*</span></Label>
-                <Select
+                <Input
+                  id="createdBy"
+                  type="text"
                   value={formData.createdBy}
-                  onValueChange={(val) =>
-                    setFormData({ ...formData, createdBy: val })
-                  }
-                >
-                  <SelectTrigger id="createdBy" className="w-full">
-                    <SelectValue placeholder="Select creator" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {createdByOptions.map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {option}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  readOnly
+                  disabled
+                  className="bg-slate-50"
+                />
               </div>
 
               <div className="space-y-1.5">
@@ -629,15 +642,28 @@ export default function Stage1() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <Label htmlFor="leadTime">Expected Requirement Date <span className="text-red-500">*</span></Label>
-                <Input
-                  id="leadTime"
-                  type="date"
-                  value={formData.leadTime}
-                  onChange={(e) =>
-                    setFormData({ ...formData, leadTime: e.target.value })
+                <Label htmlFor="deliveryLocation">Delivery Location</Label>
+                <Select
+                  value={formData.deliveryLocation}
+                  onValueChange={(val) =>
+                    setFormData({ ...formData, deliveryLocation: val })
                   }
-                />
+                >
+                  <SelectTrigger id="deliveryLocation" className="w-full">
+                    <SelectValue placeholder="Select delivery location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deliveryLocationOptions.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-slate-400">No locations configured (Master → Delivery Locations)</div>
+                    ) : (
+                      deliveryLocationOptions.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
@@ -718,7 +744,7 @@ export default function Stage1() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="space-y-1.5">
                 <Label>Quantity <span className="text-red-500">*</span></Label>
                 <Input
@@ -765,6 +791,18 @@ export default function Stage1() {
                     <SelectItem value="high">High</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="leadTime">Expected Requirement Date <span className="text-red-500">*</span></Label>
+                <Input
+                  id="leadTime"
+                  type="date"
+                  value={formData.leadTime}
+                  onChange={(e) =>
+                    setFormData({ ...formData, leadTime: e.target.value })
+                  }
+                />
               </div>
             </div>
 
@@ -1026,6 +1064,31 @@ export default function Stage1() {
                       setEditFormData({ ...editFormData, leadTime: e.target.value })
                     }
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Delivery Location</Label>
+                  <Select
+                    value={editFormData.deliveryLocation}
+                    onValueChange={(val) =>
+                      setEditFormData({ ...editFormData, deliveryLocation: val })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select delivery location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {deliveryLocationOptions.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-slate-400">No locations configured</div>
+                      ) : (
+                        deliveryLocationOptions.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 

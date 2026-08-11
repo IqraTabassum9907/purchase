@@ -115,14 +115,21 @@ export default function Stage2() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const { fetchIndentWorkflow } = await import("@/lib/supabase/queries");
+      const { fetchIndentWorkflow, fetchIndentDelegations } = await import("@/lib/supabase/queries");
       const { supabase } = await import("@/lib/supabase/client");
-      const [rows, tatRes] = await Promise.all([
+      const [rows, tatRes, delegations] = await Promise.all([
         fetchIndentWorkflow(),
-        supabase.from("master_tat_rules").select("*")
+        supabase.from("master_tat_rules").select("*"),
+        fetchIndentDelegations(),
       ]);
 
       if (tatRes.data) setTatRules(tatRes.data);
+
+      const delegationMap: Record<string, string[]> = {};
+      delegations.forEach((d) => {
+        if (!delegationMap[d.indentId]) delegationMap[d.indentId] = [];
+        delegationMap[d.indentId].push(d.approverName);
+      });
 
       const stage2Rows = rows
         .map((r: any) => {
@@ -164,6 +171,7 @@ export default function Stage2() {
               approvedQty: r.data.approvedQty,
               vendorType: r.data.vendorType,
               remarks: r.data.remarks,
+              delegatedTo: delegationMap[r.id] || [],
             },
           };
         })
@@ -182,9 +190,22 @@ export default function Stage2() {
   }, []);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [divisionFilter, setDivisionFilter] = useState<string>("all");
+  const [warehouseOptions, setWarehouseOptions] = useState<string[]>([]);
+  const [approverFilter, setApproverFilter] = useState<string>("all");
+
+  useEffect(() => {
+    supabase.from("master_warehouses").select("name").eq("is_active", true).then(({ data }) => {
+      setWarehouseOptions((data || []).map((w: any) => w.name).filter(Boolean));
+    });
+  }, []);
 
   const pending = useMemo(() => sheetRecords
     .filter((r) => r.status === "pending")
+    // An indent only reaches Indent Approval once it's been delegated on the
+    // "Delegate for Approval" page — undelegated pending items stay there.
+    .filter((r) => (r.data.delegatedTo || []).length > 0)
+    .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter)
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       if (!searchLower) return true;
@@ -194,9 +215,30 @@ export default function Stage2() {
         r.data.quantity?.toString().toLowerCase().includes(searchLower) ||
         r.data.vendorType?.toLowerCase().includes(searchLower)
       );
-    }), [sheetRecords, searchTerm]);
+    }), [sheetRecords, searchTerm, divisionFilter]);
 
   useEffect(() => { reportPendingCount("Indent Approval", pending.length); }, [pending.length]);
+
+  // Distinct approver names delegated (from Delegate for Approval) among the
+  // currently-pending items, each rendered as its own sub-tab.
+  const approverTabs = useMemo(() => {
+    const names = new Set<string>();
+    pending.forEach((r) => (r.data.delegatedTo || []).forEach((n: string) => names.add(n)));
+    return Array.from(names).sort();
+  }, [pending]);
+
+  // Reset back to "All" if the currently-selected approver tab no longer has
+  // any pending items (e.g. everything for them just got approved).
+  useEffect(() => {
+    if (approverFilter !== "all" && !approverTabs.includes(approverFilter)) {
+      setApproverFilter("all");
+    }
+  }, [approverTabs, approverFilter]);
+
+  const visiblePending = useMemo(() => {
+    if (approverFilter === "all") return pending;
+    return pending.filter((r) => (r.data.delegatedTo || []).includes(approverFilter));
+  }, [pending, approverFilter]);
 
   const history = useMemo(() => sheetRecords
     .filter((r) => parseFloat(r.data.totalApprovedQty || r.data.approvedQty || "0") > 0 || r.status === "completed")
@@ -211,7 +253,7 @@ export default function Stage2() {
       );
     }), [sheetRecords, searchTerm]);
 
-  const pendingPagination = usePagination(pending, 15);
+  const pendingPagination = usePagination(visiblePending, 15);
   const historyPagination = usePagination(history, 15);
 
   const columns = [
@@ -225,6 +267,7 @@ export default function Stage2() {
     { key: "warehouseLocation", label: "Warehouse" },
     { key: "itemCode", label: "Item Code" },
     { key: "leadTime", label: "Expected Requirement Date" },
+    { key: "delegatedTo", label: "Delegated To" },
     { key: "plannedDate", label: "Planned Date" },
     { key: "actualDate", label: "Actual" },
     { key: "delay", label: "Delay" },
@@ -243,10 +286,10 @@ export default function Stage2() {
   };
 
   const toggleAll = () => {
-    if (selectedRecords.length === pending.length) {
+    if (selectedRecords.length === visiblePending.length) {
       setSelectedRecords([]);
     } else {
-      setSelectedRecords(pending.map((r) => r.id));
+      setSelectedRecords(visiblePending.map((r) => r.id));
     }
   };
 
@@ -415,6 +458,18 @@ export default function Stage2() {
               />
             </div>
 
+            <Select value={divisionFilter} onValueChange={setDivisionFilter}>
+              <SelectTrigger className="w-44 bg-white shrink-0">
+                <SelectValue placeholder="Division" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Divisions</SelectItem>
+                {warehouseOptions.map((w) => (
+                  <SelectItem key={w} value={w}>{w}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
             <div className="flex items-center gap-3">
               <Label className="text-sm font-semibold text-slate-600 hidden md:inline-block">Show Columns:</Label>
               <ColumnSelector />
@@ -469,6 +524,46 @@ export default function Stage2() {
           )}
         </div>
 
+        {/* Per-approver sub-tabs — one per name delegated via "Delegate for
+            Approval", built dynamically from whoever has pending items.
+            Always visible on the Pending tab (even at 0 items) so the
+            mechanism is never hidden from view. */}
+        {activeTab === "pending" && (
+          <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Delegated to:</span>
+            <button
+              type="button"
+              onClick={() => setApproverFilter("all")}
+              className={cn(
+                "text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
+                approverFilter === "all"
+                  ? "bg-blue-700 text-white border-blue-700"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+              )}
+            >
+              All ({pending.length})
+            </button>
+            {approverTabs.map((name) => {
+              const count = pending.filter((r) => (r.data.delegatedTo || []).includes(name)).length;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => setApproverFilter(name)}
+                  className={cn(
+                    "text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
+                    approverFilter === name
+                      ? "bg-blue-700 text-white border-blue-700"
+                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                  )}
+                >
+                  {name} ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* ---------- PENDING ---------- */}
         <TabsContent value="pending" className="mt-0 flex-1 flex flex-col overflow-hidden">
           {isLoading ? (
@@ -484,8 +579,8 @@ export default function Stage2() {
                     <TableHead className="w-12 sticky top-0 z-20 bg-slate-200 shadow-sm border-none">
                       <Checkbox
                         checked={
-                          pending.length > 0 &&
-                          selectedRecords.length === pending.length
+                          visiblePending.length > 0 &&
+                          selectedRecords.length === visiblePending.length
                         }
                         onCheckedChange={toggleAll}
                       />
@@ -503,10 +598,12 @@ export default function Stage2() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pending.length === 0 ? (
+                  {visiblePending.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={selectedColumns.length + 1} className="h-32 text-center text-gray-500 font-medium">
-                        No pending indents found for approval.
+                        {approverFilter === "all"
+                          ? "No pending indents found for approval."
+                          : `No pending indents delegated to ${approverFilter}.`}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -540,6 +637,8 @@ export default function Stage2() {
                                    ? formatDateDash((record.data as any)[col.key])
                                    : (col.key as string) === "leadTime"
                                    ? `${(record.data as any)[col.key] || 0} days`
+                                   : (col.key as string) === "delegatedTo"
+                                   ? ((record.data as any)[col.key]?.length ? (record.data as any)[col.key].join(", ") : "-")
                                    : (record.data as any)[col.key] || "-"}
                               </TableCell>
                             ))}
@@ -609,6 +708,8 @@ export default function Stage2() {
                                 ? `${record.data[col.key] || 0} days`
                                 : col.key === "actualDate"
                                   ? formatDateDash(record.data[col.key])
+                                  : (col.key as string) === "delegatedTo"
+                                  ? (record.data[col.key]?.length ? record.data[col.key].join(", ") : "-")
                                   : record.data[col.key] || "-"}
                             </TableCell>
                           ))}

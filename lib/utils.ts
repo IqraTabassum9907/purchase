@@ -171,9 +171,7 @@ export function getPlannedDateForRecord(
   
   if (!baseDate || isNaN(baseDate.getTime())) return "-";
 
-  // Must mirror STAGES in lib/constants.ts (the actual workflow/sidebar order) —
-  // Purchase Return (rejected-qty handling straight off Material Received) always
-  // resolves before Billing, so its TAT has to accrue first in the cumulative sum.
+  // Must mirror STAGES in lib/constants.ts (the actual workflow/sidebar order).
   const stageOrder = [
     "Create Indent",
     "Indent Approval",
@@ -184,7 +182,6 @@ export function getPlannedDateForRecord(
     "Follow UP / Lifting",
     "Transporter Follow-Up",
     "Material Received",
-    "Purchase Return",
     "Billing",
     "Order Cancel"
   ];

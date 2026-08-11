@@ -22,7 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, Upload, X, Shield, ShieldCheck, Loader2, ClipboardList, History, Search, Plus, Trash2, Eye, Save, Edit2, FileEdit, Send, ExternalLink } from "lucide-react";
+import { FileText, Upload, X, Shield, ShieldCheck, Loader2, ClipboardList, History, Search, Plus, Trash2, Eye, Save, FileEdit, Send, ExternalLink, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Popover,
@@ -68,6 +68,14 @@ const formatInputDate = (date: any) => {
   const parsed = parseSheetDate(date);
   if (!parsed || isNaN(parsed.getTime())) return "";
   return parsed.toISOString().split("T")[0];
+};
+
+// Splits "PO-1004-R2" into { base: "PO-1004", rev: 2 }; a plain "PO-1004"
+// (no revision suffix yet) parses as { base: "PO-1004", rev: 0 }.
+const parsePoRevision = (poNum: string): { base: string; rev: number } => {
+  const m = String(poNum || "").match(/^(.*)-R(\d+)$/i);
+  if (m) return { base: m[1], rev: parseInt(m[2], 10) || 0 };
+  return { base: String(poNum || ""), rev: 0 };
 };
 
 const normalizePaymentTerms = (term?: string): string => {
@@ -116,6 +124,10 @@ export default function Stage5() {
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
   const [bulkFormData, setBulkFormData] = useState<Record<string, any>>({});
   const [sheetRecords, setSheetRecords] = useState<any[]>([]);
+  // One entry per PO revision (oldest first) — powers the History tab so
+  // every past revision stays visible as its own row instead of the newest
+  // one overwriting the display of older ones.
+  const [historyRows, setHistoryRows] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -150,12 +162,96 @@ export default function Stage5() {
   const [historyRecords, setHistoryRecords] = useState<any[]>([]);
   const [tatRules, setTatRules] = useState<any[]>([]);
 
+  // Builds the flat `data` shape for a Stage-5 row from an indent + one
+  // specific PO (or null, when no PO exists yet). Shared by sheetRecords
+  // (always the latest PO per indent) and historyRows (one entry PER PO
+  // revision, so old revisions stay visible instead of being overwritten).
+  const buildStage5Data = (row: any, po: any | null) => {
+    const displayQty = row.data.approvedQty || row.data.quantity;
+    return {
+      timestamp: row.data.createdAt,
+      indentNumber: row.data.indentNumber,
+      itemName: row.data.itemName,
+      quantity: displayQty,
+      planned1: row.data.plan1 || "",
+      actual1: row.data.actual1 || "",
+      approvedBy: row.data.finalApprovedBy,
+      itemCode: row.data.itemCode,
+      warehouseLocation: row.data.warehouseLocation || "",
+
+      vendor1Name: row.data.vendor1Name,
+      vendor1Rate: row.data.vendor1Rate,
+      vendor1Terms: row.data.vendor1Terms,
+      vendor1DeliveryDate: row.data.vendor1Delivery,
+      vendor1TransportType: row.data.vendor1TransportType,
+      vendor1WarrantyType: "",
+      vendor1WarrantyFrom: "",
+      vendor1WarrantyTo: "",
+      vendor1Attachment: "",
+
+      vendor2Name: row.data.vendor2Name,
+      vendor2Rate: row.data.vendor2Rate,
+      vendor2Terms: row.data.vendor2Terms,
+      vendor2DeliveryDate: row.data.vendor2Delivery,
+      vendor2TransportType: row.data.vendor2TransportType,
+      vendor2WarrantyType: "",
+      vendor2WarrantyFrom: "",
+      vendor2WarrantyTo: "",
+      vendor2Attachment: "",
+
+      vendor3Name: row.data.vendor3Name,
+      vendor3Rate: row.data.vendor3Rate,
+      vendor3Terms: row.data.vendor3Terms,
+      vendor3DeliveryDate: row.data.vendor3Delivery,
+      vendor3TransportType: row.data.vendor3TransportType,
+      vendor3WarrantyType: "",
+      vendor3WarrantyFrom: "",
+      vendor3WarrantyTo: "",
+      vendor3Attachment: "",
+
+      planned3: row.data.plan3,
+      actual3: row.data.actual3,
+      delay3: "",
+      selectedVendor: row.data.selectedVendor,
+      finalApprovedBy: row.data.finalApprovedBy,
+      negotiationRemarks: row.data.negotiationRemarks,
+
+      planned4: row.data.plan4,
+      actual4: po ? (po.created_at || "") : "",
+      delay4: "",
+      poNumber: po?.po_number || "",
+      poDate: po?.po_date || "",
+      basicValue: po ? String(po.unit_rate || "") : "",
+      totalWithTax: po ? String(po.total_amount || "") : "",
+      hsn: po?.hsn || "",
+      poCopy: po?.po_copy_url || "",
+      poPdfUrl: po?.po_pdf_url || "",
+      gst: po?.gst_percent || "",
+      transportType: po?.transport_type || "",
+      advanceAmount: po ? String(po.advance_amount || "0") : "",
+      paymentType: po?.payment_type || "",
+      // The actual supplier/delivery details submitted with the PO —
+      // used to correctly prefill Revise (getVendorData reflects the
+      // original quotation vendor, which can differ from whichever
+      // supplier was actually picked/typed when the PO was created).
+      poSupplierName: po?.vendor_name || "",
+      poDeliveryDate: po?.delivery_date || "",
+      poDeliveryAddress: po?.delivery_address || "",
+      // Delivery Location: prefer whatever was already saved on this
+      // item's PO (Revise), else fall back to what was chosen back in
+      // Create Indent.
+      deliveryLocation: po?.delivery_location || row.data.deliveryLocation || "",
+      pkgAmount: "",
+      pkgGst: "",
+    };
+  };
+
   const fetchData = async () => {
     setIsLoading(true);
     try {
       const [workflow, poResult, tatResult] = await Promise.all([
         fetchIndentWorkflow(),
-        supabase.from("purchase_orders").select("*"),
+        supabase.from("purchase_orders").select("*").order("created_at", { ascending: true }),
         supabase.from("master_tat_rules").select("*"),
       ]);
 
@@ -173,103 +269,50 @@ export default function Stage5() {
         });
       }
 
-      const rows = workflow
-        .filter((row) => row.data.indentNumber && row.data.indentNumber.trim() !== "")
-        .map((row) => {
-          const indentPos = posByIndentId.get(row.id) || [];
-          const latestPo = indentPos.length > 0 ? indentPos[indentPos.length - 1] : null;
-          const hasPo = indentPos.length > 0;
-          const isRegularVendor = row.data.vendorType?.toLowerCase() === "regular";
-          const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "" && row.data.plan4.trim() !== "-";
-          const isApprovedStage2 = parseFloat(String((row.data as any).totalApprovedQty || row.data.approvedQty || "0")) > 0 || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-");
+      const relevantIndents = workflow.filter((row) => row.data.indentNumber && row.data.indentNumber.trim() !== "");
 
-          let status = "not_ready";
-          if (hasPo) {
-            status = "completed";
-          } else if (hasPlan4 || (isRegularVendor && isApprovedStage2)) {
-            status = "pending";
-          }
+      const rows = relevantIndents.map((row) => {
+        const indentPos = posByIndentId.get(row.id) || [];
+        const latestPo = indentPos.length > 0 ? indentPos[indentPos.length - 1] : null;
+        const hasPo = indentPos.length > 0;
+        const isRegularVendor = row.data.vendorType?.toLowerCase() === "regular";
+        const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "" && row.data.plan4.trim() !== "-";
+        const isApprovedStage2 = parseFloat(String((row.data as any).totalApprovedQty || row.data.approvedQty || "0")) > 0 || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-");
 
-          const displayQty = row.data.approvedQty || row.data.quantity;
+        let status = "not_ready";
+        if (hasPo) {
+          status = "completed";
+        } else if (hasPlan4 || (isRegularVendor && isApprovedStage2)) {
+          status = "pending";
+        }
 
-          return {
-            id: row.id,
-            rowIndex: row.originalIndex,
-            stage: 4,
-            status: status,
-            createdAt: row.data.createdAt,
-            history: hasPo ? [{ stage: 4, date: latestPo?.created_at || row.data.plan4 || row.data.createdAt, data: {} }] : [],
-            data: {
-              timestamp: row.data.createdAt,
-              indentNumber: row.data.indentNumber,
-              itemName: row.data.itemName,
-              quantity: displayQty,
-              planned1: row.data.plan1 || "",
-              actual1: row.data.actual1 || "",
-              approvedBy: row.data.finalApprovedBy,
-              itemCode: row.data.itemCode,
-              warehouseLocation: row.data.warehouseLocation || "",
-
-              vendor1Name: row.data.vendor1Name,
-              vendor1Rate: row.data.vendor1Rate,
-              vendor1Terms: row.data.vendor1Terms,
-              vendor1DeliveryDate: row.data.vendor1Delivery,
-              vendor1WarrantyType: "",
-              vendor1WarrantyFrom: "",
-              vendor1WarrantyTo: "",
-              vendor1Attachment: "",
-
-              vendor2Name: row.data.vendor2Name,
-              vendor2Rate: row.data.vendor2Rate,
-              vendor2Terms: row.data.vendor2Terms,
-              vendor2DeliveryDate: row.data.vendor2Delivery,
-              vendor2WarrantyType: "",
-              vendor2WarrantyFrom: "",
-              vendor2WarrantyTo: "",
-              vendor2Attachment: "",
-
-              vendor3Name: row.data.vendor3Name,
-              vendor3Rate: row.data.vendor3Rate,
-              vendor3Terms: row.data.vendor3Terms,
-              vendor3DeliveryDate: row.data.vendor3Delivery,
-              vendor3WarrantyType: "",
-              vendor3WarrantyFrom: "",
-              vendor3WarrantyTo: "",
-              vendor3Attachment: "",
-
-              planned3: row.data.plan3,
-              actual3: row.data.actual3,
-              delay3: "",
-              selectedVendor: row.data.selectedVendor,
-              finalApprovedBy: row.data.finalApprovedBy,
-              negotiationRemarks: row.data.negotiationRemarks,
-
-              planned4: row.data.plan4,
-              actual4: latestPo ? (latestPo.created_at || "") : "",
-              delay4: "",
-              poNumber: latestPo?.po_number || "",
-              poDate: latestPo?.po_date || "",
-              basicValue: latestPo ? String(latestPo.unit_rate || "") : "",
-              totalWithTax: latestPo ? String(latestPo.total_amount || "") : "",
-              hsn: latestPo?.hsn || "",
-              poCopy: latestPo?.po_copy_url || "",
-              poPdfUrl: latestPo?.po_pdf_url || "",
-              gst: latestPo?.gst_percent || "",
-              advanceAmount: latestPo ? String(latestPo.advance_amount || "0") : "",
-              paymentType: latestPo?.payment_type || "",
-              // The actual supplier/delivery details submitted with the PO —
-              // used to correctly prefill Revise (getVendorData reflects the
-              // original quotation vendor, which can differ from whichever
-              // supplier was actually picked/typed when the PO was created).
-              poSupplierName: latestPo?.vendor_name || "",
-              poDeliveryDate: latestPo?.delivery_date || "",
-              poDeliveryAddress: latestPo?.delivery_address || "",
-              pkgAmount: "",
-              pkgGst: "",
-            }
-          };
-        });
+        return {
+          id: row.id,
+          rowIndex: row.originalIndex,
+          stage: 4,
+          status: status,
+          createdAt: row.data.createdAt,
+          history: hasPo ? [{ stage: 4, date: latestPo?.created_at || row.data.plan4 || row.data.createdAt, data: {} }] : [],
+          data: buildStage5Data(row, latestPo),
+        };
+      });
       setSheetRecords(rows);
+
+      // One row PER PO revision (oldest first) so old revisions stay visible
+      // in History instead of being overwritten by the newest one.
+      const historyRows = relevantIndents.flatMap((row) => {
+        const indentPos = posByIndentId.get(row.id) || [];
+        return indentPos.map((po) => ({
+          id: `${row.id}::${po.id}`,
+          indentId: row.id,
+          rowIndex: row.originalIndex,
+          stage: 4,
+          status: "completed",
+          createdAt: row.data.createdAt,
+          data: buildStage5Data(row, po),
+        }));
+      });
+      setHistoryRows(historyRows);
     } catch (e) {
       console.error("Fetch error Stage 5:", getErrorMessage(e));
       toast.error(`Failed to load Make PO data: ${getErrorMessage(e)}`);
@@ -278,6 +321,15 @@ export default function Stage5() {
   };
 
   const [dbVendors, setDbVendors] = useState<Array<{ vendor_name: string; email?: string; address?: string }>>([]);
+
+  // Our company's own addresses (Master → Addresses) — feeds the Billing /
+  // Destination Address dropdowns below instead of a fixed hardcoded address.
+  const [addressOptions, setAddressOptions] = useState<Array<{ name: string; address: string }>>([]);
+  // Delivery locations (Master → Delivery Locations) — same list Create Indent
+  // picks from; feeds the PO's Delivery Location dropdown.
+  const [deliveryLocationOptions, setDeliveryLocationOptions] = useState<string[]>([]);
+  // HSN codes (Master → HSN Codes) — feeds the per-item HSN dropdown below.
+  const [hsnOptions, setHsnOptions] = useState<string[]>([]);
 
   React.useEffect(() => {
     fetchData();
@@ -291,13 +343,55 @@ export default function Stage5() {
         console.error("Error loading master vendors in PO entry:", err);
       }
     }
+    async function loadMasterAddresses() {
+      try {
+        const { data } = await supabase.from("master_addresses").select("*").eq("is_active", true);
+        if (data && data.length > 0) {
+          setAddressOptions(data.map((a: any) => ({ name: a.name, address: a.address || "" })));
+        }
+      } catch (err) {
+        console.error("Error loading master addresses in PO entry:", err);
+      }
+    }
+    async function loadMasterDeliveryLocations() {
+      try {
+        const { data } = await supabase.from("master_delivery_locations").select("name").eq("is_active", true);
+        if (data && data.length > 0) {
+          setDeliveryLocationOptions(data.map((d: any) => d.name).filter(Boolean));
+        }
+      } catch (err) {
+        console.error("Error loading master delivery locations in PO entry:", err);
+      }
+    }
+    async function loadMasterHsnCodes() {
+      try {
+        const { data } = await supabase.from("master_hsn_codes").select("name").eq("is_active", true);
+        if (data && data.length > 0) {
+          setHsnOptions(data.map((h: any) => h.name).filter(Boolean));
+        }
+      } catch (err) {
+        console.error("Error loading master HSN codes in PO entry:", err);
+      }
+    }
     loadMasterVendors();
+    loadMasterAddresses();
+    loadMasterDeliveryLocations();
+    loadMasterHsnCodes();
   }, []);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [divisionFilter, setDivisionFilter] = useState<string>("all");
+  const [firmWarehouseOptions, setFirmWarehouseOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    supabase.from("master_warehouses").select("name").eq("is_active", true).then(({ data }) => {
+      setFirmWarehouseOptions((data || []).map((w: any) => w.name).filter(Boolean));
+    });
+  }, []);
 
   const pending = useMemo(() => sheetRecords
     .filter((r) => r.status === "pending")
+    .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter)
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       const selectedId = String(r.data.selectedVendor || "1");
@@ -310,12 +404,14 @@ export default function Stage5() {
         vName.toLowerCase().includes(searchLower) ||
         String(r.data.poNumber || "").toLowerCase().includes(searchLower)
       );
-    }), [sheetRecords, searchTerm]);
+    }), [sheetRecords, searchTerm, divisionFilter]);
 
   useEffect(() => { reportPendingCount("Make PO", pending.length); }, [pending.length]);
 
-  const completed = useMemo(() => sheetRecords
-    .filter((r) => r.status === "completed")
+  // Sourced from historyRows (one entry per PO revision) rather than
+  // sheetRecords (latest-only) so every past revision stays visible.
+  const completed = useMemo(() => historyRows
+    .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter)
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       if (!searchLower) return true;
@@ -329,10 +425,42 @@ export default function Stage5() {
         vName.toLowerCase().includes(searchLower) ||
         String(r.data.poNumber || "").toLowerCase().includes(searchLower)
       );
-    }), [sheetRecords, searchTerm]);
+    }), [historyRows, searchTerm, divisionFilter]);
 
   const pendingPagination = usePagination(pending, 15);
-  const historyPagination = usePagination(completed, 15);
+
+  // Groups every PO revision by indent, so History shows one row per indent
+  // (the current/latest revision) with an expand arrow that reveals the
+  // older revisions nested underneath — instead of a flat list mixing
+  // revisions from different indents together.
+  const [expandedHistoryRows, setExpandedHistoryRows] = useState<Set<string>>(new Set());
+  const toggleHistoryExpand = (indentId: string) => {
+    setExpandedHistoryRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(indentId)) next.delete(indentId);
+      else next.add(indentId);
+      return next;
+    });
+  };
+
+  const groupedHistory = useMemo(() => {
+    const map = new Map<string, any[]>();
+    completed.forEach((r) => {
+      const list = map.get(r.indentId) || [];
+      list.push(r);
+      map.set(r.indentId, list);
+    });
+    // Each group's revisions arrive oldest-first (historyRows is built that
+    // way); the latest one is the current row, the rest are shown when
+    // expanded, most-recent-of-the-old-ones first.
+    return Array.from(map.entries()).map(([indentId, revisions]) => ({
+      indentId,
+      latest: revisions[revisions.length - 1],
+      olderRevisions: revisions.slice(0, -1).reverse(),
+    }));
+  }, [completed]);
+
+  const historyPagination = usePagination(groupedHistory, 15);
 
   const poTotalMap = useMemo(() => {
     const totals = new Map<string, number>();
@@ -414,11 +542,18 @@ export default function Stage5() {
 
   const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
 
+  const transportTypeOptions = [
+    { value: "Ex-Factory", label: "Ex-Factory" },
+    { value: "Ex-Factory + Transport", label: "Ex-Factory + Transport" },
+    { value: "F.O.R.", label: "F.O.R. (Free on Road)" },
+  ];
+
   const defaultPOForm = {
     firmName: "",
     supplierName: "",
     poDate: new Date().toISOString().split("T")[0],
-    deliveryDate: "",
+    deliveryLocation: "",
+    transportType: "",
     paymentTerms: "advance",
     advancePayment: "yes",
     advanceAmount: "",
@@ -464,7 +599,11 @@ export default function Stage5() {
     const matching = completed.filter((r) => r.data.poNumber === poNum);
     if (matching.length === 0) return;
 
-    const matchedIds = matching.map((r) => r.id);
+    // historyRows entries carry a compound id ("indentId::poId") since one
+    // indent can have several PO revisions — selection/bulkFormData keys
+    // must be the plain indentId to match sheetRecords, or the Items &
+    // Quantities table below silently finds nothing to show.
+    const matchedIds = matching.map((r) => r.indentId);
     setSelectedRecordIds(matchedIds);
 
     const firstRec = matching[0];
@@ -493,8 +632,9 @@ export default function Stage5() {
       supplierEmail: actualSupplierName ? (vendorEmailMap[actualSupplierName] || "") : "",
       supplierAddress: firstRec.data.poDeliveryAddress || (actualSupplierName ? (vendorAddressMap[actualSupplierName] || "") : ""),
       poDate: firstRec.data.poDate ? formatInputDate(firstRec.data.poDate) : formatInputDate(firstRec.data.actual4),
-      deliveryDate: firstRec.data.poDeliveryDate ? formatInputDate(firstRec.data.poDeliveryDate) : (v.delivery ? formatInputDate(v.delivery) : ""),
-      paymentTerms: normalizePaymentTerms(v.terms),
+      deliveryLocation: firstRec.data.deliveryLocation || "",
+      transportType: firstRec.data.transportType || v.transportType || "",
+      paymentTerms: normalizePaymentTerms(firstRec.data.paymentType || v.terms),
       advancePayment: (firstRec.data.paymentType || "").toLowerCase().includes("no advance") ? "no" : "yes",
       advanceAmount: firstRec.data.advanceAmount && firstRec.data.advanceAmount !== "0" ? firstRec.data.advanceAmount : "",
       gstin: "",
@@ -520,12 +660,14 @@ export default function Stage5() {
       const savedBasic = parseFloat(r.data.basicValue) || 0;
       const savedQty = parseFloat(r.data.quantity) || 0;
       const derivedRate = savedQty > 0 ? (savedBasic / savedQty).toFixed(2) : "0";
-      matchedFormData[r.id] = {
+      const rv = getVendorData(r);
+      matchedFormData[r.indentId] = {
         rate: derivedRate,
         basicValue: r.data.basicValue || "0",
         totalWithTax: r.data.totalWithTax || "0",
         hsn: r.data.hsn || "",
         gst: r.data.gst || "",
+        deliveryDate: r.data.poDeliveryDate ? formatInputDate(r.data.poDeliveryDate) : (rv.delivery ? formatInputDate(rv.delivery) : ""),
       };
     });
     setBulkFormData(matchedFormData);
@@ -538,12 +680,12 @@ export default function Stage5() {
     setCommonPOCopy(firstRec.data.poCopy || null);
   };
 
+  // Handles both the preset options (5%/12%/18%/28%) and any custom value
+  // typed into the now-editable GST dropdown (e.g. "6%", "0.1", "6").
   const gstRateFor = (gst: string) => {
-    if (gst === "5%") return 0.05;
-    if (gst === "12%") return 0.12;
-    if (gst === "18%") return 0.18;
-    if (gst === "28%") return 0.28;
-    return 0;
+    const n = parseFloat(String(gst || "").replace("%", "").trim());
+    if (isNaN(n)) return 0;
+    return n > 1 ? n / 100 : n;
   };
 
   const poSummary = useMemo(() => {
@@ -576,7 +718,7 @@ export default function Stage5() {
     const resetData: Record<string, any> = {};
     selectedRecordIds.forEach((id) => {
       const record = sheetRecords.find((r) => r.id === id);
-      const vendorData = record ? getVendorData(record) : { rate: 0 };
+      const vendorData = record ? getVendorData(record) : { rate: 0, delivery: "" };
       const rate = vendorData.rate || "";
       const rateNum = parseFloat(rate) || 0;
       const quantity = parseFloat(record?.data?.quantity) || 0;
@@ -587,6 +729,7 @@ export default function Stage5() {
         totalWithTax: basicValue,
         hsn: "",
         gst: "",
+        deliveryDate: (vendorData as any).delivery ? formatInputDate((vendorData as any).delivery) : "",
       };
     });
     setBulkFormData(resetData);
@@ -611,6 +754,7 @@ export default function Stage5() {
         hsn: "",        // HSN code
         gst: "",        // GST% dropdown
         paymentTerms: vendorData.terms || "advance", // Advance / Credit payment terms
+        deliveryDate: (vendorData as any).delivery ? formatInputDate((vendorData as any).delivery) : "", // Prefilled from that item's quoted delivery date
       };
     });
     // Find highest PO number in sheetRecords
@@ -641,7 +785,8 @@ export default function Stage5() {
       supplierName: firstVendor?.name && firstVendor.name !== "-" ? firstVendor.name : "",
       supplierEmail: firstVendor?.name ? (vendorEmailMap[firstVendor.name] || "") : "",
       supplierAddress: firstVendor?.name ? (vendorAddressMap[firstVendor.name] || "") : "",
-      deliveryDate: firstVendor?.delivery ? formatInputDate(firstVendor.delivery) : "",
+      deliveryLocation: firstRecord?.data.deliveryLocation || "",
+      transportType: firstVendor?.transportType || "",
       paymentTerms: normalizePaymentTerms(firstVendor?.terms),
       advanceAmount: "",
       quotationNumber: `QUO-${firstRecord?.data.indentNumber || ""}`,
@@ -686,6 +831,25 @@ export default function Stage5() {
       try {
         let successCount = 0;
         let finalFileUrl = "";
+
+        // Revising never overwrites the old PO — it creates a new revision
+        // (PO-1004 → PO-1004-R1 → PO-1004-R2 ...) so every past version stays
+        // visible as its own row in History.
+        let finalPONumber = commonPONumber;
+        if (poMode === "revise") {
+          const { base } = parsePoRevision(commonPONumber);
+          const { data: existingRevisions } = await supabase
+            .from("purchase_orders")
+            .select("po_number")
+            .ilike("po_number", `${base}%`);
+          let maxRev = 0;
+          (existingRevisions || []).forEach((r: any) => {
+            const parsed = parsePoRevision(r.po_number);
+            if (parsed.base === base && parsed.rev > maxRev) maxRev = parsed.rev;
+          });
+          finalPONumber = `${base}-R${maxRev + 1}`;
+          setCommonPONumber(finalPONumber);
+        }
 
         if (typeof commonPOCopy === "string") {
           finalFileUrl = commonPOCopy;
@@ -747,7 +911,7 @@ export default function Stage5() {
             const finalPaymentType = isAdv ? `Advance Payment${advAmtStr}` : `No Advance - ${pTerm}`;
 
             const poPayload: Record<string, any> = {
-              po_number: commonPONumber,
+              po_number: finalPONumber,
               indent_id: record.id,
               vendor_name: chosenSupplier,
               po_date: poForm.poDate || new Date().toISOString().split("T")[0],
@@ -758,8 +922,10 @@ export default function Stage5() {
               total_amount: parseFloat(finalTotalWithTax),
               payment_type: finalPaymentType,
               advance_amount: isAdv && poForm.advanceAmount ? parseFloat(poForm.advanceAmount) || 0 : 0,
-              delivery_date: poForm.deliveryDate || null,
+              delivery_date: data.deliveryDate || null,
               delivery_address: poForm.supplierAddress || "",
+              delivery_location: poForm.deliveryLocation || "",
+              transport_type: poForm.transportType || "",
               po_copy_url: finalFileUrl || record.data.poCopy || "",
               gst_percent: data.gst || "",
               hsn: data.hsn || "",
@@ -789,29 +955,20 @@ export default function Stage5() {
               return { error: new Error("Too many missing columns on purchase_orders") };
             };
 
-            if (poMode === "revise") {
-              const { error } = await submitWithColumnFallback((payload) =>
-                supabase
+            // Always insert a fresh row — a Revise never edits the old row in
+            // place, it creates the next revision (see finalPONumber above).
+            const { error } = await submitWithColumnFallback((payload) =>
+              supabase.from("purchase_orders").insert(payload)
+            );
+            if (error) {
+              // If UNIQUE violation on (po_number, indent_id), try upsert
+              if (error.code === "23505" || error.message?.includes("unique") || error.message?.includes("duplicate")) {
+                const upsertRes = await supabase
                   .from("purchase_orders")
-                  .update(payload)
-                  .eq("indent_id", record.id)
-                  .eq("po_number", commonPONumber)
-              );
-              if (error) throw error;
-            } else {
-              const { error } = await submitWithColumnFallback((payload) =>
-                supabase.from("purchase_orders").insert(payload)
-              );
-              if (error) {
-                // If UNIQUE violation on (po_number, indent_id), try upsert
-                if (error.code === "23505" || error.message?.includes("unique") || error.message?.includes("duplicate")) {
-                  const upsertRes = await supabase
-                    .from("purchase_orders")
-                    .upsert(poPayload, { onConflict: "po_number,indent_id" });
-                  if (upsertRes.error) throw upsertRes.error;
-                } else {
-                  throw error;
-                }
+                  .upsert(poPayload, { onConflict: "po_number,indent_id" });
+                if (upsertRes.error) throw upsertRes.error;
+              } else {
+                throw error;
               }
             }
 
@@ -849,6 +1006,7 @@ export default function Stage5() {
                 rate: data.rate !== undefined ? data.rate : (v.rate || "0"),
                 hsn: data.hsn || "",
                 gst: data.gst || "",
+                deliveryDate: data.deliveryDate ? formatDateDash(data.deliveryDate) : "-",
                 total: total.toFixed(2),
               };
             });
@@ -863,7 +1021,7 @@ export default function Stage5() {
               supplierAddress={poForm.supplierAddress}
               supplierGstin={poForm.gstin}
               supplierEmail={poForm.supplierEmail}
-              deliveryDate={formatDateDash(poForm.deliveryDate)}
+              deliveryLocation={poForm.deliveryLocation}
               quotationNumber={poForm.quotationNumber}
               quotationDate={formatDateDash(poForm.quotationDate)}
               paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
@@ -951,6 +1109,7 @@ export default function Stage5() {
       rate: record.data[`vendor${idx}Rate`],
       terms: record.data[`vendor${idx}Terms`],
       delivery: record.data[`vendor${idx}DeliveryDate`],
+      transportType: record.data[`vendor${idx}TransportType`],
       warrantyType: record.data[`vendor${idx}WarrantyType`],
       attachment: record.data[`vendor${idx}Attachment`],
       approvedBy: record.data.approvedBy || "Auto-Approved",
@@ -1074,6 +1233,17 @@ export default function Stage5() {
                 className="pl-9 bg-white"
               />
             </div>
+            <Select value={divisionFilter} onValueChange={setDivisionFilter}>
+              <SelectTrigger className="w-44 bg-white shrink-0">
+                <SelectValue placeholder="Division" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Divisions</SelectItem>
+                {firmWarehouseOptions.map((w) => (
+                  <SelectItem key={w} value={w}>{w}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="h-8 w-px bg-slate-200 mx-2" />
             <div className="flex items-center gap-4">
               <Label className="text-sm font-medium hidden md:inline-block">Show Columns:</Label>
@@ -1228,6 +1398,7 @@ export default function Stage5() {
               <Table className="w-full caption-bottom text-sm border-separate border-spacing-0">
                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm border-none">
                   <TableRow className="bg-slate-200 hover:bg-slate-200 border-none">
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none w-8 px-2 py-3"></TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Timestamp</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Item Details</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Planned</TableHead>
@@ -1242,18 +1413,45 @@ export default function Stage5() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {completed.length === 0 ? (
+                  {groupedHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={12} className="h-32 text-center text-gray-500 font-medium">
                         No completed PO entries found.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    historyPagination.pageData.map((record) => {
-                    const v = getVendorData(record);
-                    return (
-                      <TableRow key={record.id} className="bg-green-50/50 hover:bg-green-100/50">
+                    historyPagination.pageData.map((grp) => {
+                      const isExpanded = expandedHistoryRows.has(grp.indentId);
+                      const renderRow = (record: any, isNested: boolean) => {
+                        const v = getVendorData(record);
+                        // The vendor quote (v) is the same for every revision of
+                        // this indent — what actually varies per revision is
+                        // what was saved onto that specific PO row, so prefer
+                        // that wherever it exists instead of repeating the
+                        // static quote on every nested "OLD" row.
+                        const qty = parseFloat(record.data.quantity) || 0;
+                        const savedRate = qty > 0 && record.data.basicValue
+                          ? (parseFloat(record.data.basicValue) / qty).toFixed(2)
+                          : (record.data.basicValue || v.rate);
+                        const savedTerms = record.data.paymentType || paymentTermsList.find((t) => t.value === v.terms)?.label || v.terms;
+                        const savedDelivery = record.data.poDeliveryDate || v.delivery;
+                        const savedTransportType = record.data.transportType || v.transportType;
+                        return (
+                      <TableRow key={record.id} className={isNested ? "bg-slate-50/70 hover:bg-slate-100/70" : "bg-green-50/50 hover:bg-green-100/50"}>
+                        <TableCell className="w-8 px-2 text-center">
+                          {!isNested && grp.olderRevisions.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleHistoryExpand(grp.indentId)}
+                              className="text-slate-500 hover:text-slate-800 transition-transform"
+                              title={isExpanded ? "Hide older revisions" : `Show ${grp.olderRevisions.length} older revision(s)`}
+                            >
+                              <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                            </button>
+                          )}
+                        </TableCell>
                         <TableCell className="px-4 text-slate-700 whitespace-nowrap font-mono text-xs">
+                          {isNested && <Badge variant="outline" className="mr-2 text-[9px] bg-slate-100 text-slate-500 border-slate-300">OLD</Badge>}
                           {formatDateTimeFull(record.data.actual4 || record.createdAt)}
                         </TableCell>
                         <TableCell className="max-w-[200px] px-4">
@@ -1272,7 +1470,7 @@ export default function Stage5() {
                         <TableCell>
                           <div className="space-y-1">
                             <div className="font-medium text-gray-900">{v.name}</div>
-                            <div className="text-xs text-gray-500">Rate: ₹{v.rate || "-"}</div>
+                            <div className="text-xs text-gray-500">Rate: ₹{savedRate || "-"}</div>
                           </div>
                         </TableCell>
 
@@ -1280,13 +1478,17 @@ export default function Stage5() {
                           <div className="space-y-1 text-sm">
                             <div className="flex items-center gap-1">
                               <span className="text-xs text-gray-500">Terms:</span>
-                              <span>{paymentTermsList.find((t) => t.value === v.terms)?.label || v.terms || "-"}</span>
+                              <span>{savedTerms || "-"}</span>
                             </div>
                             <div className="flex items-center gap-1">
                               <span className="text-xs text-gray-500">Delivery:</span>
-                              <span className={!v.delivery ? "text-gray-400" : ""}>
-                                {v.delivery ? formatDate(parseSheetDate(v.delivery)) : "-"}
+                              <span className={!savedDelivery ? "text-gray-400" : ""}>
+                                {savedDelivery ? formatDate(parseSheetDate(savedDelivery)) : "-"}
                               </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-gray-500">Transport:</span>
+                              <span className={!savedTransportType ? "text-gray-400" : ""}>{savedTransportType || "-"}</span>
                             </div>
                           </div>
                         </TableCell>
@@ -1363,9 +1565,16 @@ export default function Stage5() {
                           </Button>
                         </TableCell>
                       </TableRow>
-                    );
-                  })
-                )}
+                        );
+                      };
+                      return (
+                        <React.Fragment key={grp.indentId}>
+                          {renderRow(grp.latest, false)}
+                          {isExpanded && grp.olderRevisions.map((rev: any) => renderRow(rev, true))}
+                        </React.Fragment>
+                      );
+                    })
+                  )}
                 </TableBody>
               </Table>
               <PaginationBar
@@ -1467,7 +1676,7 @@ export default function Stage5() {
                         supplierAddress: vendorAddressMap[value] || `${value} Business Park, Mumbai`
                       }))}
                     >
-                      <SelectTrigger><SelectValue placeholder="Select Supplier" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Select Supplier" /></SelectTrigger>
                       <SelectContent>
                         {Array.from(new Set([
                           ...selectedPORecords.map((record: any) => getVendorData(record).name).filter(Boolean),
@@ -1491,7 +1700,7 @@ export default function Stage5() {
                       </Select>
                     </div>
                   )}
-                  <div className={poMode === "revise" ? "space-y-1.5" : "space-y-1.5 col-span-2"}>
+                  <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">PO Number</Label>
                     <Input
                       value={commonPONumber}
@@ -1511,8 +1720,36 @@ export default function Stage5() {
                     <Input type="date" value={poForm.poDate} onChange={(e) => setPoForm((prev) => ({ ...prev, poDate: e.target.value }))} />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Delivery Date</Label>
-                    <Input type="date" value={poForm.deliveryDate || ""} onChange={(e) => setPoForm((prev) => ({ ...prev, deliveryDate: e.target.value }))} />
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Delivery Location</Label>
+                    <Select
+                      value={poForm.deliveryLocation || undefined}
+                      onValueChange={(value) => setPoForm((prev) => ({ ...prev, deliveryLocation: value }))}
+                    >
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Select delivery location" /></SelectTrigger>
+                      <SelectContent>
+                        {deliveryLocationOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-slate-400">No locations configured (Master → Delivery Locations)</div>
+                        ) : (
+                          deliveryLocationOptions.map((loc) => (
+                            <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
+                    <Select
+                      value={poForm.transportType || undefined}
+                      onValueChange={(value) => setPoForm((prev) => ({ ...prev, transportType: value }))}
+                    >
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Select transport type" /></SelectTrigger>
+                      <SelectContent>
+                        {transportTypeOptions.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Email</Label>
@@ -1544,7 +1781,7 @@ export default function Stage5() {
                         advanceAmount: val === "no" ? "" : prev.advanceAmount
                       }))}
                     >
-                      <SelectTrigger className="bg-white border-slate-300 font-semibold text-xs h-10">
+                      <SelectTrigger className="w-full bg-white border-slate-300 font-semibold text-xs h-10">
                         <SelectValue placeholder="Select Yes / No" />
                       </SelectTrigger>
                       <SelectContent className="bg-white border text-xs shadow-md z-50">
@@ -1592,19 +1829,58 @@ export default function Stage5() {
                 </section>
                 <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
                   <div className="border-b bg-slate-50 px-4 py-3 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Billing Address</div>
-                  <div className="p-4 text-sm">
-                    <p className="font-bold text-slate-900">{poForm.billingName}</p>
-                    <p className="mt-1 text-slate-600 line-clamp-2 wrap-break-word" title={poForm.billingAddress}>{poForm.billingAddress}</p>
+                  <div className="p-4 text-sm space-y-2">
+                    <Select
+                      value={poForm.billingName || undefined}
+                      onValueChange={(value) => {
+                        const opt = addressOptions.find((a) => a.name === value);
+                        setPoForm((prev) => ({
+                          ...prev,
+                          billingName: value,
+                          billingAddress: opt?.address || "",
+                        }));
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select address" /></SelectTrigger>
+                      <SelectContent>
+                        {addressOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-slate-400">No addresses configured (Master → Addresses)</div>
+                        ) : (
+                          addressOptions.map((a) => (
+                            <SelectItem key={a.name} value={a.name} className="text-xs">{a.name}</SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-slate-600 line-clamp-2 wrap-break-word text-xs" title={poForm.billingAddress}>{poForm.billingAddress}</p>
                   </div>
                 </section>
                 <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
-                  <div className="flex items-center justify-between border-b bg-slate-50 px-4 py-3">
-                    <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Destination</span>
-                    <Edit2 className="h-4 w-4 text-slate-400" />
-                  </div>
-                  <div className="p-4 text-sm">
-                    <p className="font-bold text-slate-900">{poForm.destinationName}</p>
-                    <p className="mt-1 text-slate-600 line-clamp-2 wrap-break-word" title={poForm.destinationAddress}>{poForm.destinationAddress}</p>
+                  <div className="border-b bg-slate-50 px-4 py-3 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Destination</div>
+                  <div className="p-4 text-sm space-y-2">
+                    <Select
+                      value={poForm.destinationName || undefined}
+                      onValueChange={(value) => {
+                        const opt = addressOptions.find((a) => a.name === value);
+                        setPoForm((prev) => ({
+                          ...prev,
+                          destinationName: value,
+                          destinationAddress: opt?.address || "",
+                        }));
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select address" /></SelectTrigger>
+                      <SelectContent>
+                        {addressOptions.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-slate-400">No addresses configured (Master → Addresses)</div>
+                        ) : (
+                          addressOptions.map((a) => (
+                            <SelectItem key={a.name} value={a.name} className="text-xs">{a.name}</SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-slate-600 line-clamp-2 wrap-break-word text-xs" title={poForm.destinationAddress}>{poForm.destinationAddress}</p>
                   </div>
                 </section>
               </div>
@@ -1624,6 +1900,7 @@ export default function Stage5() {
                         <th className="px-4 py-3 text-right">Rate</th>
                         <th className="px-4 py-3 text-left">HSN</th>
                         <th className="px-4 py-3 text-left">GST%</th>
+                        <th className="px-4 py-3 text-left">Delivery Date</th>
                         <th className="px-4 py-3 text-right">Total</th>
                       </tr>
                     </thead>
@@ -1671,17 +1948,28 @@ export default function Stage5() {
                               </div>
                             </td>
                             <td className="px-4 py-3">
-                              <Input
+                              <Select
                                 value={data.hsn || ""}
-                                onChange={(e) => setBulkFormData((prev) => ({ ...prev, [record.id]: { ...prev[record.id], hsn: e.target.value } }))}
-                                placeholder="HSN"
-                                className="h-8 min-w-24"
-                              />
+                                onValueChange={(val) => setBulkFormData((prev) => ({ ...prev, [record.id]: { ...prev[record.id], hsn: val } }))}
+                              >
+                                <SelectTrigger className="h-8 min-w-24"><SelectValue placeholder="HSN" /></SelectTrigger>
+                                <SelectContent>
+                                  {hsnOptions.length === 0 ? (
+                                    <div className="px-3 py-2 text-xs text-slate-400">No HSN codes configured (Master → HSN Codes)</div>
+                                  ) : (
+                                    hsnOptions.map((code) => (
+                                      <SelectItem key={code} value={code}>{code}</SelectItem>
+                                    ))
+                                  )}
+                                </SelectContent>
+                              </Select>
                             </td>
                             <td className="px-4 py-3">
-                              <Select
+                              <Input
+                                list={`gst-options-${record.id}`}
                                 value={data.gst || ""}
-                                onValueChange={(val) => {
+                                onChange={(e) => {
+                                  const val = e.target.value;
                                   const basic = parseFloat(data.basicValue) || 0;
                                   const total = (basic + basic * gstRateFor(val)).toFixed(2);
                                   setBulkFormData((prev) => ({
@@ -1689,15 +1977,23 @@ export default function Stage5() {
                                     [record.id]: { ...prev[record.id], gst: val, totalWithTax: total },
                                   }));
                                 }}
-                              >
-                                <SelectTrigger className="h-8 min-w-24"><SelectValue placeholder="GST" /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="5%">5%</SelectItem>
-                                  <SelectItem value="12%">12%</SelectItem>
-                                  <SelectItem value="18%">18%</SelectItem>
-                                  <SelectItem value="28%">28%</SelectItem>
-                                </SelectContent>
-                              </Select>
+                                placeholder="GST %"
+                                className="h-8 min-w-24"
+                              />
+                              <datalist id={`gst-options-${record.id}`}>
+                                <option value="5%" />
+                                <option value="12%" />
+                                <option value="18%" />
+                                <option value="28%" />
+                              </datalist>
+                            </td>
+                            <td className="px-4 py-3">
+                              <Input
+                                type="date"
+                                value={data.deliveryDate || ""}
+                                onChange={(e) => setBulkFormData((prev) => ({ ...prev, [record.id]: { ...prev[record.id], deliveryDate: e.target.value } }))}
+                                className="h-8 min-w-36"
+                              />
                             </td>
                             <td className="px-4 py-3 text-right font-medium">Rs. {(baseTotal + pkgShare).toFixed(2)}</td>
                           </tr>
@@ -2139,7 +2435,8 @@ export default function Stage5() {
                   <div className="space-y-2">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Delivery & Order References</h3>
                     <div className="bg-slate-50 border rounded-lg p-3 text-xs space-y-1">
-                      <div className="flex justify-between"><span className="text-slate-500">Delivery Date:</span><span className="font-semibold text-slate-800">{formatDateDash(poForm.deliveryDate)}</span></div>
+                      <div className="flex justify-between"><span className="text-slate-500">Delivery Location:</span><span className="font-semibold text-slate-800">{poForm.deliveryLocation || "—"}</span></div>
+                      <div className="flex justify-between"><span className="text-slate-500">Transport Type:</span><span className="font-semibold text-slate-800">{transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || "—"}</span></div>
                       <div className="flex justify-between"><span className="text-slate-500">Quotation No:</span><span className="font-semibold text-slate-800">{poForm.quotationNumber || "—"}</span></div>
                       <div className="flex justify-between"><span className="text-slate-500">Quotation Date:</span><span className="font-semibold text-slate-800">{formatDateDash(poForm.quotationDate)}</span></div>
                       <div className="flex justify-between border-t pt-1 mt-1"></div>
@@ -2179,6 +2476,7 @@ export default function Stage5() {
                           <th className="p-3 text-center">Qty</th>
                           <th className="p-3 text-right">Unit Price</th>
                           <th className="p-3 text-center">GST</th>
+                          <th className="p-3 text-center">Delivery</th>
                           <th className="p-3 text-right">Total Price</th>
                         </tr>
                       </thead>
@@ -2198,6 +2496,7 @@ export default function Stage5() {
                               <td className="p-3 text-center font-semibold text-slate-700">{record.data.quantity || "—"}</td>
                               <td className="p-3 text-right font-medium">₹{parseFloat(v.rate || "0").toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                               <td className="p-3 text-center text-slate-600 font-semibold">{data.gst || "0%"}</td>
+                              <td className="p-3 text-center text-slate-600 font-semibold">{formatDateDash(data.deliveryDate) || "—"}</td>
                               <td className="p-3 text-right font-bold text-slate-900">₹{total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                             </tr>
                           );

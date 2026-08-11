@@ -31,11 +31,11 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { Loader2, Search, CheckCircle2, ShieldCheck, Copy, ExternalLink, CheckCircle, RefreshCw } from "lucide-react";
+import { Loader2, Search, CheckCircle2, ShieldCheck, Copy, ExternalLink, CheckCircle, RefreshCw, Pencil } from "lucide-react";
 import { formatDate, getPlannedDateForRecord, formatDateTimeFull, getErrorMessage, reportPendingCount } from "@/lib/utils";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
-import { fetchIndentWorkflow, selectApprovedVendor } from "@/lib/supabase/queries";
+import { fetchIndentWorkflow, selectApprovedVendor, isMissingColumnError } from "@/lib/supabase/queries";
 import { usePagination } from "@/lib/use-pagination";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 
@@ -71,6 +71,27 @@ export default function ApprovedVendor() {
 
   const [approverList, setApproverList] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [divisionFilter, setDivisionFilter] = useState<string>("all");
+  const [warehouseOptions, setWarehouseOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    supabase.from("master_warehouses").select("name").eq("is_active", true).then(({ data }) => {
+      setWarehouseOptions((data || []).map((w: any) => w.name).filter(Boolean));
+    });
+  }, []);
+
+  // Manual quotation entry — fills in a vendor slot's Payment Terms /
+  // Delivery / Transport / Remarks / per-item Rate & GST on behalf of a
+  // vendor who didn't submit via their public link.
+  const [manualEditOpen, setManualEditOpen] = useState(false);
+  const [manualEditSlot, setManualEditSlot] = useState<number | null>(null);
+  const [manualPaymentTerms, setManualPaymentTerms] = useState("30");
+  const [manualDeliveryDate, setManualDeliveryDate] = useState("");
+  const [manualTransportType, setManualTransportType] = useState("");
+  const [manualRemarks, setManualRemarks] = useState("");
+  const [manualRates, setManualRates] = useState<Record<string, string>>({});
+  const [manualGst, setManualGst] = useState<Record<string, string>>({});
+  const [isManualSubmitting, setIsManualSubmitting] = useState(false);
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -119,7 +140,9 @@ export default function ApprovedVendor() {
   }, []);
 
   const pending = useMemo(() => {
-    const pendingRecs = sheetRecords.filter((r) => r.status === "pending");
+    const pendingRecs = sheetRecords
+      .filter((r) => r.status === "pending")
+      .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter);
 
     // Group by actual3 timestamp
     const groupsMap: Record<string, any[]> = {};
@@ -147,19 +170,20 @@ export default function ApprovedVendor() {
       g.indentNumbers.toLowerCase().includes(searchLower) ||
       g.itemNames.toLowerCase().includes(searchLower)
     );
-  }, [sheetRecords, searchTerm]);
+  }, [sheetRecords, searchTerm, divisionFilter]);
 
   useEffect(() => { reportPendingCount("Approved Vendor", pending.length); }, [pending.length]);
 
   const completed = useMemo(() => sheetRecords
     .filter((r) => r.status === "completed")
+    .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter)
     .filter((r) => {
       const searchLower = searchTerm.toLowerCase();
       return (
         r.data.indentNumber?.toLowerCase().includes(searchLower) ||
         r.data.itemName?.toLowerCase().includes(searchLower)
       );
-    }), [sheetRecords, searchTerm]);
+    }), [sheetRecords, searchTerm, divisionFilter]);
 
   const pendingPagination = usePagination(pending, 15);
   const historyPagination = usePagination(completed, 15);
@@ -228,6 +252,19 @@ export default function ApprovedVendor() {
     { value: "90", label: "90 days" }
   ];
 
+  const transportTypeOptions = [
+    { value: "Ex-Factory", label: "Ex-Factory" },
+    { value: "Ex-Factory + Transport", label: "Ex-Factory + Transport" },
+    { value: "F.O.R.", label: "F.O.R. (Free on Road)" },
+  ];
+
+  const gstOptions = [
+    { value: "5", label: "5%" },
+    { value: "12", label: "12%" },
+    { value: "18", label: "18%" },
+    { value: "28", label: "28%" },
+  ];
+
   const handleOpenForm = (group: any) => {
     setCurrentGroup(group);
     setApprovedVendor("vendor1");
@@ -287,19 +324,22 @@ export default function ApprovedVendor() {
     setFormData({ remarks: "" });
   };
 
-  const groupVendorOptions = useMemo(() => {
-    if (!currentGroup || currentGroup.records.length === 0) return [];
-    const firstRec = currentGroup.records[0];
+  // Shared by the modal's own comparison table (currentGroup) and each
+  // Pending-tab row's "Vendor Options" preview column.
+  const computeVendorOptionsForGroup = (group: any) => {
+    if (!group || group.records.length === 0) return [];
+    const firstRec = group.records[0];
     const list = [];
     for (const num of [1, 2, 3]) {
       const name = firstRec.data[`vendor${num}Name`];
       if (name && name !== "-") {
         const terms = firstRec.data[`vendor${num}Terms`];
         const delivery = firstRec.data[`vendor${num}Delivery`];
+        const transportType = firstRec.data[`vendor${num}TransportType`];
 
         let totalValue = 0;
         let hasRates = false;
-        currentGroup.records.forEach((rec: any) => {
+        group.records.forEach((rec: any) => {
           const rateStr = rec.data[`vendor${num}Rate`];
           const qty = parseFloat(rec.data.quantity) || 0;
           if (rateStr && rateStr !== "-") {
@@ -314,12 +354,141 @@ export default function ApprovedVendor() {
           name,
           terms,
           delivery,
+          transportType,
           totalValue: hasRates ? totalValue : null,
         });
       }
     }
     return list;
-  }, [currentGroup]);
+  };
+
+  const groupVendorOptions = useMemo(() => computeVendorOptionsForGroup(currentGroup), [currentGroup]);
+
+  // Keep the open dialog's snapshot in sync after a manual save triggers a
+  // refetch — otherwise the comparison table would keep showing stale "—"s.
+  useEffect(() => {
+    if (currentGroup) {
+      const updated = pending.find((g) => g.id === currentGroup.id);
+      if (updated) setCurrentGroup(updated);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
+
+  // The Approved Vendor dropdown only lists slots that actually submitted
+  // rates — keep the current selection pointed at one of those instead of
+  // an empty slot (e.g. right after opening the form, or after a manual
+  // entry / refetch changes which slots are filled).
+  useEffect(() => {
+    if (!open) return;
+    const filled = groupVendorOptions.filter((v) => v.totalValue !== null);
+    if (filled.length === 0) return;
+    if (!filled.some((v) => v.id === approvedVendor)) {
+      setApprovedVendor(filled[0].id);
+    }
+  }, [groupVendorOptions, open, approvedVendor]);
+
+  const openManualEdit = (slotNum: number) => {
+    if (!currentGroup || currentGroup.records.length === 0) return;
+    const firstRec = currentGroup.records[0];
+    const terms = firstRec.data[`vendor${slotNum}Terms`];
+    const delivery = firstRec.data[`vendor${slotNum}Delivery`];
+    const transport = firstRec.data[`vendor${slotNum}TransportType`];
+    const remarks = firstRec.data[`vendor${slotNum}Remarks`];
+
+    setManualEditSlot(slotNum);
+    setManualPaymentTerms(terms && terms !== "-" ? terms : "30");
+    setManualDeliveryDate(delivery && delivery !== "-" ? delivery : "");
+    setManualTransportType(transport && transport !== "-" ? transport : "");
+    setManualRemarks(remarks && remarks !== "-" ? remarks : "");
+
+    const rates: Record<string, string> = {};
+    const gsts: Record<string, string> = {};
+    currentGroup.records.forEach((rec: any) => {
+      const rate = rec.data[`vendor${slotNum}Rate`];
+      rates[rec.id] = rate && rate !== "-" ? String(rate) : "";
+      const gst = rec.data[`vendor${slotNum}Gst`];
+      gsts[rec.id] = gst && gst !== "-" ? String(gst) : "";
+    });
+    setManualRates(rates);
+    setManualGst(gsts);
+    setManualEditOpen(true);
+  };
+
+  const handleManualEditSave = async () => {
+    if (!currentGroup || manualEditSlot === null) return;
+
+    for (const rec of currentGroup.records) {
+      if (!manualRates[rec.id]?.trim()) {
+        toast.error(`Please fill in Rate for ${rec.data.itemName}.`);
+        return;
+      }
+      if (!manualGst[rec.id]?.trim()) {
+        toast.error(`Please select GST % for ${rec.data.itemName}.`);
+        return;
+      }
+    }
+    if (!manualDeliveryDate) {
+      toast.error("Please select Expected Delivery Date.");
+      return;
+    }
+    if (!manualTransportType) {
+      toast.error("Please select Transport Type.");
+      return;
+    }
+
+    setIsManualSubmitting(true);
+    try {
+      const slotKey = `vendor${manualEditSlot}`;
+      let extendedFieldsMissing = false;
+
+      await Promise.all(
+        currentGroup.records.map(async (rec: any) => {
+          const quotationId = rec._quotationIds?.[slotKey];
+          if (!quotationId) {
+            throw new Error(`No quotation record found for Vendor Slot ${manualEditSlot} on ${rec.data.indentNumber}.`);
+          }
+
+          const baseUpdate = {
+            quoted_rate: parseFloat(manualRates[rec.id]) || 0,
+            payment_terms: manualPaymentTerms,
+            delivery_terms: manualDeliveryDate,
+          };
+          const { error } = await supabase
+            .from("quotation_submissions")
+            .update({
+              ...baseUpdate,
+              gst_percent: parseFloat(manualGst[rec.id]) || 0,
+              transport_type: manualTransportType,
+              remarks: manualRemarks || "",
+            })
+            .eq("id", quotationId);
+
+          if (!error) return;
+          if (!isMissingColumnError(error)) throw error;
+
+          extendedFieldsMissing = true;
+          const { error: fallbackError } = await supabase
+            .from("quotation_submissions")
+            .update(baseUpdate)
+            .eq("id", quotationId);
+          if (fallbackError) throw fallbackError;
+        })
+      );
+
+      if (extendedFieldsMissing) {
+        toast.warning("Rate/terms saved, but GST/Transport/Remarks couldn't be saved — run the pending database migration.");
+      } else {
+        toast.success(`Vendor Slot ${manualEditSlot} quotation saved.`);
+      }
+      setManualEditOpen(false);
+      await fetchData();
+    } catch (err: any) {
+      console.error("Manual quotation entry failed:", err);
+      toast.error(err.message || "Failed to save manual quotation entry.");
+    } finally {
+      setIsManualSubmitting(false);
+    }
+  };
 
   const generatedLinks = useMemo(() => {
     if (!currentGroup || currentGroup.records.length === 0) return [];
@@ -378,6 +547,18 @@ export default function ApprovedVendor() {
                 className="pl-9 bg-white"
               />
             </div>
+
+            <Select value={divisionFilter} onValueChange={setDivisionFilter}>
+              <SelectTrigger className="w-44 bg-white shrink-0">
+                <SelectValue placeholder="Division" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Divisions</SelectItem>
+                {warehouseOptions.map((w) => (
+                  <SelectItem key={w} value={w}>{w}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <div className="flex items-center gap-3">
               <Label className="text-sm font-semibold text-slate-600 hidden md:inline-block">Show Columns:</Label>
@@ -445,17 +626,22 @@ export default function ApprovedVendor() {
                         Planned Date
                       </TableHead>
                     )}
+                    <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
+                      Vendor Options
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={selectedColumns.length + 1} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={selectedColumns.length + 2} className="h-32 text-center text-gray-500 font-medium">
                         No pending approved vendor decisions found.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pendingPagination.pageData.map((group) => (
+                    pendingPagination.pageData.map((group) => {
+                      const vendorOptions = computeVendorOptionsForGroup(group);
+                      return (
                       <TableRow key={group.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
                         <TableCell className="px-4 py-3">
                           <Button
@@ -492,8 +678,26 @@ export default function ApprovedVendor() {
                             {getPlannedDateForRecord(group.records[0]?.data, "Approved Vendor", tatRules, group.records[0]?.createdAt)}
                           </TableCell>
                         )}
+                        <TableCell className="px-4 py-3">
+                          {vendorOptions.length === 0 ? (
+                            <span className="text-xs text-slate-400">No quotes submitted yet</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {vendorOptions.map((v) => (
+                                <Badge
+                                  key={v.id}
+                                  variant="secondary"
+                                  className={`text-[10px] font-semibold ${v.totalValue !== null ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200"}`}
+                                >
+                                  {v.name}{v.totalValue !== null ? ` — ₹${v.totalValue.toLocaleString()}` : " (no rate)"}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </TableCell>
                       </TableRow>
-                    ))
+                      );
+                    })
                   )}
                 </TableBody>
               </table>
@@ -531,6 +735,9 @@ export default function ApprovedVendor() {
                       Approved Vendor
                     </TableHead>
                     <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
+                      Vendor Terms
+                    </TableHead>
+                    <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                       Rate Per Qty
                     </TableHead>
                   </TableRow>
@@ -538,7 +745,7 @@ export default function ApprovedVendor() {
                 <TableBody>
                   {completed.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={selectedColumns.length + 3} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={selectedColumns.length + 4} className="h-32 text-center text-gray-500 font-medium">
                         No completed approved vendors found.
                       </TableCell>
                     </TableRow>
@@ -549,6 +756,9 @@ export default function ApprovedVendor() {
 
                     const vendorName = record.data[`vendor${idx}Name`] || record.data.selectedVendorName;
                     const vendorRate = record.data[`vendor${idx}Rate`];
+                    const vendorTerms = record.data[`vendor${idx}Terms`];
+                    const vendorDelivery = record.data[`vendor${idx}Delivery`];
+                    const vendorTransportType = record.data[`vendor${idx}TransportType`];
 
                     return (
                       <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
@@ -570,6 +780,13 @@ export default function ApprovedVendor() {
                             <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 py-0 px-1 font-bold">
                               {selId.toUpperCase()}
                             </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-600 px-4">
+                          <div className="space-y-0.5">
+                            <div><span className="text-slate-400">Terms:</span> {paymentTermsOptions.find((t) => t.value === vendorTerms)?.label || vendorTerms || "-"}</div>
+                            <div><span className="text-slate-400">Delivery:</span> {vendorDelivery ? formatDateDash(vendorDelivery) : "-"}</div>
+                            <div><span className="text-slate-400">Transport:</span> {vendorTransportType || "-"}</div>
                           </div>
                         </TableCell>
                         <TableCell className="text-sm text-slate-700 px-4 font-semibold">
@@ -672,7 +889,20 @@ export default function ApprovedVendor() {
                       <th className="p-3 font-semibold text-slate-700 w-1/4 sticky left-0 bg-slate-100">Field / Item</th>
                       {groupVendorOptions.map((v) => (
                         <th key={v.id} className="p-3 font-semibold text-slate-700 text-center min-w-40 whitespace-nowrap">
-                          Vendor Slot {v.slotNum} ({v.name})
+                          <div className="flex items-center justify-center gap-2">
+                            <span>Vendor Slot {v.slotNum} ({v.name})</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openManualEdit(v.slotNum)}
+                              className="h-6 px-2 text-[10px] font-semibold gap-1 bg-white"
+                              title={v.totalValue === null ? "Not submitted — fill manually" : "Edit manually"}
+                            >
+                              <Pencil className="w-3 h-3" />
+                              {v.totalValue === null ? "Fill Manually" : "Edit"}
+                            </Button>
+                          </div>
                         </th>
                       ))}
                     </tr>
@@ -742,11 +972,17 @@ export default function ApprovedVendor() {
                   <SelectValue placeholder="Select approved vendor slot..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {groupVendorOptions.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>
-                      Vendor Slot {v.slotNum} ({v.name}) {v.totalValue !== null ? `— Total: ₹${v.totalValue.toLocaleString()}` : ""}
-                    </SelectItem>
-                  ))}
+                  {groupVendorOptions.filter((v) => v.totalValue !== null).length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-slate-400">No vendor has submitted rates yet.</div>
+                  ) : (
+                    groupVendorOptions
+                      .filter((v) => v.totalValue !== null)
+                      .map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          Vendor Slot {v.slotNum} ({v.name}) — Total: ₹{v.totalValue!.toLocaleString()}
+                        </SelectItem>
+                      ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -775,6 +1011,122 @@ export default function ApprovedVendor() {
             <Button type="button" onClick={handleSubmit} disabled={isSubmitting || groupVendorOptions.length === 0} className="bg-blue-700 text-white hover:bg-blue-800">
               {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               Confirm & Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MANUAL QUOTATION ENTRY — fill a vendor slot in on their behalf when
+          they haven't submitted via their public link. */}
+      <Dialog open={manualEditOpen} onOpenChange={setManualEditOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-6 overflow-hidden">
+          <DialogHeader className="shrink-0 border-b pb-4">
+            <DialogTitle className="text-lg font-bold text-slate-800">
+              Manually Enter Quotation — Vendor Slot {manualEditSlot}
+              {manualEditSlot && groupVendorOptions.find((v) => v.slotNum === manualEditSlot) && (
+                <span className="text-slate-500 font-medium"> ({groupVendorOptions.find((v) => v.slotNum === manualEditSlot)?.name})</span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2 py-4 scrollbar-thin">
+            <div className="space-y-3">
+              <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Item-wise Rate & GST</Label>
+              {currentGroup?.records.map((rec: any) => (
+                <div key={rec.id} className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="font-mono text-[10px] text-slate-500">Indent: {rec.data.indentNumber}</div>
+                    <div className="font-semibold text-slate-800 text-sm">{rec.data.itemName}</div>
+                    <div className="text-[10px] text-slate-500">Qty: {rec.data.quantity}</div>
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Rate (₹) *</Label>
+                      <Input
+                        type="number"
+                        value={manualRates[rec.id] || ""}
+                        onChange={(e) => setManualRates((prev) => ({ ...prev, [rec.id]: e.target.value }))}
+                        placeholder="Rate"
+                        className="bg-white w-24 h-9"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">GST (%) *</Label>
+                      <Input
+                        list={`manual-gst-options-${rec.id}`}
+                        value={manualGst[rec.id] || ""}
+                        onChange={(e) => setManualGst((prev) => ({ ...prev, [rec.id]: e.target.value }))}
+                        placeholder="e.g. 18"
+                        className="bg-white w-20 h-9"
+                      />
+                      <datalist id={`manual-gst-options-${rec.id}`}>
+                        {gstOptions.map((g) => (
+                          <option key={g.value} value={g.value} label={g.label} />
+                        ))}
+                      </datalist>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Payment Terms *</Label>
+                <Select value={manualPaymentTerms} onValueChange={setManualPaymentTerms}>
+                  <SelectTrigger className="bg-white">
+                    <SelectValue placeholder="Select terms" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentTermsOptions.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Expected Delivery *</Label>
+                <Input
+                  type="date"
+                  value={manualDeliveryDate}
+                  onChange={(e) => setManualDeliveryDate(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Transport Type *</Label>
+                <Select value={manualTransportType} onValueChange={setManualTransportType}>
+                  <SelectTrigger className="bg-white">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {transportTypeOptions.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Remarks</Label>
+              <Textarea
+                value={manualRemarks}
+                onChange={(e) => setManualRemarks(e.target.value)}
+                placeholder="Any additional notes..."
+                className="min-h-16 resize-none"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t pt-4">
+            <Button type="button" variant="outline" onClick={() => setManualEditOpen(false)} disabled={isManualSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleManualEditSave} disabled={isManualSubmitting} className="bg-blue-700 text-white hover:bg-blue-800">
+              {isManualSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              Save
             </Button>
           </DialogFooter>
         </DialogContent>
