@@ -142,6 +142,8 @@ export default function PurchaseDashboard() {
   const [stageCounts, setStageCounts] = useState<any>({});
   const [stageOverdueCounts, setStageOverdueCounts] = useState<any>({});
   const [topReceivedOrders, setTopReceivedOrders] = useState<any[]>([]);
+  const [top10Vendors, setTop10Vendors] = useState<any[]>([]);
+  const [top10Products, setTop10Products] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
@@ -481,6 +483,34 @@ export default function PurchaseDashboard() {
         });
         processedOrders.sort((a, b) => b.vendorTotalCount - a.vendorTotalCount);
         setTopReceivedOrders(processedOrders.slice(0, 10));
+
+        // ── Top 10 Vendors by PO count ──
+        const vendorPoCount: Record<string, { count: number; amount: number }> = {};
+        pos.forEach((po: any) => {
+          const vname = po.vendor_name || "Unknown";
+          if (!vendorPoCount[vname]) vendorPoCount[vname] = { count: 0, amount: 0 };
+          vendorPoCount[vname].count++;
+          vendorPoCount[vname].amount += parseFloat(po.total_amount || 0);
+        });
+        const top10V = Object.entries(vendorPoCount)
+          .map(([vendor, s]) => ({ vendor, count: s.count, amount: s.amount }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10);
+        setTop10Vendors(top10V);
+
+        // ── Top 10 Products by PO count ──
+        const productPoCount: Record<string, { count: number; totalQty: number }> = {};
+        pos.forEach((po: any) => {
+          const pname = po.item_name || "Unknown";
+          if (!productPoCount[pname]) productPoCount[pname] = { count: 0, totalQty: 0 };
+          productPoCount[pname].count++;
+          productPoCount[pname].totalQty += parseFloat(po.quantity || 0);
+        });
+        const top10P = Object.entries(productPoCount)
+          .map(([product, s]) => ({ product, count: s.count, totalQty: s.totalQty }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10);
+        setTop10Products(top10P);
 
         setWarrantyItems([]);
       } catch (error) {
@@ -1217,6 +1247,144 @@ export default function PurchaseDashboard() {
               </div>
             </CardContent>
           </Card>
+
+          {/* TOP 10 VENDORS + TOP 10 PRODUCTS */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Top 10 Vendors */}
+            <Card className="border-0 shadow-sm bg-white">
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                      <Users className="w-5 h-5 text-blue-600" />
+                      Top 10 Vendors
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Suppliers ranked by total purchase orders
+                    </p>
+                  </div>
+                  <Badge variant="secondary" className="bg-blue-50 text-blue-700">
+                    By PO Count
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-8">#</TableHead>
+                        <TableHead>Vendor Name</TableHead>
+                        <TableHead className="text-center">POs</TableHead>
+                        <TableHead className="text-right">Total Value</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {top10Vendors.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                            No vendor data available
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        top10Vendors.map((v: any, idx: number) => (
+                          <TableRow key={idx} className="hover:bg-muted/50">
+                            <TableCell>
+                              <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+                                idx === 0 ? "bg-yellow-100 text-yellow-700" :
+                                idx === 1 ? "bg-gray-100 text-gray-600" :
+                                idx === 2 ? "bg-orange-100 text-orange-700" :
+                                "bg-slate-50 text-slate-500"
+                              }`}>
+                                {idx + 1}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-medium text-sm">{v.vendor}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                {v.count}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right font-medium text-emerald-600 text-sm">
+                              ₹{v.amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Top 10 Products */}
+            <Card className="border-0 shadow-sm bg-white">
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                      <Package className="w-5 h-5 text-purple-600" />
+                      Top 10 Products
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Most purchased items by order frequency
+                    </p>
+                  </div>
+                  <Badge variant="secondary" className="bg-purple-50 text-purple-700">
+                    By PO Count
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-8">#</TableHead>
+                        <TableHead>Product Name</TableHead>
+                        <TableHead className="text-center">POs</TableHead>
+                        <TableHead className="text-right">Total Qty</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {top10Products.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                            No product data available
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        top10Products.map((p: any, idx: number) => (
+                          <TableRow key={idx} className="hover:bg-muted/50">
+                            <TableCell>
+                              <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+                                idx === 0 ? "bg-yellow-100 text-yellow-700" :
+                                idx === 1 ? "bg-gray-100 text-gray-600" :
+                                idx === 2 ? "bg-orange-100 text-orange-700" :
+                                "bg-slate-50 text-slate-500"
+                              }`}>
+                                {idx + 1}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-medium text-sm">{p.product}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                                {p.count}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right font-medium text-slate-700 text-sm">
+                              {p.totalQty.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
           {/* <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-medium">
