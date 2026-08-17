@@ -746,6 +746,13 @@ export default function Stage5() {
       const quantity = parseFloat(record?.data?.quantity) || 0;
       const basicValue = (rateNum * quantity).toFixed(2);
 
+      const selectedId = String(record?.data?.selectedVendor || "vendor1");
+      const slotIdx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+      const slotGst = record?.data?.[`vendor${slotIdx}Gst`];
+      const vGst = slotGst ? `${slotGst}%` : (record?.data?.vendor1Gst ? `${record.data.vendor1Gst}%` : "18%");
+      const basicNum = parseFloat(basicValue) || 0;
+      const totalNum = (basicNum + basicNum * gstRateFor(vGst)).toFixed(2);
+
       initialData[id] = {
         rate: rate,
         basicValue: basicValue,
@@ -1140,9 +1147,101 @@ export default function Stage5() {
     setCommonPOCopy(null);
   };
 
-  const getVendorData = (record: any) => {
-    const selectedId = String(record.data.selectedVendor || "vendor1");
-    const idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+  const handleDownloadDraftPdf = async () => {
+    if (selectedRecordIds.length === 0) {
+      toast.error("No items selected to generate PO PDF.");
+      return;
+    }
+    setIsDownloadingPdf(true);
+    try {
+      const { pdf } = await import("@react-pdf/renderer");
+      const { POPdfDocument } = await import("./po-pdf");
+      const { perItemPkgTotal } = getPkgTotals(commonPkgAmount, commonPkgGST, selectedRecordIds.length);
+
+      const pdfItems = selectedPORecords.map((record: any, idx: number) => {
+        const v = getVendorData(record);
+        const data = bulkFormData[record.id] || {};
+        const total = (parseFloat(data.totalWithTax) || 0) + perItemPkgTotal;
+        return {
+          srNo: idx + 1,
+          itemName: record.data.itemName || "-",
+          indentNumber: record.data.indentNumber || "-",
+          quantity: record.data.quantity || "-",
+          uom: record.data.uom || "",
+          rate: data.rate !== undefined ? data.rate : (v.rate || "0"),
+          hsn: data.hsn || "",
+          gst: data.gst || "",
+          deliveryDate: data.deliveryDate ? formatDateDash(data.deliveryDate) : "-",
+          total: total.toFixed(2),
+          basicValue: data.basicValue || "0",
+        };
+      });
+
+      const blob = await pdf(
+        <POPdfDocument
+          logoUrl={`${window.location.origin}/nutech-logo.png`}
+          companyAddress={NUTECH_ADDRESS}
+          companyGstin={poForm.companyGstin}
+          poNumber={commonPONumber || "DRAFT_PO"}
+          poDate={formatDateDash(poForm.poDate)}
+          supplierName={poForm.supplierName}
+          supplierAddress={poForm.supplierAddress}
+          supplierGstin={poForm.gstin}
+          supplierEmail={poForm.supplierEmail}
+          deliveryLocation={poForm.deliveryLocation}
+          transportType={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || ""}
+          quotationNumber={poForm.quotationNumber}
+          quotationDate={formatDateDash(poForm.quotationDate)}
+          paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
+          advanceAmount={(poForm.advancePayment || "yes") === "yes" ? (poForm.advanceAmount || "") : ""}
+          billingName={poForm.billingName}
+          billingAddress={poForm.billingAddress}
+          destinationName={poForm.destinationName}
+          destinationAddress={poForm.destinationAddress}
+          remarks={poForm.remarks}
+          items={pdfItems}
+          subtotal={poSummary.subtotal.toFixed(2)}
+          gst={poSummary.gst.toFixed(2)}
+          grandTotal={poSummary.grandTotal.toFixed(2)}
+          terms={terms}
+        />
+      ).toBlob();
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${commonPONumber || "PO_Draft"}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("PO PDF downloaded successfully.");
+    } catch (err: any) {
+      console.error("Error downloading PO PDF:", err);
+      toast.error(`Failed to download PO PDF: ${getErrorMessage(err)}`);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  const getVendorData = (record: any, targetVendorName?: string) => {
+    let idx = 1;
+    if (targetVendorName && targetVendorName !== "-" && targetVendorName.trim() !== "") {
+      const match1 = record.data.vendor1Name?.toLowerCase() === targetVendorName.toLowerCase();
+      const match2 = record.data.vendor2Name?.toLowerCase() === targetVendorName.toLowerCase();
+      const match3 = record.data.vendor3Name?.toLowerCase() === targetVendorName.toLowerCase();
+      if (match1) idx = 1;
+      else if (match2) idx = 2;
+      else if (match3) idx = 3;
+      else {
+        const selectedId = String(record.data.selectedVendor || "vendor1");
+        idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+      }
+    } else {
+      const selectedId = String(record.data.selectedVendor || "vendor1");
+      idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+    }
+
     return {
       name: record.data[`vendor${idx}Name`] || "-",
       rate: record.data[`vendor${idx}Rate`],
