@@ -201,7 +201,7 @@ export default function UnifiedPaymentHub() {
     paymentRef: "",
     payAmount: "",
     paymentDate: new Date().toISOString().split("T")[0],
-    status: "" as "" | "need_again" | "not_needed_again",
+    status: "not_needed_again" as "need_again" | "not_needed_again",
     remarks: "",
     attachment: null as File | null,
   });
@@ -345,9 +345,13 @@ export default function UnifiedPaymentHub() {
           const advanceStatus = advPay?.advance_status || "";
           let status = "not_ready";
           if (hasPlanPayment) {
-            if (advanceStatus === "need_again") status = "completed";
-            else if (advanceStatus === "not_needed_again") status = "pending";
-            else status = isFullyPaid ? "completed" : "pending";
+            if (isFullyPaid || advanceStatus === "not_needed_again" || advanceStatus === "completed") {
+              status = "completed";
+            } else if (advanceStatus === "need_again") {
+              status = "pending";
+            } else {
+              status = isFullyPaid ? "completed" : "pending";
+            }
           }
 
           return {
@@ -774,7 +778,7 @@ export default function UnifiedPaymentHub() {
       paymentRef: "",
       payAmount: pendingAmt ? String(pendingAmt) : "",
       paymentDate: new Date().toISOString().split("T")[0],
-      status: "",
+      status: "not_needed_again",
       remarks: "",
       attachment: null,
     });
@@ -798,10 +802,8 @@ export default function UnifiedPaymentHub() {
       toast.error(`Pay Amount (₹${advAmt}) cannot exceed the pending advance amount (₹${pendingAmt}).`);
       return;
     }
-    if (!advForm.status) {
-      toast.error("Please choose whether advance payment will be needed again or not.");
-      return;
-    }
+
+    const statusToSave = advForm.status || "not_needed_again";
 
     setIsSubmitting(true);
     try {
@@ -828,7 +830,7 @@ export default function UnifiedPaymentHub() {
         proof_url: proofUrl,
         remarks: advForm.remarks || "",
         status: "Paid",
-        advance_status: advForm.status,
+        advance_status: statusToSave,
       };
 
       // Some deployments may not have run the migration adding remarks /
@@ -1678,14 +1680,14 @@ export default function UnifiedPaymentHub() {
 
       {/* --- Workflow 1 Dialog: Record PO Advance Payment --- */}
       <Dialog open={advOpen} onOpenChange={setAdvOpen}>
-        <DialogContent className="max-w-md bg-white border shadow-lg rounded-2xl">
-          <DialogHeader>
+        <DialogContent className="max-w-lg max-h-[90vh] bg-white border shadow-lg rounded-2xl flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-5 pb-3 shrink-0 border-b bg-slate-50/50">
             <DialogTitle className="text-lg font-bold text-slate-950">Record Advance Payment</DialogTitle>
             <DialogDescription className="text-slate-500 text-xs">
               Confirm payment of advance value for Indent IND-{currentAdvRecord?.data?.indentNumber}.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleAdvSubmit} className="space-y-4 pt-2">
+          <form onSubmit={handleAdvSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-slate-700">Pay Amount (₹)</Label>
               <Input
@@ -1726,19 +1728,19 @@ export default function UnifiedPaymentHub() {
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-slate-700">Status <span className="text-red-500">*</span></Label>
               <Select
-                value={advForm.status}
+                value={advForm.status || "not_needed_again"}
                 onValueChange={(v) => setAdvForm({ ...advForm, status: v as "need_again" | "not_needed_again" })}
               >
                 <SelectTrigger className="w-full border-slate-200">
                   <SelectValue placeholder="Choose advance status..." />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="need_again">Need Advance Payment Again</SelectItem>
-                  <SelectItem value="not_needed_again">Not Need Advance Payment Again</SelectItem>
+                <SelectContent className="bg-white border shadow-md z-50">
+                  <SelectItem value="not_needed_again">Advance Payment Completed (Proceed to Next Stage)</SelectItem>
+                  <SelectItem value="need_again">Partial Payment (Need Remaining Advance Later)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-slate-500">
-                "Need Advance Payment Again" sends this on to Follow UP / Lifting now. "Not Need Advance Payment Again" keeps it here in Pending.
+                "Advance Payment Completed" moves this item to History & clears it for Follow UP / Lifting. "Partial Payment" keeps it in Pending.
               </p>
             </div>
             <div className="space-y-1.5">
@@ -1764,7 +1766,7 @@ export default function UnifiedPaymentHub() {
                 {advForm.attachment ? advForm.attachment.name : "Choose attachment..."}
               </label>
             </div>
-            <DialogFooter className="pt-4 border-t">
+            <DialogFooter className="pt-4 border-t sticky bottom-0 bg-white z-10">
               <Button type="button" variant="outline" onClick={() => setAdvOpen(false)} disabled={isSubmitting}>
                 Cancel
               </Button>

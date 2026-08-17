@@ -34,6 +34,7 @@ const transportTypeOptions = [
 ];
 
 const gstOptions = [
+  { value: "0", label: "0%" },
   { value: "5", label: "5%" },
   { value: "12", label: "12%" },
   { value: "18", label: "18%" },
@@ -79,10 +80,11 @@ export default function PublicQuotationForm() {
       indentItems.map((item, index) => {
         const rate = parseFloat(formRates[index]) || 0;
         const qty = parseFloat(item.quantity) || 0;
-        const gstPct = parseFloat(formGst[index]) || 0;
+        const gstValStr = formGst[index] !== undefined && formGst[index] !== "" ? formGst[index] : "18";
+        const gstPct = parseFloat(gstValStr) || 0;
         const base = rate * qty;
         const gstAmt = base * (gstPct / 100);
-        return { base, gstAmt, total: base + gstAmt };
+        return { base, gstAmt, total: base + gstAmt, gstValStr };
       }),
     [indentItems, formRates, formGst]
   );
@@ -122,7 +124,7 @@ export default function PublicQuotationForm() {
         if (fetchedItems.length > 0) {
           setIndentItems(fetchedItems);
           setFormRates(fetchedItems.map(() => ""));
-          setFormGst(fetchedItems.map(() => ""));
+          setFormGst(fetchedItems.map(() => "18"));
         } else {
           setErrorMsg("Indent details not found.");
         }
@@ -145,7 +147,8 @@ export default function PublicQuotationForm() {
         toast.error(`Please fill in Rate Per Qty for ${indentItems[i].itemName}.`);
         return;
       }
-      if (!formGst[i]?.trim()) {
+      const itemGst = String(formGst[i] || "18").trim();
+      if (!itemGst) {
         toast.error(`Please fill in GST % for ${indentItems[i].itemName}.`);
         return;
       }
@@ -165,7 +168,7 @@ export default function PublicQuotationForm() {
     try {
       const results = await Promise.all(
         indentItems.map(async (item, index): Promise<{ id: string; extendedFieldsSaved: boolean }> => {
-          const gstPercentNum = parseFloat(formGst[index]) || 0;
+          const gstPercentNum = parseFloat(formGst[index] || "18") || 0;
           const existingId = item._quotationIds?.[`vendor${vendorSlot}`];
           if (existingId) {
             const baseUpdate = {
@@ -342,7 +345,7 @@ export default function PublicQuotationForm() {
                       <td className="p-3">{item.category}</td>
                       <td className="p-3 text-right">{item.quantity}</td>
                       <td className="p-3 text-right">₹{formRates[index]}</td>
-                      <td className="p-3 text-right">{formGst[index]}%</td>
+                      <td className="p-3 text-right">{itemTotals[index]?.gstValStr || formGst[index] || "18"}%</td>
                       <td className="p-3 text-right font-bold text-slate-900">₹{itemTotals[index]?.total.toFixed(2)}</td>
                     </tr>
                   ))}
@@ -450,24 +453,25 @@ export default function PublicQuotationForm() {
 
                     <div className="space-y-1">
                       <Label htmlFor={`gst-${index}`} className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">GST (%) *</Label>
-                      <Input
-                        id={`gst-${index}`}
-                        list={`gst-options-${index}`}
-                        value={formGst[index] || ""}
-                        onChange={(e) => {
+                      <Select
+                        value={formGst[index] || "18"}
+                        onValueChange={(val) => {
                           const updated = [...formGst];
-                          updated[index] = e.target.value;
+                          updated[index] = val;
                           setFormGst(updated);
                         }}
-                        placeholder="e.g. 18"
-                        className="bg-white w-24 h-9"
-                        required
-                      />
-                      <datalist id={`gst-options-${index}`}>
-                        {gstOptions.map((g) => (
-                          <option key={g.value} value={g.value} label={g.label} />
-                        ))}
-                      </datalist>
+                      >
+                        <SelectTrigger id={`gst-${index}`} className="bg-white w-28 h-9 text-xs">
+                          <SelectValue placeholder="Select GST" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {gstOptions.map((g) => (
+                            <SelectItem key={g.value} value={g.value} className="text-xs">
+                              {g.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="space-y-1">

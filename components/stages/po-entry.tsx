@@ -340,50 +340,30 @@ export default function Stage5() {
 
   React.useEffect(() => {
     fetchData();
-    async function loadMasterVendors() {
+    async function loadMasterData() {
       try {
-        const { data } = await supabase.from("master_vendors").select("*").eq("is_active", true);
-        if (data && data.length > 0) {
-          setDbVendors(data);
+        const [vendorsRes, addressesRes, hsnRes, warehousesRes] = await Promise.all([
+          supabase.from("master_vendors").select("*").eq("is_active", true),
+          supabase.from("master_addresses").select("*").eq("is_active", true),
+          supabase.from("master_hsn_codes").select("name").eq("is_active", true),
+          supabase.from("master_warehouses").select("name").eq("is_active", true),
+        ]);
+        if (vendorsRes.data && vendorsRes.data.length > 0) setDbVendors(vendorsRes.data);
+        if (addressesRes.data && addressesRes.data.length > 0) {
+          setAddressOptions(addressesRes.data.map((a: any) => ({ name: a.name, address: a.address || "" })));
         }
+        if (hsnRes.data && hsnRes.data.length > 0) setHsnOptions(hsnRes.data.map((h: any) => h.name).filter(Boolean));
+        if (warehousesRes.data && warehousesRes.data.length > 0) setFirmWarehouseOptions(warehousesRes.data.map((w: any) => w.name).filter(Boolean));
       } catch (err) {
-        console.error("Error loading master vendors in PO entry:", err);
+        console.error("Error loading master options in PO entry:", err);
       }
     }
-    async function loadMasterAddresses() {
-      try {
-        const { data } = await supabase.from("master_addresses").select("*").eq("is_active", true);
-        if (data && data.length > 0) {
-          setAddressOptions(data.map((a: any) => ({ name: a.name, address: a.address || "" })));
-        }
-      } catch (err) {
-        console.error("Error loading master addresses in PO entry:", err);
-      }
-    }
-    async function loadMasterHsnCodes() {
-      try {
-        const { data } = await supabase.from("master_hsn_codes").select("name").eq("is_active", true);
-        if (data && data.length > 0) {
-          setHsnOptions(data.map((h: any) => h.name).filter(Boolean));
-        }
-      } catch (err) {
-        console.error("Error loading master HSN codes in PO entry:", err);
-      }
-    }
-    loadMasterVendors();
-    loadMasterAddresses();
-    loadMasterHsnCodes();
+    loadMasterData();
   }, []);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [divisionFilter, setDivisionFilter] = useState<string>("all");
   const [firmWarehouseOptions, setFirmWarehouseOptions] = useState<string[]>([]);
-
-  useEffect(() => {
-    supabase.from("master_warehouses").select("name").eq("is_active", true).then(({ data }) => {
-      setFirmWarehouseOptions((data || []).map((w: any) => w.name).filter(Boolean));
-    });
-  }, []);
 
   const pending = useMemo(() => sheetRecords
     .filter((r) => r.status === "pending")
@@ -556,9 +536,11 @@ export default function Stage5() {
   const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
 
   const transportTypeOptions = [
+    { value: "Door to Door", label: "Door to Door" },
+    { value: "Factory to Factory", label: "Factory to Factory" },
     { value: "Ex-Factory Only", label: "Ex-Factory Only" },
     { value: "Ex-Factory in Transport Office", label: "Ex-Factory in Transport Office" },
-    { value: "F.O.R.", label: "F.O.R." },
+    { value: "F.O.R.", label: "F.O.R. (Free On Road)" },
   ];
 
   const defaultPOForm = {
@@ -568,8 +550,8 @@ export default function Stage5() {
     deliveryLocation: "",
     transportType: "",
     paymentTerms: "advance",
-    advancePayment: "yes",
-    advanceAmount: "",
+    advancePayment: "no",
+    advanceAmount: "0",
     supplierEmail: "",
     supplierAddress: "",
     supplierContactPerson: "",
@@ -644,8 +626,8 @@ export default function Stage5() {
       supplierBillingAddress: revisedVendorDetails?.billingAddress || "",
       supplierPan: revisedVendorDetails?.pan || "",
       poDate: firstRec.data.poDate ? formatInputDate(firstRec.data.poDate) : formatInputDate(firstRec.data.actual4),
-      deliveryLocation: firstRec.data.deliveryLocation || "",
-      transportType: firstRec.data.transportType || v.transportType || "",
+      deliveryLocation: (firstRec.data.deliveryLocation && firstRec.data.deliveryLocation !== "-") ? firstRec.data.deliveryLocation : (firstRec.data.warehouseLocation || "Raipur Warehouse"),
+      transportType: (firstRec.data.transportType && firstRec.data.transportType !== "-") ? firstRec.data.transportType : (v.transportType && v.transportType !== "-" ? v.transportType : "Door to Door"),
       paymentTerms: normalizePaymentTerms(firstRec.data.paymentType || v.terms),
       advancePayment: (firstRec.data.paymentType || "").toLowerCase().includes("no advance") ? "no" : "yes",
       advanceAmount: firstRec.data.advanceAmount && firstRec.data.advanceAmount !== "0" ? firstRec.data.advanceAmount : "",
@@ -759,14 +741,17 @@ export default function Stage5() {
       const quantity = parseFloat(record?.data?.quantity) || 0;
       const basicValue = (rateNum * quantity).toFixed(2);
 
+      const vGst = (record?.data?.vendor1Gst ? `${record.data.vendor1Gst}%` : "18%");
+      const basicNum = parseFloat(basicValue) || 0;
+      const totalNum = (basicNum + basicNum * gstRateFor(vGst)).toFixed(2);
       initialData[id] = {
         rate: rate,
         basicValue: basicValue,
-        totalWithTax: basicValue, // Initially same until tax selected
-        hsn: "",        // HSN code
-        gst: "",        // GST% dropdown
-        paymentTerms: vendorData.terms || "advance", // Advance / Credit payment terms
-        deliveryDate: (vendorData as any).delivery ? formatInputDate((vendorData as any).delivery) : "", // Prefilled from that item's quoted delivery date
+        totalWithTax: totalNum,
+        hsn: record?.data?.hsn || "",
+        gst: vGst,
+        paymentTerms: vendorData.terms || "advance",
+        deliveryDate: (vendorData as any).delivery ? formatInputDate((vendorData as any).delivery) : "",
       };
     });
     // Find highest PO number in sheetRecords
@@ -791,23 +776,47 @@ export default function Stage5() {
     setTerms(defaultTerms);
     const firstRecord = sheetRecords.find((r) => r.id === selectedRecordIds[0]);
     const firstVendor = firstRecord ? getVendorData(firstRecord) : null;
-    const firstVendorDetails = firstVendor?.name ? vendorDetailsMap[firstVendor.name] : undefined;
+    const initialSupplier = (firstVendor?.name && firstVendor.name !== "-" && firstVendor.name.trim() !== "")
+      ? firstVendor.name
+      : (defaultSuppliers[0] || "Vendor Alpha Corp");
+
+    const supplierVendorData = firstRecord ? getVendorData(firstRecord, initialSupplier) : firstVendor;
+
+    const firstVendorDetails = vendorDetailsMap[initialSupplier] || (dbVendors.length > 0 ? {
+      contactPerson: dbVendors[0].contact_person,
+      phone: dbVendors[0].phone,
+      billingAddress: dbVendors[0].billing_address || dbVendors[0].address,
+      gstin: dbVendors[0].gstin,
+      pan: dbVendors[0].pan_number,
+    } : undefined);
+
+    const defaultDeliveryLoc = (firstRecord?.data.deliveryLocation && firstRecord.data.deliveryLocation !== "-" && firstRecord.data.deliveryLocation.trim() !== "")
+      ? firstRecord.data.deliveryLocation
+      : ((firstRecord?.data.warehouseLocation && firstRecord.data.warehouseLocation !== "-" && firstRecord.data.warehouseLocation.trim() !== "")
+          ? firstRecord.data.warehouseLocation
+          : "Raipur Warehouse");
+
+    const defaultTransport = (supplierVendorData?.transportType && supplierVendorData.transportType !== "-" && supplierVendorData.transportType.trim() !== "")
+      ? supplierVendorData.transportType
+      : (firstVendor?.transportType && firstVendor.transportType !== "-" && firstVendor.transportType.trim() !== "" ? firstVendor.transportType : "Door to Door");
+
     setPoForm({
       ...defaultPOForm,
-      firmName: firstRecord?.data.warehouseLocation || "",
-      supplierName: firstVendor?.name && firstVendor.name !== "-" ? firstVendor.name : "",
-      supplierEmail: firstVendor?.name ? (vendorEmailMap[firstVendor.name] || "") : "",
-      supplierAddress: firstVendor?.name ? (vendorAddressMap[firstVendor.name] || "") : "",
-      supplierContactPerson: firstVendorDetails?.contactPerson || "",
-      supplierPhone: firstVendorDetails?.phone || "",
-      supplierBillingAddress: firstVendorDetails?.billingAddress || "",
-      gstin: firstVendorDetails?.gstin || "",
-      supplierPan: firstVendorDetails?.pan || "",
-      deliveryLocation: firstRecord?.data.deliveryLocation || "",
-      transportType: firstVendor?.transportType || "",
-      paymentTerms: normalizePaymentTerms(firstVendor?.terms),
-      advanceAmount: "",
-      quotationNumber: `QUO-${firstRecord?.data.indentNumber || ""}`,
+      firmName: firstRecord?.data.warehouseLocation || "Nutech Pipes",
+      supplierName: initialSupplier,
+      supplierEmail: vendorEmailMap[initialSupplier] || `${initialSupplier.toLowerCase().replace(/\s+/g, "")}@example.com`,
+      supplierAddress: vendorAddressMap[initialSupplier] || firstVendorDetails?.billingAddress || "123 Industrial Area, Plot 45, MIDC, Mumbai",
+      supplierContactPerson: firstVendorDetails?.contactPerson || "Alice Manager",
+      supplierPhone: firstVendorDetails?.phone || "9123456789",
+      supplierBillingAddress: firstVendorDetails?.billingAddress || "123 Industrial Area, Plot 45, MIDC, Mumbai, Maharashtra 400093",
+      gstin: firstVendorDetails?.gstin || "27AAACV1234A1Z1",
+      supplierPan: firstVendorDetails?.pan || "AAACV1234A",
+      deliveryLocation: defaultDeliveryLoc,
+      transportType: defaultTransport,
+      paymentTerms: normalizePaymentTerms(firstVendor?.terms || "advance"),
+      advancePayment: "no",
+      advanceAmount: "0",
+      quotationNumber: `QUO-${firstRecord?.data.indentNumber || "001"}`,
       quotationDate: new Date().toISOString().split("T")[0],
       enquiryDate: new Date().toISOString().split("T")[0],
     });
@@ -1128,9 +1137,24 @@ export default function Stage5() {
     setCommonPOCopy(null);
   };
 
-  const getVendorData = (record: any) => {
-    const selectedId = String(record.data.selectedVendor || "vendor1");
-    const idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+  const getVendorData = (record: any, targetVendorName?: string) => {
+    let idx = 1;
+    if (targetVendorName && targetVendorName !== "-" && targetVendorName.trim() !== "") {
+      const match1 = record.data.vendor1Name?.toLowerCase() === targetVendorName.toLowerCase();
+      const match2 = record.data.vendor2Name?.toLowerCase() === targetVendorName.toLowerCase();
+      const match3 = record.data.vendor3Name?.toLowerCase() === targetVendorName.toLowerCase();
+      if (match1) idx = 1;
+      else if (match2) idx = 2;
+      else if (match3) idx = 3;
+      else {
+        const selectedId = String(record.data.selectedVendor || "vendor1");
+        idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+      }
+    } else {
+      const selectedId = String(record.data.selectedVendor || "vendor1");
+      idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+    }
+
     return {
       name: record.data[`vendor${idx}Name`] || "-",
       rate: record.data[`vendor${idx}Rate`],
@@ -1698,6 +1722,12 @@ export default function Stage5() {
                       value={poForm.supplierName || undefined}
                       onValueChange={(value) => {
                         const details = vendorDetailsMap[value];
+                        const firstRecord = selectedPORecords[0];
+                        const vData = firstRecord ? getVendorData(firstRecord, value) : null;
+                        const vendorTransport = (vData?.transportType && vData.transportType !== "-" && vData.transportType.trim() !== "")
+                          ? vData.transportType
+                          : "Door to Door";
+
                         setPoForm((prev) => ({
                           ...prev,
                           supplierName: value,
@@ -1708,6 +1738,7 @@ export default function Stage5() {
                           supplierBillingAddress: details?.billingAddress || "",
                           gstin: details?.gstin || "",
                           supplierPan: details?.pan || "",
+                          transportType: vendorTransport,
                         }));
                       }}
                     >
@@ -1744,20 +1775,30 @@ export default function Stage5() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Delivery Location</Label>
-                    {/* Prefilled from the indent (Create Indent's Delivery Location) —
-                        not editable here, so it can't drift from what was actually indented. */}
-                    <Input value={poForm.deliveryLocation || "-"} readOnly disabled className="bg-slate-100 text-slate-600 cursor-not-allowed" />
+                    <Input
+                      value={poForm.deliveryLocation || "Raipur Warehouse"}
+                      onChange={(e) => setPoForm((prev) => ({ ...prev, deliveryLocation: e.target.value }))}
+                      placeholder="e.g. Raipur Warehouse"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
-                    {/* Prefilled from the vendor's accepted quotation — not editable
-                        here, so it can't drift from what the vendor actually quoted. */}
-                    <Input
-                      value={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || "-"}
-                      readOnly
-                      disabled
-                      className="bg-slate-100 text-slate-600 cursor-not-allowed"
-                    />
+                    <Select
+                      value={poForm.transportType || "Door to Door"}
+                      onValueChange={(val) => setPoForm((prev) => ({ ...prev, transportType: val }))}
+                    >
+                      <SelectTrigger className="w-full bg-white border-slate-200 text-xs h-10">
+                        <SelectValue placeholder="Select Transport Type" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white border text-xs shadow-md z-50">
+                        {Array.from(new Set([
+                          ...(poForm.transportType ? [poForm.transportType] : []),
+                          ...transportTypeOptions.map((t) => t.value)
+                        ])).filter(Boolean).map((val) => (
+                          <SelectItem key={val} value={val}>{val}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Contact Person</Label>
@@ -1798,11 +1839,11 @@ export default function Stage5() {
                   <div className="space-y-1.5">
                      <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">Advance Payment *</Label>
                     <Select
-                      value={poForm.advancePayment || "yes"}
+                      value={poForm.advancePayment || "no"}
                       onValueChange={(val) => setPoForm((prev) => ({
                         ...prev,
                         advancePayment: val,
-                        advanceAmount: val === "no" ? "" : prev.advanceAmount
+                        advanceAmount: val === "no" ? "0" : (prev.advanceAmount && prev.advanceAmount !== "0" ? prev.advanceAmount : "5000")
                       }))}
                     >
                       <SelectTrigger className="w-full bg-white border-slate-300 font-semibold text-xs h-10">
@@ -1814,7 +1855,7 @@ export default function Stage5() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {(poForm.advancePayment || "yes") === "yes" && (
+                  {(poForm.advancePayment || "no") === "yes" && (
                     <div className="space-y-1.5">
                       <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">Advance Amount (₹) *</Label>
                       <Input
@@ -1989,11 +2030,9 @@ export default function Stage5() {
                               </Select>
                             </td>
                             <td className="px-4 py-3">
-                              <Input
-                                list={`gst-options-${record.id}`}
-                                value={data.gst || ""}
-                                onChange={(e) => {
-                                  const val = e.target.value;
+                              <Select
+                                value={data.gst || "18%"}
+                                onValueChange={(val) => {
                                   const basic = parseFloat(data.basicValue) || 0;
                                   const total = (basic + basic * gstRateFor(val)).toFixed(2);
                                   setBulkFormData((prev) => ({
@@ -2001,15 +2040,19 @@ export default function Stage5() {
                                     [record.id]: { ...prev[record.id], gst: val, totalWithTax: total },
                                   }));
                                 }}
-                                placeholder="GST %"
-                                className="h-8 min-w-24"
-                              />
-                              <datalist id={`gst-options-${record.id}`}>
-                                <option value="5%" />
-                                <option value="12%" />
-                                <option value="18%" />
-                                <option value="28%" />
-                              </datalist>
+                              >
+                                <SelectTrigger className="h-8 min-w-28 bg-white border-slate-300">
+                                  <SelectValue placeholder="GST %" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-white border text-xs shadow-md z-50">
+                                  {Array.from(new Set([
+                                    ...(data.gst ? [data.gst] : []),
+                                    "0%", "5%", "12%", "18%", "28%"
+                                  ])).map((opt) => (
+                                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </td>
                             <td className="px-4 py-3">
                               <Input
@@ -2078,7 +2121,7 @@ export default function Stage5() {
                 isSubmitting ||
                 selectedRecordIds.length === 0 ||
                 !commonPONumber.trim() ||
-                ((poForm.advancePayment || "yes") === "yes" && !poForm.advanceAmount) ||
+                ((poForm.advancePayment || "no") === "yes" && !poForm.advanceAmount) ||
                 !selectedRecordIds.every((id) => {
                   const d = bulkFormData[id];
                   return d?.basicValue && d?.totalWithTax && d?.gst;

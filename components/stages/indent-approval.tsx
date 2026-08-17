@@ -265,7 +265,7 @@ export default function Stage2() {
     { key: "totalApprovedQty", label: "Total Approved" },
     { key: "warehouseLocation", label: "Warehouse" },
     { key: "itemCode", label: "Item Code" },
-    { key: "leadTime", label: "Expected Requirement Date" },
+    { key: "leadTime", label: "Expected Date of Raw Material Delivery" },
     { key: "delegatedTo", label: "Delegated To" },
     { key: "plannedDate", label: "Planned Date" },
     { key: "actualDate", label: "Actual" },

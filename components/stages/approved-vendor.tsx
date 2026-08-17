@@ -1108,18 +1108,21 @@ export default function ApprovedVendor() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">GST (%) *</Label>
-                      <Input
-                        list={`manual-gst-options-${rec.id}`}
-                        value={manualGst[rec.id] || ""}
-                        onChange={(e) => setManualGst((prev) => ({ ...prev, [rec.id]: e.target.value }))}
-                        placeholder="e.g. 18"
-                        className="bg-white w-20 h-9"
-                      />
-                      <datalist id={`manual-gst-options-${rec.id}`}>
-                        {gstOptions.map((g) => (
-                          <option key={g.value} value={g.value} label={g.label} />
-                        ))}
-                      </datalist>
+                      <Select
+                        value={manualGst[rec.id] || "18"}
+                        onValueChange={(val) => setManualGst((prev) => ({ ...prev, [rec.id]: val }))}
+                      >
+                        <SelectTrigger className="bg-white w-28 h-9 text-xs">
+                          <SelectValue placeholder="Select GST" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {gstOptions.map((g) => (
+                            <SelectItem key={g.value} value={g.value} className="text-xs">
+                              {g.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 </div>
