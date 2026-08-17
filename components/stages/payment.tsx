@@ -303,6 +303,15 @@ export default function UnifiedPaymentHub() {
         }
       });
 
+      const billingByPo = new Map<string, any[]>();
+      (billingData || []).forEach((b: any) => {
+        if (b.po_id) {
+          const list = billingByPo.get(b.po_id) || [];
+          list.push(b);
+          billingByPo.set(b.po_id, list);
+        }
+      });
+
       const advRows = indentRows
         .filter((row: any) => poByIndent.has(row.id))
         .map((row: any) => {
@@ -354,6 +363,14 @@ export default function UnifiedPaymentHub() {
             }
           }
 
+          const receipts = po ? (receiptsByPo.get(po.id) || []) : [];
+          const totalRcvd = receipts.reduce((sum: number, r: any) => sum + (r.received_quantity || 0), 0);
+
+          const poBillings = po?.id ? (billingByPo.get(po.id) || []) : [];
+          const isBillingComplete = poBillings.some((b: any) =>
+            b.verification_status === "Verified" || !!b.accountant_name || !!b.tally_voucher_number || !!b.vendor_invoice_number || (parseFloat(b.invoice_amount) > 0)
+          );
+
           return {
             id: row.id,
             rowIndex: row.originalIndex,
@@ -364,7 +381,8 @@ export default function UnifiedPaymentHub() {
               timestamp: row.data.createdAt,
               indentNumber: row.data.indentNumber,
               itemName: row.data.itemName,
-              quantity: row.data.quantity,
+              quantity: totalRcvd > 0 ? totalRcvd : (po?.quantity || row.data.quantity || "-"),
+              totalRcvd,
               uom: row.data.uom || "",
               selectedVendorName: po.vendor_name || row.data.selectedVendorName || row.data.finalVendorName || row.data.vendor1Name || "Regular Vendor",
               poNumber: po.po_number || "-",
@@ -373,6 +391,7 @@ export default function UnifiedPaymentHub() {
               advancePaidAmount,
               advancePendingAmount,
               advanceStatus,
+              isBillingComplete,
               poPdfUrl: po?.po_pdf_url || "",
               paymentTerms: terms || po.payment_type || "Advance",
               plannedPayment: advPay?.payment_date || null,
@@ -437,6 +456,7 @@ export default function UnifiedPaymentHub() {
             else if (selVendor === "vendor3") indentVendor = indent?.data?.vendor3Name;
           }
           const vendorName = po?.vendor_name || bill?.vendor_name || indentVendor || "-";
+          const isBillingComplete = isVerified || !!bill.vendor_invoice_number || !!bill.tally_voucher_number || (parseFloat(bill.invoice_amount) > 0);
 
           return {
             id: `${invNo}_${bill.id}`,
@@ -452,9 +472,10 @@ export default function UnifiedPaymentHub() {
               dueDate: po?.delivery_date || "-",
               vendor: vendorName,
               poNumber: po?.po_number || "",
-              quantity: po?.quantity || indent?.data?.quantity || "-",
+              quantity: totalRcvd > 0 ? totalRcvd : (po?.quantity || indent?.data?.quantity || "-"),
               uom: indent?.data?.uom || "",
               totalRcvd,
+              isBillingComplete,
               poCopy: po?.po_copy_url || "",
               qty: receipts.map((r: any) => r.received_quantity).join(", "),
               receivedItems,
@@ -509,6 +530,12 @@ export default function UnifiedPaymentHub() {
         .map((p: any) => {
           const po = p.po_id ? poById.get(p.po_id) : null;
           const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
+          const receipts = p.po_id ? (receiptsByPo.get(p.po_id) || []) : [];
+          const totalRcvd = receipts.reduce((sum: number, r: any) => sum + (r.received_quantity || 0), 0);
+          const poBillings = p.po_id ? (billingByPo.get(p.po_id) || []) : [];
+          const isBillingComplete = poBillings.some((b: any) =>
+            b.verification_status === "Verified" || !!b.accountant_name || !!b.tally_voucher_number || !!b.vendor_invoice_number || (parseFloat(b.invoice_amount) > 0)
+          );
           const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Vendor Payment") : [];
           const plan1 = payments.length > 0 ? payments[0].created_at : null;
           const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
@@ -517,7 +544,9 @@ export default function UnifiedPaymentHub() {
             id: `VHIST_${p.id}`,
             invoiceNo: po?.po_number || "",
             vendor: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.vendor1Name || "-",
-            quantity: po?.quantity || indent?.data?.quantity || "-",
+            quantity: totalRcvd > 0 ? totalRcvd : (po?.quantity || indent?.data?.quantity || "-"),
+            totalRcvd,
+            isBillingComplete,
             uom: indent?.data?.uom || "",
             amountPaid: p.amount,
             status: p.status,
@@ -537,6 +566,8 @@ export default function UnifiedPaymentHub() {
           const tf = tfData?.find((t: any) => t.po_id === p.po_id);
           const po = p.po_id ? poById.get(p.po_id) : null;
           const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
+          const receipts = p.po_id ? (receiptsByPo.get(p.po_id) || []) : [];
+          const totalRcvd = receipts.reduce((sum: number, r: any) => sum + (r.received_quantity || 0), 0);
           const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Freight Payment") : [];
           const plan1 = payments.length > 0 ? payments[0].created_at : null;
           const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
@@ -545,7 +576,8 @@ export default function UnifiedPaymentHub() {
             id: `FHIST_${p.id}`,
             lrNo: tf?.bilty_number || "",
             transporter: tf?.transporter_name || "",
-            quantity: po?.quantity || indent?.data?.quantity || "-",
+            quantity: totalRcvd > 0 ? totalRcvd : (po?.quantity || indent?.data?.quantity || "-"),
+            totalRcvd,
             uom: indent?.data?.uom || "",
             amountPaid: p.amount,
             status: p.status,
@@ -583,11 +615,12 @@ export default function UnifiedPaymentHub() {
           const payments = tf.po_id ? (paymentsByPo.get(tf.po_id) || []).filter((p: any) => p.payment_type === "Freight Payment") : [];
           const receipts = tf.po_id ? (receiptsByPo.get(tf.po_id) || []) : [];
           const receipt = receipts.length > 0 ? receipts[0] : null;
+          const totalRcvd = receipts.reduce((sum: number, r: any) => sum + (r.received_quantity || 0), 0);
 
           let freightAmt = parseFloat(tf.freight_amount || tf.freight_amt || tf.transporting_amount || lifting?.freight_amount || "0") || 0;
           if (!freightAmt && (tf.transport_rate || tf.transporting_rate || lifting?.transport_rate)) {
             const rate = parseFloat(tf.transport_rate || tf.transporting_rate || lifting?.transport_rate || "0") || 0;
-            const rcvdQty = receipt ? (parseFloat(receipt.received_quantity) || 0) : (po ? parseFloat(po.quantity) || 0 : 0);
+            const rcvdQty = totalRcvd > 0 ? totalRcvd : (receipt ? (parseFloat(receipt.received_quantity) || 0) : (po ? parseFloat(po.quantity) || 0 : 0));
             freightAmt = rate * rcvdQty;
           }
 
@@ -609,7 +642,8 @@ export default function UnifiedPaymentHub() {
               biltyImage: tf.bilty_copy_url || "",
               freightAmount: freightAmt,
               transporter: tf.transporter_name || "",
-              quantity: receipt?.received_quantity || po?.quantity || "-",
+              quantity: totalRcvd > 0 ? totalRcvd : (receipt?.received_quantity || po?.quantity || "-"),
+              totalRcvd,
               uom: indent?.data?.uom || "",
               vehicleNo: tf.vehicle_number || lifting?.vehicle_number || "",
               contact: tf.driver_contact || lifting?.driver_contact || "",
@@ -661,6 +695,7 @@ export default function UnifiedPaymentHub() {
               freightAmount: freightAmt,
               transporter: tf?.transporter_name || po?.vendor_name || "-",
               quantity: rcpt.received_quantity || po?.quantity || "-",
+              totalRcvd: rcpt.received_quantity || po?.quantity || "-",
               uom: indent?.data?.uom || "",
               vehicleNo: tf?.vehicle_number || lifting?.vehicle_number || "-",
               contact: tf?.driver_contact || lifting?.driver_contact || "-",
@@ -1336,6 +1371,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
                     <TableHead className="font-bold p-3 text-right">Paid So Far</TableHead>
                     <TableHead className="font-bold p-3 text-right">Pending Amt</TableHead>
+                    <TableHead className="font-bold p-3 text-center">Paid</TableHead>
                     <TableHead className="font-bold p-3">Payment Terms</TableHead>
                     <TableHead className="font-bold p-3">Remarks</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
@@ -1344,7 +1380,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={14} className="h-32 text-center text-slate-400 font-medium">
                         No pending advance payments found.
                       </TableCell>
                     </TableRow>
@@ -1372,6 +1408,21 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-blue-700">{formatAmount(r.data.advancePaidAmount || 0)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-rose-700">{formatAmount(r.data.advancePendingAmount ?? r.data.advanceAmount)}</TableCell>
+                        <TableCell className="p-3 text-center">
+                          {r.data.advancePaidAmount > 0 && r.data.advancePendingAmount <= 0.01 ? (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
+                              Fully Paid
+                            </Badge>
+                          ) : r.data.advancePaidAmount > 0 ? (
+                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 font-semibold text-[10px] whitespace-nowrap">
+                              Partial Paid ({formatAmount(r.data.advancePaidAmount)})
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 font-semibold text-[10px] whitespace-nowrap">
+                              Unpaid
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="p-3 text-slate-500">{r.data.paymentTerms}</TableCell>
                         <TableCell className="p-3 text-slate-600 max-w-[220px]">
                           <span className="text-xs text-slate-700 italic font-normal whitespace-pre-wrap break-words">
@@ -1410,6 +1461,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">PO Value</TableHead>
                     <TableHead className="font-bold p-3 text-right">Advance Amt</TableHead>
                     <TableHead className="font-bold p-3 text-right">Receive Amount</TableHead>
+                    <TableHead className="font-bold p-3 text-center">Paid</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">Actual Payment Date</TableHead>
                     <TableHead className="font-bold p-3">Payment Reference</TableHead>
@@ -1421,7 +1473,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredAdvHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={14} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={15} className="h-32 text-center text-slate-400 font-medium">
                         No advance payment history found.
                       </TableCell>
                     </TableRow>
@@ -1438,6 +1490,11 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.data.advancePaidAmount)}</TableCell>
+                        <TableCell className="p-3 text-center">
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
+                            Fully Paid ({formatAmount(r.data.advancePaidAmount)})
+                          </Badge>
+                        </TableCell>
                         <TableCell className="p-3 text-slate-500 font-mono text-xs">
                           {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
                         </TableCell>
@@ -1473,6 +1530,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">Total Bill Value</TableHead>
                     <TableHead className="font-bold p-3 text-right text-indigo-700">Advance Paid</TableHead>
                     <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
+                    <TableHead className="font-bold p-3 text-center">Paid</TableHead>
                     <TableHead className="font-bold p-3">Due Date</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">PO Number</TableHead>
@@ -1484,13 +1542,17 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredVendorPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
                         No pending vendor invoices found.
                       </TableCell>
                     </TableRow>
                   ) : (
                     vendorPendingPagination.pageData.map((r) => {
                       const overdue = isDueDateOverdueOrToday(r.data.dueDate);
+                      const hasPaidSome = (r.data.totalPaid > 0) || (r.data.advanceAmount > 0);
+                      const isFullyPaid = r.data.pendingAmount <= 0.01;
+                      const paidTotal = (r.data.totalPaid || 0) + (r.data.advanceAmount || 0);
+
                       return (
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
                           <TableCell className="p-3 font-semibold text-slate-800">{r.data.invoiceNo}</TableCell>
@@ -1501,6 +1563,21 @@ export default function UnifiedPaymentHub() {
                           <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
                           <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
                           <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
+                          <TableCell className="p-3 text-center">
+                            {isFullyPaid ? (
+                              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
+                                Fully Paid
+                              </Badge>
+                            ) : hasPaidSome ? (
+                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 font-semibold text-[10px] whitespace-nowrap">
+                                Partial Paid ({formatAmount(paidTotal)})
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 font-semibold text-[10px] whitespace-nowrap">
+                                Unpaid
+                              </Badge>
+                            )}
+                          </TableCell>
                           <TableCell className="p-3 font-semibold">
                             <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold", overdue ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-600")}>
                               {r.data.dueDate}
@@ -1542,6 +1619,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Vendor</TableHead>
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
+                    <TableHead className="font-bold p-3 text-center">Paid</TableHead>
                     <TableHead className="font-bold p-3">Payment Mode</TableHead>
                     <TableHead className="font-bold p-3">Transaction ID</TableHead>
                     <TableHead className="font-bold p-3">Status</TableHead>
@@ -1552,7 +1630,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredVendorHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
                         No vendor payment history found.
                       </TableCell>
                     </TableRow>
@@ -1566,6 +1644,11 @@ export default function UnifiedPaymentHub() {
                           {r.quantity && r.quantity !== "-" ? `${r.quantity} ${r.uom || ''}`.trim() : "-"}
                         </TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
+                        <TableCell className="p-3 text-center">
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
+                            Fully Paid ({formatAmount(r.amountPaid)})
+                          </Badge>
+                        </TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.transactionId}</TableCell>
                         <TableCell className="p-3">
