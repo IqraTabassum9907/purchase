@@ -342,6 +342,7 @@ export default function OrderCancelPage() {
 
           results.push({
             id: `${row.id}__${po.id}`,
+            indentId: row.id,
             poId: po.id,
             indentNumber,
             vendorName,
@@ -412,9 +413,12 @@ export default function OrderCancelPage() {
       const insertRows = selectedRows.map((row) => {
         const rowQty = cancelQuantities[row.id] ?? row.remainingQty
 
+        const rawIndentId = row.indentId || (row.id.includes("__") ? row.id.split("__")[0] : row.id);
+        const rawPoId = row.poId || (row.id.includes("__") ? row.id.split("__")[1] : null) || null;
+
         return {
-          indent_id: row.id,
-          po_id: row.poId || null,
+          indent_id: rawIndentId,
+          po_id: rawPoId,
           cancelled_by: cancelStage,
           cancellation_reason: cancelReason,
           financial_impact: Number(rowQty),
