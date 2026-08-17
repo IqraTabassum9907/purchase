@@ -105,11 +105,18 @@ export const QuotationPdfDocument = ({
           </View>
           <View style={styles.infoCol}>
             <Text style={styles.sectionTitle}>Commercial Terms</Text>
-            <View style={styles.infoBox}>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Payment Terms:</Text><Text style={styles.infoValue}>{paymentTerms || '-'}</Text></View>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Expected Delivery:</Text><Text style={styles.infoValue}>{deliveryDate || '-'}</Text></View>
-              <View style={styles.infoLine}><Text style={styles.infoLabel}>Transport Type:</Text><Text style={styles.infoValue}>{transportType || '-'}</Text></View>
-            </View>
+              <View style={{ marginBottom: 3 }}>
+                <Text style={styles.infoLabel}>Payment Terms:</Text>
+                <Text style={styles.infoValue}>{paymentTerms || '-'}</Text>
+              </View>
+              <View style={{ marginBottom: 3 }}>
+                <Text style={styles.infoLabel}>Expected Delivery:</Text>
+                <Text style={styles.infoValue}>{deliveryDate || '-'}</Text>
+              </View>
+              <View style={{ marginBottom: 3 }}>
+                <Text style={styles.infoLabel}>Transport Type:</Text>
+                <Text style={styles.infoValue}>{transportType || '-'}</Text>
+              </View>
           </View>
         </View>
       </View>

@@ -2,48 +2,272 @@ import React from 'react';
 import { Document, Page, View, Image, Text, StyleSheet } from '@react-pdf/renderer';
 
 const styles = StyleSheet.create({
-  page: { padding: 30, fontSize: 9, fontFamily: 'Helvetica', color: '#1e293b' },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1.5, borderColor: '#3b82f6', paddingBottom: 10, marginBottom: 12 },
-  headerLeft: { flexDirection: 'column', maxWidth: '65%' },
-  logo: { width: 170, height: 48, objectFit: 'contain', marginBottom: 6 },
-  companyName: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
-  companyAddress: { fontSize: 8, color: '#475569', marginTop: 2, lineHeight: 1.3 },
-  headerRight: { alignItems: 'flex-end', justifyContent: 'center' },
-  docTitle: { fontSize: 14, fontWeight: 'bold', color: '#1d4ed8', textTransform: 'uppercase' },
-  docMeta: { fontSize: 8.5, color: '#64748b', marginTop: 3 },
+  page: {
+    padding: 28,
+    fontSize: 8.5,
+    fontFamily: 'Helvetica',
+    color: '#1e293b',
+    backgroundColor: '#ffffff',
+  },
   
-  gridTwo: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  cardBox: { flex: 1, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 4, padding: 8 },
-  cardTitle: { fontSize: 8, fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', marginBottom: 4, borderBottomWidth: 1, borderColor: '#cbd5e1', paddingBottom: 2 },
-  cardText: { fontSize: 8.5, color: '#1e293b', lineHeight: 1.3 },
-  cardLabel: { fontSize: 7.5, color: '#64748b' },
-  cardValue: { fontSize: 8.5, fontWeight: 'bold', color: '#0f172a' },
+  // Header Card
+  headerCard: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    backgroundColor: '#ffffff',
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  brandLeft: {
+    flexDirection: 'column',
+    maxWidth: '58%',
+  },
+  companyName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#0284c7',
+  },
+  companyAddress: {
+    fontSize: 7.5,
+    color: '#64748b',
+    marginTop: 3,
+    lineHeight: 1.3,
+  },
+  logo: {
+    width: 155,
+    height: 46,
+    objectFit: 'contain',
+    marginBottom: 4,
+  },
+  headerMetaRight: {
+    alignItems: 'flex-end',
+    maxWidth: '40%',
+  },
+  docTitle: {
+    fontSize: 10.5,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    textTransform: 'uppercase',
+    textAlign: 'right',
+  },
+  docSubTitle: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#0284c7',
+    marginTop: 2,
+    textAlign: 'right',
+  },
+  docDate: {
+    fontSize: 8,
+    color: '#64748b',
+    marginTop: 3,
+    textAlign: 'right',
+  },
+  bannerDivider: {
+    borderTopWidth: 1,
+    borderColor: '#f1f5f9',
+    paddingTop: 6,
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  bannerTitle: {
+    fontSize: 7.5,
+    fontWeight: 'bold',
+    color: '#475569',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
 
-  noteBox: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 4, padding: 10, marginTop: 2, minHeight: 32 },
-  noteText: { fontSize: 9.5, color: '#0f172a', lineHeight: 1.4 },
-  
-  section: { marginBottom: 10 },
-  sectionTitle: { fontSize: 8.5, fontWeight: 'bold', color: '#475569', textTransform: 'uppercase', marginBottom: 4 },
-  
-  table: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 4, overflow: 'hidden' },
-  tableHeaderRow: { flexDirection: 'row', backgroundColor: '#e2e8f0', borderBottomWidth: 1, borderColor: '#cbd5e1' },
-  tableRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#f1f5f9' },
-  th: { padding: 6, fontSize: 8, fontWeight: 'bold', color: '#334155' },
-  td: { padding: 6, fontSize: 8.5, color: '#1e293b' },
-  
-  colSr: { width: '8%', textAlign: 'center' },
-  colIndent: { width: '18%' },
-  colFirm: { width: '24%' },
-  colProduct: { width: '34%' },
-  colQty: { width: '16%', textAlign: 'right' },
-  
-  termsBox: { backgroundColor: '#fafafa', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 4, padding: 8, marginTop: 4 },
-  termItem: { fontSize: 8, color: '#334155', marginBottom: 3, lineHeight: 1.3 },
-  
-  footer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 25, paddingTop: 10, borderTopWidth: 1, borderColor: '#e2e8f0' },
-  footerText: { fontSize: 8, color: '#94a3b8' },
-  signatureBox: { alignItems: 'center' },
-  signatureTitle: { fontSize: 8.5, fontWeight: 'bold', color: '#334155', marginTop: 20 },
+  // Field Section Titles
+  sectionTitle: {
+    fontSize: 7.5,
+    fontWeight: 'bold',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+
+  // Suppliers Box
+  suppliersBox: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    padding: 8,
+    backgroundColor: '#ffffff',
+    marginBottom: 10,
+  },
+  supplierPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  supplierPill: {
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  supplierPillText: {
+    fontSize: 7.5,
+    fontWeight: 'bold',
+    color: '#334155',
+  },
+
+  // 3-Column Grid (Commercial Details, Billing, Destination)
+  gridThree: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  infoCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    padding: 8,
+    backgroundColor: '#ffffff',
+  },
+  infoCardHeader: {
+    fontSize: 7,
+    fontWeight: 'bold',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  infoCardCompany: {
+    fontSize: 8.5,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  infoCardText: {
+    fontSize: 7.5,
+    color: '#475569',
+    lineHeight: 1.3,
+  },
+  commLine: {
+    marginBottom: 4,
+  },
+  commLabel: {
+    fontSize: 6.5,
+    color: '#64748b',
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+  },
+  commVal: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginTop: 1,
+  },
+
+  // Note Box
+  noteCard: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    padding: 8,
+    backgroundColor: '#ffffff',
+    marginBottom: 10,
+  },
+  noteText: {
+    fontSize: 8.5,
+    color: '#1e293b',
+    lineHeight: 1.3,
+  },
+
+  // Items Table
+  tableContainer: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  tableHeaderRow: {
+    flexDirection: 'row',
+    backgroundColor: '#f8fafc',
+    borderBottomWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderColor: '#f1f5f9',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  th: {
+    fontSize: 7,
+    fontWeight: 'bold',
+    color: '#64748b',
+    textTransform: 'uppercase',
+  },
+  td: {
+    fontSize: 8,
+    color: '#1e293b',
+  },
+
+  colSr: { width: '6%', textAlign: 'center' },
+  colIndent: { width: '16%' },
+  colFirm: { width: '22%' },
+  colProduct: { width: '38%' },
+  colQty: { width: '10%', textAlign: 'right' },
+  colUnit: { width: '8%', textAlign: 'center' },
+
+  // Terms & Conditions Box
+  termsContainer: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    padding: 8,
+    backgroundColor: '#ffffff',
+    marginBottom: 10,
+  },
+  termItem: {
+    fontSize: 7.5,
+    color: '#334155',
+    marginBottom: 3,
+    lineHeight: 1.3,
+  },
+
+  // Footer Bar
+  footerBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingTop: 8,
+    marginTop: 10,
+  },
+  footerText: {
+    fontSize: 7.5,
+    color: '#94a3b8',
+  },
+  signatureBox: {
+    alignItems: 'flex-end',
+  },
+  sigFor: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
+  sigDept: {
+    fontSize: 7.5,
+    color: '#64748b',
+  },
 });
 
 export interface RfqPdfItem {
@@ -89,107 +313,128 @@ export const RfqPdfDocument: React.FC<RfqPdfDocumentProps> = ({
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            {logoUrl ? (
-              <Image src={logoUrl} style={styles.logo} />
+        {/* Header Block matching Modal Header */}
+        <View style={styles.headerCard}>
+          <View style={styles.headerTop}>
+            <View style={styles.brandLeft}>
+              {logoUrl ? (
+                <Image src={logoUrl} style={styles.logo} />
+              ) : (
+                <Text style={styles.companyName}>Nutech</Text>
+              )}
+              <Text style={styles.companyAddress}>{companyAddress}</Text>
+            </View>
+            <View style={styles.headerMetaRight}>
+              <Text style={styles.docTitle}>REQUEST FOR QUOTATION (RFQ)</Text>
+              <Text style={styles.docSubTitle}>Quotation Dispatch & Response Tracking</Text>
+              <Text style={styles.docDate}>Date: {dateStr}</Text>
+            </View>
+          </View>
+          <View style={styles.bannerDivider}>
+            <Text style={styles.bannerTitle}>GENERATE NEW MATERIAL RFQ / ENQUIRY</Text>
+          </View>
+        </View>
+
+        {/* Suppliers Box */}
+        <View style={{ marginBottom: 10 }}>
+          <Text style={styles.sectionTitle}>SUPPLIERS (SELECT MULTIPLE FROM MASTER VENDOR LIST) *</Text>
+          <View style={styles.suppliersBox}>
+            {suppliers && suppliers.length > 0 ? (
+              <View style={styles.supplierPillsRow}>
+                {suppliers.map((s, idx) => (
+                  <View key={idx} style={styles.supplierPill}>
+                    <Text style={styles.supplierPillText}>{s}</Text>
+                  </View>
+                ))}
+              </View>
             ) : (
-              <Text style={styles.companyName}>NUTECH</Text>
+              <Text style={{ fontSize: 8, color: '#94a3b8' }}>All Selected Vendors</Text>
             )}
-            <Text style={styles.companyAddress}>{companyAddress}</Text>
-          </View>
-          <View style={styles.headerRight}>
-            <Text style={styles.docTitle}>Material RFQ / Enquiry</Text>
-            <Text style={styles.docMeta}>Date: {dateStr}</Text>
           </View>
         </View>
 
-        {/* Commercial & Suppliers Grid */}
-        <View style={styles.gridTwo}>
-          <View style={styles.cardBox}>
-            <Text style={styles.cardTitle}>Target Suppliers</Text>
-            <Text style={styles.cardValue}>
-              {suppliers.length > 0 ? suppliers.join(", ") : "All Selected Vendors"}
-            </Text>
-          </View>
-          <View style={styles.cardBox}>
-            <Text style={styles.cardTitle}>Our Commercial Details</Text>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
-              <Text style={styles.cardLabel}>GSTIN REGISTRATION:</Text>
-              <Text style={styles.cardValue}>{gstin || "27ABCDE1234A1Z5"}</Text>
+        {/* 3-Column Info Grid */}
+        <View style={styles.gridThree}>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardHeader}>OUR COMMERCIAL DETAILS</Text>
+            <View style={styles.commLine}>
+              <Text style={styles.commLabel}>GSTIN REGISTRATION</Text>
+              <Text style={styles.commVal}>{gstin || "27ABCDE1234A1Z5"}</Text>
             </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-              <Text style={styles.cardLabel}>PAN CARD NO:</Text>
-              <Text style={styles.cardValue}>{pan || "ABCDE1234A"}</Text>
+            <View style={styles.commLine}>
+              <Text style={styles.commLabel}>PAN CARD NO</Text>
+              <Text style={styles.commVal}>{pan || "ABCDE1234A"}</Text>
             </View>
           </View>
-        </View>
 
-        {/* Billing & Destination Grid */}
-        <View style={styles.gridTwo}>
-          <View style={styles.cardBox}>
-            <Text style={styles.cardTitle}>Billing Address</Text>
-            <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#0f172a', marginBottom: 2 }}>{billingCompany}</Text>
-            <Text style={styles.cardText}>{billingAddress}</Text>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardHeader}>BILLING ADDRESS</Text>
+            <Text style={styles.infoCardCompany}>{billingCompany || "M/S Nutech Pvt. Ltd."}</Text>
+            <Text style={styles.infoCardText}>{billingAddress || companyAddress}</Text>
           </View>
-          <View style={styles.cardBox}>
-            <Text style={styles.cardTitle}>Destination Address</Text>
-            <Text style={{ fontSize: 9, fontWeight: 'bold', color: '#0f172a', marginBottom: 2 }}>{destCompany}</Text>
-            <Text style={styles.cardText}>{destAddress}</Text>
+
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardHeader}>DESTINATION ADDRESS</Text>
+            <Text style={styles.infoCardCompany}>{destCompany || "M/S Nutech Pvt. Ltd."}</Text>
+            <Text style={styles.infoCardText}>{destAddress || companyAddress}</Text>
           </View>
         </View>
 
         {/* Description / Letter Note */}
-        {descriptionNote && descriptionNote.trim() !== "" && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Description / Letter Note</Text>
-            <View style={styles.noteBox}>
+        {descriptionNote && descriptionNote.trim() !== "" ? (
+          <View style={{ marginBottom: 10 }}>
+            <Text style={styles.sectionTitle}>DESCRIPTION / LETTER NOTE</Text>
+            <View style={styles.noteCard}>
               <Text style={styles.noteText}>{descriptionNote}</Text>
             </View>
           </View>
-        )}
+        ) : null}
 
-        {/* Items Table */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Approved Indent Items (RFQ Specifications)</Text>
-          <View style={styles.table}>
+        {/* Approved Indent Items Table */}
+        <View style={{ marginBottom: 10 }}>
+          <Text style={styles.sectionTitle}>APPROVED INDENT ITEMS (READY FOR ENQUIRY REQUEST)</Text>
+          <View style={styles.tableContainer}>
             <View style={styles.tableHeaderRow}>
               <Text style={[styles.th, styles.colSr]}>SR.</Text>
               <Text style={[styles.th, styles.colIndent]}>INDENT NO</Text>
-              <Text style={[styles.th, styles.colFirm]}>FIRM / LOCATION</Text>
+              <Text style={[styles.th, styles.colFirm]}>FIRM NAME</Text>
               <Text style={[styles.th, styles.colProduct]}>PRODUCT NAME</Text>
-              <Text style={[styles.th, styles.colQty]}>QUANTITY</Text>
+              <Text style={[styles.th, styles.colQty]}>QTY</Text>
+              <Text style={[styles.th, styles.colUnit]}>UNIT</Text>
             </View>
             {items.map((item, idx) => (
-              <View key={idx} style={styles.tableRow}>
+              <View key={idx} style={styles.tableRow} wrap={false}>
                 <Text style={[styles.td, styles.colSr]}>{item.srNo}</Text>
                 <Text style={[styles.td, styles.colIndent, { fontWeight: 'bold' }]}>{item.indentNumber}</Text>
                 <Text style={[styles.td, styles.colFirm]}>{item.firmName}</Text>
-                <Text style={[styles.td, styles.colProduct]}>{item.itemName}</Text>
-                <Text style={[styles.td, styles.colQty, { fontWeight: 'bold' }]}>{item.quantity} {item.uom}</Text>
+                <Text style={[styles.td, styles.colProduct, { fontWeight: 'bold' }]}>{item.itemName}</Text>
+                <Text style={[styles.td, styles.colQty, { fontWeight: 'bold' }]}>{item.quantity}</Text>
+                <Text style={[styles.td, styles.colUnit]}>{item.uom}</Text>
               </View>
             ))}
           </View>
         </View>
 
         {/* Terms & Conditions */}
-        {terms && terms.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Terms & Conditions</Text>
-            <View style={styles.termsBox}>
+        {terms && terms.length > 0 ? (
+          <View style={{ marginBottom: 10 }}>
+            <Text style={styles.sectionTitle}>TERMS & CONDITIONS</Text>
+            <View style={styles.termsContainer}>
               {terms.map((t, i) => (
                 <Text key={i} style={styles.termItem}>{t}</Text>
               ))}
             </View>
           </View>
-        )}
+        ) : null}
 
-        {/* Footer & Signature */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Computer generated RFQ Document — Nutech Purchase System</Text>
+        {/* Footer */}
+        <View style={styles.footerBar}>
+          <Text style={styles.footerText}>
+            {items.length} Item(s) Selected for RFQ · Computer generated RFQ Document — Nutech Purchase System
+          </Text>
           <View style={styles.signatureBox}>
-            <Text style={styles.signatureTitle}>Authorized Purchase Officer</Text>
+            <Text style={styles.sigFor}>For Nutech</Text>
+            <Text style={styles.sigDept}>Purchase Department</Text>
           </View>
         </View>
       </Page>

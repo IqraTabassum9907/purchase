@@ -507,56 +507,45 @@ export default function Quotation() {
   const handleDownloadRfqPdf = async () => {
     try {
       const { pdf } = await import("@react-pdf/renderer");
-      const { QuotationPdfDocument } = await import("./quotation-pdf");
+      const { RfqPdfDocument } = await import("./rfq-pdf");
 
-      const pdfItems = currentRecords.map((rec, idx) => {
-        const qty = parseFloat(rec.data.quantity) || 0;
-        const rate = parseFloat(rec.data.vendor1Rate) || 0;
-        const gst = parseFloat(rec.data.vendor1Gst) || 0;
-        const lineTotal = qty * rate * (1 + gst / 100);
+      const rfqItems = currentRecords.map((r, idx) => {
+        const rawIndent = r?.data?.indentNumber || r?.data?.indentNo || "—";
+        const indentStr = rawIndent !== "—" ? (String(rawIndent).startsWith("IN-") ? String(rawIndent) : `IN-${rawIndent}`) : "—";
         return {
           srNo: idx + 1,
-          itemName: rec.data.itemName || "-",
-          indentNumber: rec.data.indentNumber || "-",
-          quantity: rec.data.quantity || "-",
-          rate: rate > 0 ? rate.toFixed(2) : "To Be Quoted",
-          gstPercent: gst > 0 ? gst : "0",
-          amount: lineTotal > 0 ? lineTotal.toFixed(2) : "-",
+          indentNumber: indentStr,
+          firmName: r?.data?.firmName || r?.data?.companyName || r?.data?.warehouseLocation || "Nutech Pipes",
+          itemName: r?.data?.itemName || "—",
+          quantity: r?.data?.quantity || "—",
+          uom: r?.data?.uom || r?.data?.unit || "Nos",
         };
       });
 
-      const indentNum = currentRecords[0]?.data?.indentNumber || "Enquiry";
-
       const doc = (
-        <QuotationPdfDocument
-          logoUrl=""
-          companyAddress={billingAddress || NUTECH_ADDRESS || "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India"}
-          vendorName={selectedVendors.join(", ") || "Invited Suppliers"}
-          submissionDate={formatDateDash(new Date().toISOString())}
-          paymentTerms={terms.join("; ") || "Standard RFQ Terms"}
-          deliveryDate="As per RFQ"
-          transportType="Standard"
-          remarks={descriptionNote || ""}
-          items={pdfItems}
-          subtotal="0.00"
-          gstAmount="0.00"
-          grandTotal="0.00"
+        <RfqPdfDocument
+          logoUrl={typeof window !== "undefined" ? `${window.location.origin}/logo.png` : undefined}
+          companyAddress={NUTECH_ADDRESS}
+          dateStr={formatDateDash(new Date().toISOString())}
+          suppliers={selectedVendors}
+          gstin={gstin}
+          pan={pan}
+          billingCompany={billingCompany}
+          billingAddress={billingAddress}
+          destCompany={destCompany}
+          destAddress={destAddress}
+          descriptionNote={descriptionNote}
+          items={rfqItems}
+          terms={terms}
         />
       );
 
       const blob = await pdf(doc).toBlob();
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `Quotation_RFQ_${indentNum}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      toast.success("Quotation PDF downloaded successfully!");
+      window.open(url, "_blank");
     } catch (err: any) {
-      console.error("PDF generation failed:", err);
-      toast.error("Failed to generate PDF: " + (err.message || err));
+      console.error("RFQ PDF generation failed:", err);
+      toast.error("Failed to generate RFQ PDF: " + (err.message || err));
     }
   };
 
@@ -608,6 +597,8 @@ export default function Quotation() {
       toast.error("Failed to open PDF: " + (err.message || err));
     }
   };
+
+
 
   const handleVendorCountChange = (val: string) => {
     setSelectedVendorCount(val);
