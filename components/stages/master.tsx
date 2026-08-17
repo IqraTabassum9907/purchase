@@ -307,8 +307,11 @@ export default function MasterPage() {
       ]);
 
       const mapNames = (res: any, defaults: string[]) => {
-        const list = (res.data || []).map((r: any) => r.name).filter(Boolean);
-        return list.length > 0 ? list : defaults;
+        if (res.error) return defaults;
+        if (res.data !== null && res.data !== undefined) {
+          return (res.data || []).map((r: any) => r.name).filter(Boolean);
+        }
+        return defaults;
       };
 
       let cbList = mapNames(cbRes, ["Amit Sahu", "Admin", "Purchase Team"]);
@@ -577,6 +580,9 @@ export default function MasterPage() {
             phone: v.phone || "-",
             email: v.email || "-",
             address: v.address || "-",
+            billing_address: v.billingAddress || "-",
+            gstin: v.gstin || "-",
+            pan_number: v.panNumber || "-",
           })),
           { onConflict: "vendor_name" }
         );
@@ -629,8 +635,7 @@ export default function MasterPage() {
     if (tableName) {
       const { error } = await supabase.from(tableName).upsert({ name: val, is_active: true }, { onConflict: "name" });
       if (error) {
-        toast.error("Failed to add option to database");
-        return;
+        console.warn(`Note when adding '${val}' to ${tableName}:`, error);
       }
     }
 
@@ -661,8 +666,7 @@ export default function MasterPage() {
     if (tableName) {
       const { error } = await supabase.from(tableName).delete().eq("name", valToRemove);
       if (error) {
-        toast.error(`Failed to remove '${valToRemove}' from database`);
-        return;
+        console.warn(`Note when removing '${valToRemove}' from ${tableName}:`, error);
       }
     }
 

@@ -1305,7 +1305,7 @@ export default function PurchaseDashboard() {
                     <TableHead className="text-xs">
                       Warehouse Location
                     </TableHead>
-                    <TableHead className="text-xs">Expected Requirement Date</TableHead>
+                    <TableHead className="text-xs">Expected Date of Raw Material Delivery</TableHead>
                     <TableHead className="text-xs">Category</TableHead>
                     <TableHead className="text-xs">Item</TableHead>
                     <TableHead className="text-xs text-right">Qty</TableHead>
@@ -1691,7 +1691,7 @@ export default function PurchaseDashboard() {
                     <TableHead className="text-xs">Party Name</TableHead>
                     <TableHead className="text-xs text-right">Quantity</TableHead>
                     <TableHead className="text-xs">Warehouse</TableHead>
-                    <TableHead className="text-xs">Expected Requirement Date</TableHead>
+                    <TableHead className="text-xs">Expected Date of Raw Material Delivery</TableHead>
                     <TableHead className="text-xs">Exp. Delivery</TableHead>
                   </TableRow>
                 </TableHeader>

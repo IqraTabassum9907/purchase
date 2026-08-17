@@ -336,14 +336,26 @@ export default function ApprovedVendor() {
         const terms = firstRec.data[`vendor${num}Terms`];
         const delivery = firstRec.data[`vendor${num}Delivery`];
         const transportType = firstRec.data[`vendor${num}TransportType`];
+        const remarks = firstRec.data[`vendor${num}Remarks`];
+        const pdfUrl = firstRec.data[`vendor${num}PdfUrl`];
 
-        let totalValue = 0;
+        let subtotalValue = 0;
+        let totalGstValue = 0;
+        let grandTotalValue = 0;
         let hasRates = false;
+
         group.records.forEach((rec: any) => {
           const rateStr = rec.data[`vendor${num}Rate`];
+          const gstStr = rec.data[`vendor${num}Gst`];
           const qty = parseFloat(rec.data.quantity) || 0;
           if (rateStr && rateStr !== "-") {
-            totalValue += (parseFloat(rateStr) || 0) * qty;
+            const rate = parseFloat(rateStr) || 0;
+            const gstPct = parseFloat(gstStr || "18") || 0;
+            const base = rate * qty;
+            const gstAmt = base * (gstPct / 100);
+            subtotalValue += base;
+            totalGstValue += gstAmt;
+            grandTotalValue += base + gstAmt;
             hasRates = true;
           }
         });
@@ -355,7 +367,11 @@ export default function ApprovedVendor() {
           terms,
           delivery,
           transportType,
-          totalValue: hasRates ? totalValue : null,
+          remarks,
+          pdfUrl,
+          totalValue: hasRates ? grandTotalValue : null,
+          subtotalValue: hasRates ? subtotalValue : null,
+          totalGstValue: hasRates ? totalGstValue : null,
         });
       }
     }
@@ -867,7 +883,7 @@ export default function ApprovedVendor() {
 
       {/* APPROVED VENDOR SUBMIT MODAL */}
       <Dialog open={open} onOpenChange={(val) => { if (!val) resetForm(); else setOpen(val); }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-6 overflow-hidden">
+        <DialogContent className="max-w-7xl w-[95vw] max-h-[92vh] flex flex-col p-6 overflow-hidden">
           <DialogHeader className="shrink-0 border-b pb-4">
             <DialogTitle className="text-xl font-bold text-slate-800">Approved Vendor Decision</DialogTitle>
           </DialogHeader>
@@ -942,76 +958,109 @@ export default function ApprovedVendor() {
                 <table className="w-full min-w-max text-xs text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-100 border-b border-slate-200">
-                      <th className="p-3 font-semibold text-slate-700 w-1/4 sticky left-0 bg-slate-100">Field / Item</th>
-                      {groupVendorOptions.map((v) => (
-                        <th key={v.id} className="p-3 font-semibold text-slate-700 text-center min-w-40 whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-2">
-                            <span>Vendor Slot {v.slotNum} ({v.name})</span>
+                      <th className="p-3 font-semibold text-slate-700 sticky left-0 bg-slate-100 z-10 whitespace-nowrap min-w-56">Vendor / Action</th>
+                      <th className="p-3 font-semibold text-slate-700 text-center whitespace-nowrap min-w-32">Payment Terms</th>
+                      <th className="p-3 font-semibold text-slate-700 text-center whitespace-nowrap min-w-36">Expected Delivery</th>
+                      <th className="p-3 font-semibold text-slate-700 text-center whitespace-nowrap min-w-44">Transport Type</th>
+                      <th className="p-3 font-semibold text-slate-700 text-center min-w-48">Vendor Remarks</th>
+                      {currentGroup?.records.map((rec: any) => (
+                        <th key={rec.id} className="p-3 font-semibold text-slate-700 text-center min-w-52 whitespace-normal">
+                          <div className="font-mono text-[10px] text-slate-500">Indent: {rec.data.indentNumber}</div>
+                          <div className="font-bold text-slate-800 text-xs break-words">{rec.data.itemName}</div>
+                          <div className="text-[10px] text-slate-500 font-normal">Qty: {rec.data.quantity}</div>
+                        </th>
+                      ))}
+                      <th className="p-3 font-bold text-emerald-800 text-center bg-emerald-50 whitespace-nowrap min-w-44">Total Estimate (w/ Tax)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupVendorOptions.map((v) => (
+                      <tr key={v.id} className="border-b hover:bg-slate-50/70 transition-colors">
+                        {/* Vendor Name & Action */}
+                        <td className="p-3 font-medium text-slate-900 sticky left-0 bg-white shadow-xs whitespace-nowrap">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <div className="font-bold text-xs text-slate-900">Vendor Slot {v.slotNum}</div>
+                              <div className="text-xs text-slate-600 font-semibold">{v.name}</div>
+                            </div>
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
                               onClick={() => openManualEdit(v.slotNum)}
-                              className="h-6 px-2 text-[10px] font-semibold gap-1 bg-white"
+                              className="h-6 px-2 text-[10px] font-semibold gap-1 bg-slate-50 hover:bg-slate-100 shrink-0"
                               title={v.totalValue === null ? "Not submitted — fill manually" : "Edit manually"}
                             >
                               <Pencil className="w-3 h-3" />
                               {v.totalValue === null ? "Fill Manually" : "Edit"}
                             </Button>
                           </div>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* Payment Terms Row */}
-                    <tr className="border-b bg-slate-50/50">
-                      <td className="p-3 font-bold text-slate-600 sticky left-0 bg-slate-50 whitespace-nowrap">Payment Terms</td>
-                      {groupVendorOptions.map((v) => (
-                        <td key={v.id} className="p-3 text-slate-800 text-center">
+                        </td>
+
+                        {/* Payment Terms */}
+                        <td className="p-3 text-slate-800 text-center font-medium whitespace-nowrap">
                           {v.terms && v.terms !== "-" ? (paymentTermsOptions.find(opt => opt.value === v.terms)?.label || v.terms) : "—"}
                         </td>
-                      ))}
-                    </tr>
 
-                    {/* Delivery Date Row */}
-                    <tr className="border-b bg-slate-50/50">
-                      <td className="p-3 font-bold text-slate-600 sticky left-0 bg-slate-50 whitespace-nowrap">Expected Delivery</td>
-                      {groupVendorOptions.map((v) => (
-                        <td key={v.id} className="p-3 text-slate-800 text-center">
+                        {/* Expected Delivery */}
+                        <td className="p-3 text-slate-800 text-center font-medium whitespace-nowrap">
                           {v.delivery && v.delivery !== "-" ? formatDateDash(v.delivery) : "—"}
                         </td>
-                      ))}
-                    </tr>
 
-                    {/* Rates per Item Rows */}
-                    {currentGroup?.records.map((rec: any) => (
-                      <tr key={rec.id} className="border-b">
-                        <td className="p-3 font-medium text-slate-700 sticky left-0 bg-white whitespace-nowrap">
-                          <div className="font-mono text-[10px] text-slate-500">Indent: {rec.data.indentNumber}</div>
-                          <div className="font-semibold text-slate-800">{rec.data.itemName}</div>
-                          <div className="text-[10px] text-slate-500">Qty: {rec.data.quantity}</div>
+                        {/* Transport Type */}
+                        <td className="p-3 text-slate-800 text-center font-medium whitespace-nowrap">
+                          {v.transportType && v.transportType !== "-" ? v.transportType : "—"}
                         </td>
-                        {groupVendorOptions.map((v) => {
-                          const rate = rec.data[`vendor${v.slotNum}Rate`];
+
+                        {/* Vendor Remarks */}
+                        <td className="p-3 text-slate-700 text-center italic text-[11px] min-w-48 max-w-xs break-words font-normal">
+                          {v.remarks && v.remarks !== "-" ? v.remarks : "—"}
+                        </td>
+
+                        {/* Item-wise Quoted Rates & GST */}
+                        {currentGroup?.records.map((rec: any) => {
+                          const rateStr = rec.data[`vendor${v.slotNum}Rate`];
+                          const gstStr = rec.data[`vendor${v.slotNum}Gst`];
+                          const qty = parseFloat(rec.data.quantity) || 0;
+
+                          if (!rateStr || rateStr === "-") {
+                            return (
+                              <td key={rec.id} className="p-3 text-slate-400 text-center whitespace-nowrap">
+                                —
+                              </td>
+                            );
+                          }
+
+                          const rate = parseFloat(rateStr) || 0;
+                          const gstPct = parseFloat(gstStr || "18") || 0;
+                          const lineBase = rate * qty;
+                          const lineGst = lineBase * (gstPct / 100);
+                          const lineTotal = lineBase + lineGst;
+
                           return (
-                            <td key={v.id} className="p-3 text-slate-900 font-semibold text-center">
-                              {rate && rate !== "-" ? `₹${rate}` : "—"}
+                            <td key={rec.id} className="p-3 text-slate-900 text-center whitespace-nowrap min-w-52">
+                              <div className="font-bold text-xs text-slate-900">₹{rate.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                              <div className="text-[11px] font-medium text-slate-700 mt-0.5">
+                                Base (w/o GST): ₹{lineBase.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                              <div className="text-[10px] text-slate-500">
+                                GST: {gstPct}% (+₹{lineGst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                              </div>
+                              <div className="text-[11px] font-bold text-emerald-700 mt-0.5">
+                                Total: ₹{lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
                             </td>
                           );
                         })}
+
+                        {/* Total Estimate Value */}
+                        <td className="p-3 text-emerald-900 text-center text-sm font-extrabold bg-emerald-50/40 whitespace-nowrap min-w-44">
+                          {v.totalValue !== null
+                            ? `₹${v.totalValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "—"}
+                        </td>
                       </tr>
                     ))}
-
-                    {/* Total Value Row */}
-                    <tr className="bg-emerald-50/30 font-bold border-t border-slate-350">
-                      <td className="p-3 text-emerald-800 uppercase tracking-wider text-xs sticky left-0 bg-emerald-50 whitespace-nowrap">Total Estimate Value</td>
-                      {groupVendorOptions.map((v) => (
-                        <td key={v.id} className="p-3 text-emerald-900 text-center text-sm font-semibold">
-                          {v.totalValue !== null ? `₹${v.totalValue.toLocaleString()}` : "—"}
-                        </td>
-                      ))}
-                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -1108,18 +1157,21 @@ export default function ApprovedVendor() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">GST (%) *</Label>
-                      <Input
-                        list={`manual-gst-options-${rec.id}`}
-                        value={manualGst[rec.id] || ""}
-                        onChange={(e) => setManualGst((prev) => ({ ...prev, [rec.id]: e.target.value }))}
-                        placeholder="e.g. 18"
-                        className="bg-white w-20 h-9"
-                      />
-                      <datalist id={`manual-gst-options-${rec.id}`}>
-                        {gstOptions.map((g) => (
-                          <option key={g.value} value={g.value} label={g.label} />
-                        ))}
-                      </datalist>
+                      <Select
+                        value={manualGst[rec.id] || "18"}
+                        onValueChange={(val) => setManualGst((prev) => ({ ...prev, [rec.id]: val }))}
+                      >
+                        <SelectTrigger className="bg-white w-28 h-9 text-xs">
+                          <SelectValue placeholder="Select GST" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {gstOptions.map((g) => (
+                            <SelectItem key={g.value} value={g.value} className="text-xs">
+                              {g.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 </div>

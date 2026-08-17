@@ -52,13 +52,14 @@ const styles = StyleSheet.create({
   bRight: { borderRightWidth: 1, borderColor: BORDER },
 
   // Header
-  headerLeft: { width: '58%', padding: 8 },
+  headerLeft: { width: '58%', padding: 8, paddingRight: 10 },
   headerRight: { width: '42%' },
   companyRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   logo: { width: 70, height: 26, objectFit: 'contain' },
+  companyTextWrap: { flex: 1, paddingRight: 6 },
   companyName: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
   companyAddress: { fontSize: 7, color: '#475569', marginTop: 3, lineHeight: 1.35 },
-  companyMeta: { fontSize: 7, color: '#475569', marginTop: 2 },
+  companyMeta: { fontSize: 7, color: '#475569', marginTop: 4 },
 
   metaRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 6, paddingVertical: 4 },
   metaLabel: { color: '#64748b', fontSize: 7 },
@@ -140,6 +141,7 @@ export interface POPdfDocumentProps {
   billingAddress: string;
   destinationName: string;
   destinationAddress: string;
+  remarks?: string;
   items: POPdfItem[];
   subtotal: string;
   gst: string;
@@ -174,6 +176,7 @@ export const POPdfDocument = ({
   billingAddress,
   destinationName,
   destinationAddress,
+  remarks,
   items,
   subtotal,
   gst,
@@ -200,7 +203,7 @@ export const POPdfDocument = ({
             <View style={[styles.headerLeft, styles.bRight]}>
               <View style={styles.companyRow}>
                 {logoUrl ? <Image src={logoUrl} style={styles.logo} /> : null}
-                <View>
+                <View style={styles.companyTextWrap}>
                   <Text style={styles.companyName}>Nutech</Text>
                   <Text style={styles.companyAddress}>{companyAddress}</Text>
                 </View>
@@ -320,6 +323,14 @@ export const POPdfDocument = ({
           <Text style={{ fontSize: 7.5, color: '#334155', marginTop: 4 }}>
             Advance payment agreed: Rs. {money(parseFloat(advanceAmount) || 0)}
           </Text>
+        ) : null}
+
+        {/* Remarks / Special Instructions */}
+        {remarks && remarks.trim() !== '' ? (
+          <View style={[styles.box, { marginTop: 6, padding: 6 }]}>
+            <Text style={styles.wordsLabel}>Description / Remarks</Text>
+            <Text style={{ fontSize: 7.5, color: '#0f172a', marginTop: 2, lineHeight: 1.35 }}>{remarks}</Text>
+          </View>
         ) : null}
 
         {/* Declaration / Terms */}

@@ -22,9 +22,10 @@ import { supabase } from "@/lib/supabase/client";
 
 const paymentTermsOptions = [
   { value: "Advance", label: "Advance" },
-  { value: "30", label: "30 days" },
-  { value: "60", label: "60 days" },
-  { value: "90", label: "90 days" }
+  { value: "30 days", label: "30 days" },
+  { value: "60 days", label: "60 days" },
+  { value: "90 days", label: "90 days" },
+  { value: "Custom", label: "Custom / Type Manually..." },
 ];
 
 const transportTypeOptions = [
@@ -34,6 +35,7 @@ const transportTypeOptions = [
 ];
 
 const gstOptions = [
+  { value: "0", label: "0%" },
   { value: "5", label: "5%" },
   { value: "12", label: "12%" },
   { value: "18", label: "18%" },
@@ -65,7 +67,8 @@ export default function PublicQuotationForm() {
 
   const [formRates, setFormRates] = useState<string[]>([]);
   const [formGst, setFormGst] = useState<string[]>([]);
-  const [commonTerms, setCommonTerms] = useState("30");
+  const [commonTerms, setCommonTerms] = useState("30 days");
+  const [customTerms, setCustomTerms] = useState("");
   const [commonDeliveryDate, setCommonDeliveryDate] = useState("");
   const [commonTransportType, setCommonTransportType] = useState("");
   const [commonRemarks, setCommonRemarks] = useState("");
@@ -79,10 +82,11 @@ export default function PublicQuotationForm() {
       indentItems.map((item, index) => {
         const rate = parseFloat(formRates[index]) || 0;
         const qty = parseFloat(item.quantity) || 0;
-        const gstPct = parseFloat(formGst[index]) || 0;
+        const gstValStr = formGst[index] !== undefined && formGst[index] !== "" ? formGst[index] : "18";
+        const gstPct = parseFloat(gstValStr) || 0;
         const base = rate * qty;
         const gstAmt = base * (gstPct / 100);
-        return { base, gstAmt, total: base + gstAmt };
+        return { base, gstAmt, total: base + gstAmt, gstValStr };
       }),
     [indentItems, formRates, formGst]
   );
@@ -122,7 +126,7 @@ export default function PublicQuotationForm() {
         if (fetchedItems.length > 0) {
           setIndentItems(fetchedItems);
           setFormRates(fetchedItems.map(() => ""));
-          setFormGst(fetchedItems.map(() => ""));
+          setFormGst(fetchedItems.map(() => "18"));
         } else {
           setErrorMsg("Indent details not found.");
         }
@@ -145,10 +149,16 @@ export default function PublicQuotationForm() {
         toast.error(`Please fill in Rate Per Qty for ${indentItems[i].itemName}.`);
         return;
       }
-      if (!formGst[i]?.trim()) {
+      const itemGst = String(formGst[i] || "18").trim();
+      if (!itemGst) {
         toast.error(`Please fill in GST % for ${indentItems[i].itemName}.`);
         return;
       }
+    }
+    const finalTerms = commonTerms === "Custom" ? customTerms.trim() : commonTerms;
+    if (!finalTerms) {
+      toast.error("Please specify or select Payment Terms.");
+      return;
     }
     if (!commonDeliveryDate) {
       toast.error("Please select Expected Delivery Date.");
@@ -165,12 +175,12 @@ export default function PublicQuotationForm() {
     try {
       const results = await Promise.all(
         indentItems.map(async (item, index): Promise<{ id: string; extendedFieldsSaved: boolean }> => {
-          const gstPercentNum = parseFloat(formGst[index]) || 0;
+          const gstPercentNum = parseFloat(formGst[index] || "18") || 0;
           const existingId = item._quotationIds?.[`vendor${vendorSlot}`];
           if (existingId) {
             const baseUpdate = {
               quoted_rate: parseFloat(formRates[index]),
-              payment_terms: commonTerms,
+              payment_terms: finalTerms,
               delivery_terms: commonDeliveryDate,
             };
             const { error } = await supabase
@@ -196,7 +206,7 @@ export default function PublicQuotationForm() {
           return submitQuotation(item.id, {
             vendorName: item.vendorName,
             quotedRate: parseFloat(formRates[index]),
-            paymentTerms: commonTerms,
+            paymentTerms: finalTerms,
             deliveryTerms: commonDeliveryDate,
             gstPercent: gstPercentNum,
             transportType: commonTransportType,
@@ -244,7 +254,7 @@ export default function PublicQuotationForm() {
             companyAddress={NUTECH_ADDRESS}
             vendorName={indentItems[0]?.vendorName || ""}
             submissionDate={new Date().toLocaleDateString("en-GB")}
-            paymentTerms={paymentTermsOptions.find((o) => o.value === commonTerms)?.label || commonTerms}
+            paymentTerms={finalTerms}
             deliveryDate={commonDeliveryDate}
             transportType={transportTypeOptions.find((o) => o.value === commonTransportType)?.label || commonTransportType}
             remarks={commonRemarks}
@@ -342,7 +352,7 @@ export default function PublicQuotationForm() {
                       <td className="p-3">{item.category}</td>
                       <td className="p-3 text-right">{item.quantity}</td>
                       <td className="p-3 text-right">₹{formRates[index]}</td>
-                      <td className="p-3 text-right">{formGst[index]}%</td>
+                      <td className="p-3 text-right">{itemTotals[index]?.gstValStr || formGst[index] || "18"}%</td>
                       <td className="p-3 text-right font-bold text-slate-900">₹{itemTotals[index]?.total.toFixed(2)}</td>
                     </tr>
                   ))}
@@ -450,24 +460,25 @@ export default function PublicQuotationForm() {
 
                     <div className="space-y-1">
                       <Label htmlFor={`gst-${index}`} className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">GST (%) *</Label>
-                      <Input
-                        id={`gst-${index}`}
-                        list={`gst-options-${index}`}
-                        value={formGst[index] || ""}
-                        onChange={(e) => {
+                      <Select
+                        value={formGst[index] || "18"}
+                        onValueChange={(val) => {
                           const updated = [...formGst];
-                          updated[index] = e.target.value;
+                          updated[index] = val;
                           setFormGst(updated);
                         }}
-                        placeholder="e.g. 18"
-                        className="bg-white w-24 h-9"
-                        required
-                      />
-                      <datalist id={`gst-options-${index}`}>
-                        {gstOptions.map((g) => (
-                          <option key={g.value} value={g.value} label={g.label} />
-                        ))}
-                      </datalist>
+                      >
+                        <SelectTrigger id={`gst-${index}`} className="bg-white w-28 h-9 text-xs">
+                          <SelectValue placeholder="Select GST" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {gstOptions.map((g) => (
+                            <SelectItem key={g.value} value={g.value} className="text-xs">
+                              {g.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="space-y-1">
@@ -503,9 +514,12 @@ export default function PublicQuotationForm() {
                   <Label htmlFor="commonTerms" className="text-xs font-bold text-slate-500 uppercase tracking-wider">Payment Terms <span className="text-red-500">*</span></Label>
                   <Select
                     value={commonTerms}
-                    onValueChange={(v) => setCommonTerms(v)}
+                    onValueChange={(v) => {
+                      setCommonTerms(v);
+                      if (v !== "Custom") setCustomTerms("");
+                    }}
                   >
-                    <SelectTrigger id="commonTerms">
+                    <SelectTrigger id="commonTerms" className="bg-white">
                       <SelectValue placeholder="Select terms" />
                     </SelectTrigger>
                     <SelectContent>
@@ -514,6 +528,17 @@ export default function PublicQuotationForm() {
                       ))}
                     </SelectContent>
                   </Select>
+
+                  {commonTerms === "Custom" && (
+                    <Input
+                      type="text"
+                      placeholder="Type custom payment terms (e.g. 50% Advance & 50% on Delivery)"
+                      value={customTerms}
+                      onChange={(e) => setCustomTerms(e.target.value)}
+                      required
+                      className="bg-white text-xs h-9 mt-2 border-slate-300 focus:border-slate-500"
+                    />
+                  )}
                 </div>
 
                 {/* Common Expected Delivery Date */}

@@ -22,7 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, Upload, X, Shield, ShieldCheck, Loader2, ClipboardList, History, Search, Plus, Trash2, Eye, Save, FileEdit, Send, ExternalLink, ChevronRight } from "lucide-react";
+import { FileText, Upload, X, Shield, ShieldCheck, Loader2, ClipboardList, History, Search, Plus, Trash2, Eye, Save, FileEdit, Send, ExternalLink, ChevronRight, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Popover,
@@ -185,6 +185,7 @@ export default function Stage5() {
       vendor1Terms: row.data.vendor1Terms,
       vendor1DeliveryDate: row.data.vendor1Delivery,
       vendor1TransportType: row.data.vendor1TransportType,
+      vendor1Gst: row.data.vendor1Gst,
       vendor1WarrantyType: "",
       vendor1WarrantyFrom: "",
       vendor1WarrantyTo: "",
@@ -195,6 +196,7 @@ export default function Stage5() {
       vendor2Terms: row.data.vendor2Terms,
       vendor2DeliveryDate: row.data.vendor2Delivery,
       vendor2TransportType: row.data.vendor2TransportType,
+      vendor2Gst: row.data.vendor2Gst,
       vendor2WarrantyType: "",
       vendor2WarrantyFrom: "",
       vendor2WarrantyTo: "",
@@ -205,6 +207,7 @@ export default function Stage5() {
       vendor3Terms: row.data.vendor3Terms,
       vendor3DeliveryDate: row.data.vendor3Delivery,
       vendor3TransportType: row.data.vendor3TransportType,
+      vendor3Gst: row.data.vendor3Gst,
       vendor3WarrantyType: "",
       vendor3WarrantyFrom: "",
       vendor3WarrantyTo: "",
@@ -238,6 +241,7 @@ export default function Stage5() {
       poSupplierName: po?.vendor_name || "",
       poDeliveryDate: po?.delivery_date || "",
       poDeliveryAddress: po?.delivery_address || "",
+      poRemarks: po?.remarks || po?.description || row.data.negotiationRemarks || "",
       // Delivery Location: prefer whatever was already saved on this
       // item's PO (Revise), else fall back to what was chosen back in
       // Create Indent.
@@ -340,50 +344,30 @@ export default function Stage5() {
 
   React.useEffect(() => {
     fetchData();
-    async function loadMasterVendors() {
+    async function loadMasterData() {
       try {
-        const { data } = await supabase.from("master_vendors").select("*").eq("is_active", true);
-        if (data && data.length > 0) {
-          setDbVendors(data);
+        const [vendorsRes, addressesRes, hsnRes, warehousesRes] = await Promise.all([
+          supabase.from("master_vendors").select("*").eq("is_active", true),
+          supabase.from("master_addresses").select("*").eq("is_active", true),
+          supabase.from("master_hsn_codes").select("name").eq("is_active", true),
+          supabase.from("master_warehouses").select("name").eq("is_active", true),
+        ]);
+        if (vendorsRes.data && vendorsRes.data.length > 0) setDbVendors(vendorsRes.data);
+        if (addressesRes.data && addressesRes.data.length > 0) {
+          setAddressOptions(addressesRes.data.map((a: any) => ({ name: a.name, address: a.address || "" })));
         }
+        if (hsnRes.data && hsnRes.data.length > 0) setHsnOptions(hsnRes.data.map((h: any) => h.name).filter(Boolean));
+        if (warehousesRes.data && warehousesRes.data.length > 0) setFirmWarehouseOptions(warehousesRes.data.map((w: any) => w.name).filter(Boolean));
       } catch (err) {
-        console.error("Error loading master vendors in PO entry:", err);
+        console.error("Error loading master options in PO entry:", err);
       }
     }
-    async function loadMasterAddresses() {
-      try {
-        const { data } = await supabase.from("master_addresses").select("*").eq("is_active", true);
-        if (data && data.length > 0) {
-          setAddressOptions(data.map((a: any) => ({ name: a.name, address: a.address || "" })));
-        }
-      } catch (err) {
-        console.error("Error loading master addresses in PO entry:", err);
-      }
-    }
-    async function loadMasterHsnCodes() {
-      try {
-        const { data } = await supabase.from("master_hsn_codes").select("name").eq("is_active", true);
-        if (data && data.length > 0) {
-          setHsnOptions(data.map((h: any) => h.name).filter(Boolean));
-        }
-      } catch (err) {
-        console.error("Error loading master HSN codes in PO entry:", err);
-      }
-    }
-    loadMasterVendors();
-    loadMasterAddresses();
-    loadMasterHsnCodes();
+    loadMasterData();
   }, []);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [divisionFilter, setDivisionFilter] = useState<string>("all");
   const [firmWarehouseOptions, setFirmWarehouseOptions] = useState<string[]>([]);
-
-  useEffect(() => {
-    supabase.from("master_warehouses").select("name").eq("is_active", true).then(({ data }) => {
-      setFirmWarehouseOptions((data || []).map((w: any) => w.name).filter(Boolean));
-    });
-  }, []);
 
   const pending = useMemo(() => sheetRecords
     .filter((r) => r.status === "pending")
@@ -556,9 +540,11 @@ export default function Stage5() {
   const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
 
   const transportTypeOptions = [
+    { value: "Door to Door", label: "Door to Door" },
+    { value: "Factory to Factory", label: "Factory to Factory" },
     { value: "Ex-Factory Only", label: "Ex-Factory Only" },
     { value: "Ex-Factory in Transport Office", label: "Ex-Factory in Transport Office" },
-    { value: "F.O.R.", label: "F.O.R." },
+    { value: "F.O.R.", label: "F.O.R. (Free On Road)" },
   ];
 
   const defaultPOForm = {
@@ -568,8 +554,8 @@ export default function Stage5() {
     deliveryLocation: "",
     transportType: "",
     paymentTerms: "advance",
-    advancePayment: "yes",
-    advanceAmount: "",
+    advancePayment: "no",
+    advanceAmount: "0",
     supplierEmail: "",
     supplierAddress: "",
     supplierContactPerson: "",
@@ -592,6 +578,7 @@ export default function Stage5() {
 
   const [poForm, setPoForm] = useState(defaultPOForm);
   const [terms, setTerms] = useState(defaultTerms);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   const selectedPORecords = useMemo(() => {
     return selectedRecordIds
@@ -644,8 +631,8 @@ export default function Stage5() {
       supplierBillingAddress: revisedVendorDetails?.billingAddress || "",
       supplierPan: revisedVendorDetails?.pan || "",
       poDate: firstRec.data.poDate ? formatInputDate(firstRec.data.poDate) : formatInputDate(firstRec.data.actual4),
-      deliveryLocation: firstRec.data.deliveryLocation || "",
-      transportType: firstRec.data.transportType || v.transportType || "",
+      deliveryLocation: (firstRec.data.deliveryLocation && firstRec.data.deliveryLocation !== "-") ? firstRec.data.deliveryLocation : (firstRec.data.warehouseLocation || "Raipur Warehouse"),
+      transportType: (firstRec.data.transportType && firstRec.data.transportType !== "-") ? firstRec.data.transportType : (v.transportType && v.transportType !== "-" ? v.transportType : "Door to Door"),
       paymentTerms: normalizePaymentTerms(firstRec.data.paymentType || v.terms),
       advancePayment: (firstRec.data.paymentType || "").toLowerCase().includes("no advance") ? "no" : "yes",
       advanceAmount: firstRec.data.advanceAmount && firstRec.data.advanceAmount !== "0" ? firstRec.data.advanceAmount : "",
@@ -759,14 +746,20 @@ export default function Stage5() {
       const quantity = parseFloat(record?.data?.quantity) || 0;
       const basicValue = (rateNum * quantity).toFixed(2);
 
+      const selectedId = String(record?.data?.selectedVendor || "vendor1");
+      const slotIdx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+      const slotGst = record?.data?.[`vendor${slotIdx}Gst`];
+      const vGst = slotGst ? `${slotGst}%` : (record?.data?.vendor1Gst ? `${record.data.vendor1Gst}%` : "18%");
+      const basicNum = parseFloat(basicValue) || 0;
+      const totalNum = (basicNum + basicNum * gstRateFor(vGst)).toFixed(2);
       initialData[id] = {
         rate: rate,
         basicValue: basicValue,
-        totalWithTax: basicValue, // Initially same until tax selected
-        hsn: "",        // HSN code
-        gst: "",        // GST% dropdown
-        paymentTerms: vendorData.terms || "advance", // Advance / Credit payment terms
-        deliveryDate: (vendorData as any).delivery ? formatInputDate((vendorData as any).delivery) : "", // Prefilled from that item's quoted delivery date
+        totalWithTax: totalNum,
+        hsn: record?.data?.hsn || "",
+        gst: vGst,
+        paymentTerms: vendorData.terms || "advance",
+        deliveryDate: (vendorData as any).delivery ? formatInputDate((vendorData as any).delivery) : "",
       };
     });
     // Find highest PO number in sheetRecords
@@ -791,23 +784,47 @@ export default function Stage5() {
     setTerms(defaultTerms);
     const firstRecord = sheetRecords.find((r) => r.id === selectedRecordIds[0]);
     const firstVendor = firstRecord ? getVendorData(firstRecord) : null;
-    const firstVendorDetails = firstVendor?.name ? vendorDetailsMap[firstVendor.name] : undefined;
+    const initialSupplier = (firstVendor?.name && firstVendor.name !== "-" && firstVendor.name.trim() !== "")
+      ? firstVendor.name
+      : (defaultSuppliers[0] || "Vendor Alpha Corp");
+
+    const supplierVendorData = firstRecord ? getVendorData(firstRecord, initialSupplier) : firstVendor;
+
+    const firstVendorDetails = vendorDetailsMap[initialSupplier] || (dbVendors.length > 0 ? {
+      contactPerson: dbVendors[0].contact_person,
+      phone: dbVendors[0].phone,
+      billingAddress: dbVendors[0].billing_address || dbVendors[0].address,
+      gstin: dbVendors[0].gstin,
+      pan: dbVendors[0].pan_number,
+    } : undefined);
+
+    const defaultDeliveryLoc = (firstRecord?.data.deliveryLocation && firstRecord.data.deliveryLocation !== "-" && firstRecord.data.deliveryLocation.trim() !== "")
+      ? firstRecord.data.deliveryLocation
+      : ((firstRecord?.data.warehouseLocation && firstRecord.data.warehouseLocation !== "-" && firstRecord.data.warehouseLocation.trim() !== "")
+          ? firstRecord.data.warehouseLocation
+          : "Raipur Warehouse");
+
+    const defaultTransport = (supplierVendorData?.transportType && supplierVendorData.transportType !== "-" && supplierVendorData.transportType.trim() !== "")
+      ? supplierVendorData.transportType
+      : (firstVendor?.transportType && firstVendor.transportType !== "-" && firstVendor.transportType.trim() !== "" ? firstVendor.transportType : "Door to Door");
+
     setPoForm({
       ...defaultPOForm,
-      firmName: firstRecord?.data.warehouseLocation || "",
-      supplierName: firstVendor?.name && firstVendor.name !== "-" ? firstVendor.name : "",
-      supplierEmail: firstVendor?.name ? (vendorEmailMap[firstVendor.name] || "") : "",
-      supplierAddress: firstVendor?.name ? (vendorAddressMap[firstVendor.name] || "") : "",
-      supplierContactPerson: firstVendorDetails?.contactPerson || "",
-      supplierPhone: firstVendorDetails?.phone || "",
-      supplierBillingAddress: firstVendorDetails?.billingAddress || "",
-      gstin: firstVendorDetails?.gstin || "",
-      supplierPan: firstVendorDetails?.pan || "",
-      deliveryLocation: firstRecord?.data.deliveryLocation || "",
-      transportType: firstVendor?.transportType || "",
-      paymentTerms: normalizePaymentTerms(firstVendor?.terms),
-      advanceAmount: "",
-      quotationNumber: `QUO-${firstRecord?.data.indentNumber || ""}`,
+      firmName: firstRecord?.data.warehouseLocation || "Nutech Pipes",
+      supplierName: initialSupplier,
+      supplierEmail: vendorEmailMap[initialSupplier] || `${initialSupplier.toLowerCase().replace(/\s+/g, "")}@example.com`,
+      supplierAddress: vendorAddressMap[initialSupplier] || firstVendorDetails?.billingAddress || "123 Industrial Area, Plot 45, MIDC, Mumbai",
+      supplierContactPerson: firstVendorDetails?.contactPerson || "Alice Manager",
+      supplierPhone: firstVendorDetails?.phone || "9123456789",
+      supplierBillingAddress: firstVendorDetails?.billingAddress || "123 Industrial Area, Plot 45, MIDC, Mumbai, Maharashtra 400093",
+      gstin: firstVendorDetails?.gstin || "27AAACV1234A1Z1",
+      supplierPan: firstVendorDetails?.pan || "AAACV1234A",
+      deliveryLocation: defaultDeliveryLoc,
+      transportType: defaultTransport,
+      paymentTerms: normalizePaymentTerms(firstVendor?.terms || "advance"),
+      advancePayment: "no",
+      advanceAmount: "0",
+      quotationNumber: `QUO-${firstRecord?.data.indentNumber || "001"}`,
       quotationDate: new Date().toISOString().split("T")[0],
       enquiryDate: new Date().toISOString().split("T")[0],
     });
@@ -1053,6 +1070,7 @@ export default function Stage5() {
               billingAddress={poForm.billingAddress}
               destinationName={poForm.destinationName}
               destinationAddress={poForm.destinationAddress}
+              remarks={poForm.remarks}
               items={pdfItems}
               subtotal={poSummary.subtotal.toFixed(2)}
               gst={poSummary.gst.toFixed(2)}
@@ -1128,15 +1146,108 @@ export default function Stage5() {
     setCommonPOCopy(null);
   };
 
-  const getVendorData = (record: any) => {
-    const selectedId = String(record.data.selectedVendor || "vendor1");
-    const idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+  const handleDownloadDraftPdf = async () => {
+    if (selectedRecordIds.length === 0) {
+      toast.error("No items selected to generate PO PDF.");
+      return;
+    }
+    setIsDownloadingPdf(true);
+    try {
+      const { pdf } = await import("@react-pdf/renderer");
+      const { POPdfDocument } = await import("./po-pdf");
+      const { perItemPkgTotal } = getPkgTotals(commonPkgAmount, commonPkgGST, selectedRecordIds.length);
+
+      const pdfItems = selectedPORecords.map((record: any, idx: number) => {
+        const v = getVendorData(record);
+        const data = bulkFormData[record.id] || {};
+        const total = (parseFloat(data.totalWithTax) || 0) + perItemPkgTotal;
+        return {
+          srNo: idx + 1,
+          itemName: record.data.itemName || "-",
+          indentNumber: record.data.indentNumber || "-",
+          quantity: record.data.quantity || "-",
+          uom: record.data.uom || "",
+          rate: data.rate !== undefined ? data.rate : (v.rate || "0"),
+          hsn: data.hsn || "",
+          gst: data.gst || "",
+          deliveryDate: data.deliveryDate ? formatDateDash(data.deliveryDate) : "-",
+          total: total.toFixed(2),
+          basicValue: data.basicValue || "0",
+        };
+      });
+
+      const blob = await pdf(
+        <POPdfDocument
+          logoUrl={`${window.location.origin}/nutech-logo.png`}
+          companyAddress={NUTECH_ADDRESS}
+          companyGstin={poForm.companyGstin}
+          poNumber={commonPONumber || "DRAFT_PO"}
+          poDate={formatDateDash(poForm.poDate)}
+          supplierName={poForm.supplierName}
+          supplierAddress={poForm.supplierAddress}
+          supplierGstin={poForm.gstin}
+          supplierEmail={poForm.supplierEmail}
+          deliveryLocation={poForm.deliveryLocation}
+          transportType={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || ""}
+          quotationNumber={poForm.quotationNumber}
+          quotationDate={formatDateDash(poForm.quotationDate)}
+          paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
+          advanceAmount={(poForm.advancePayment || "yes") === "yes" ? (poForm.advanceAmount || "") : ""}
+          billingName={poForm.billingName}
+          billingAddress={poForm.billingAddress}
+          destinationName={poForm.destinationName}
+          destinationAddress={poForm.destinationAddress}
+          remarks={poForm.remarks}
+          items={pdfItems}
+          subtotal={poSummary.subtotal.toFixed(2)}
+          gst={poSummary.gst.toFixed(2)}
+          grandTotal={poSummary.grandTotal.toFixed(2)}
+          terms={terms}
+        />
+      ).toBlob();
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${commonPONumber || "PO_Draft"}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success("PO PDF downloaded successfully.");
+    } catch (err: any) {
+      console.error("Error downloading PO PDF:", err);
+      toast.error(`Failed to download PO PDF: ${getErrorMessage(err)}`);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  const getVendorData = (record: any, targetVendorName?: string) => {
+    let idx = 1;
+    if (targetVendorName && targetVendorName !== "-" && targetVendorName.trim() !== "") {
+      const match1 = record.data.vendor1Name?.toLowerCase() === targetVendorName.toLowerCase();
+      const match2 = record.data.vendor2Name?.toLowerCase() === targetVendorName.toLowerCase();
+      const match3 = record.data.vendor3Name?.toLowerCase() === targetVendorName.toLowerCase();
+      if (match1) idx = 1;
+      else if (match2) idx = 2;
+      else if (match3) idx = 3;
+      else {
+        const selectedId = String(record.data.selectedVendor || "vendor1");
+        idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+      }
+    } else {
+      const selectedId = String(record.data.selectedVendor || "vendor1");
+      idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
+    }
+
     return {
       name: record.data[`vendor${idx}Name`] || "-",
       rate: record.data[`vendor${idx}Rate`],
       terms: record.data[`vendor${idx}Terms`],
       delivery: record.data[`vendor${idx}DeliveryDate`],
       transportType: record.data[`vendor${idx}TransportType`],
+      gst: record.data[`vendor${idx}Gst`],
       warrantyType: record.data[`vendor${idx}WarrantyType`],
       attachment: record.data[`vendor${idx}Attachment`],
       approvedBy: record.data.approvedBy || "Auto-Approved",
@@ -1435,14 +1546,15 @@ export default function Stage5() {
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">PO Details (Incl. HSN)</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Financials (Incl. GST%)</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Total Amount</TableHead>
-                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Make Copy</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">PO COPY</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Remarks</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {groupedHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={13} className="h-32 text-center text-gray-500 font-medium">
                         No completed PO entries found.
                       </TableCell>
                     </TableRow>
@@ -1576,6 +1688,11 @@ export default function Stage5() {
                             <span className="text-[11px] text-gray-400">-</span>
                           )}
                         </TableCell>
+                        <TableCell className="bg-white/50 border-l min-w-[150px] max-w-[280px]">
+                          <div className="text-xs text-slate-700 italic font-normal whitespace-pre-wrap break-words">
+                            {record.data.poRemarks || record.data.negotiationRemarks || "-"}
+                          </div>
+                        </TableCell>
                         <TableCell className="bg-white/50 border-l">
                           <Button
                             variant="outline"
@@ -1693,11 +1810,26 @@ export default function Stage5() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Name</Label>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Name</Label>
+                      {selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.name && getVendorData(selectedPORecords[0]).name !== "-" && (
+                        <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold gap-1 py-0">
+                          <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                          Approved Vendor
+                        </Badge>
+                      )}
+                    </div>
                     <Select
                       value={poForm.supplierName || undefined}
+                      disabled={poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.name && getVendorData(selectedPORecords[0]).name !== "-")}
                       onValueChange={(value) => {
                         const details = vendorDetailsMap[value];
+                        const firstRecord = selectedPORecords[0];
+                        const vData = firstRecord ? getVendorData(firstRecord, value) : null;
+                        const vendorTransport = (vData?.transportType && vData.transportType !== "-" && vData.transportType.trim() !== "")
+                          ? vData.transportType
+                          : "Door to Door";
+
                         setPoForm((prev) => ({
                           ...prev,
                           supplierName: value,
@@ -1708,10 +1840,11 @@ export default function Stage5() {
                           supplierBillingAddress: details?.billingAddress || "",
                           gstin: details?.gstin || "",
                           supplierPan: details?.pan || "",
+                          transportType: vendorTransport,
                         }));
                       }}
                     >
-                      <SelectTrigger className="w-full"><SelectValue placeholder="Select Supplier" /></SelectTrigger>
+                      <SelectTrigger className={`w-full ${poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.name && getVendorData(selectedPORecords[0]).name !== "-") ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : ""}`}><SelectValue placeholder="Select Supplier" /></SelectTrigger>
                       <SelectContent>
                         {Array.from(new Set([
                           ...selectedPORecords.map((record: any) => getVendorData(record).name).filter(Boolean),
@@ -1744,20 +1877,38 @@ export default function Stage5() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Delivery Location</Label>
-                    {/* Prefilled from the indent (Create Indent's Delivery Location) —
-                        not editable here, so it can't drift from what was actually indented. */}
-                    <Input value={poForm.deliveryLocation || "-"} readOnly disabled className="bg-slate-100 text-slate-600 cursor-not-allowed" />
+                    <Input
+                      value={poForm.deliveryLocation || "Raipur Warehouse"}
+                      onChange={(e) => setPoForm((prev) => ({ ...prev, deliveryLocation: e.target.value }))}
+                      placeholder="e.g. Raipur Warehouse"
+                    />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
-                    {/* Prefilled from the vendor's accepted quotation — not editable
-                        here, so it can't drift from what the vendor actually quoted. */}
-                    <Input
-                      value={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || "-"}
-                      readOnly
-                      disabled
-                      className="bg-slate-100 text-slate-600 cursor-not-allowed"
-                    />
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
+                      {selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-" && (
+                        <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold py-0">
+                          Approved Quotation
+                        </Badge>
+                      )}
+                    </div>
+                    <Select
+                      value={poForm.transportType || "Door to Door"}
+                      disabled={poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-")}
+                      onValueChange={(val) => setPoForm((prev) => ({ ...prev, transportType: val }))}
+                    >
+                      <SelectTrigger className={`w-full border-slate-200 text-xs h-10 ${poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-") ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : "bg-white"}`}>
+                        <SelectValue placeholder="Select Transport Type" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white border text-xs shadow-md z-50">
+                        {Array.from(new Set([
+                          ...(poForm.transportType ? [poForm.transportType] : []),
+                          ...transportTypeOptions.map((t) => t.value)
+                        ])).filter(Boolean).map((val) => (
+                          <SelectItem key={val} value={val}>{val}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Contact Person</Label>
@@ -1798,11 +1949,11 @@ export default function Stage5() {
                   <div className="space-y-1.5">
                      <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">Advance Payment *</Label>
                     <Select
-                      value={poForm.advancePayment || "yes"}
+                      value={poForm.advancePayment || "no"}
                       onValueChange={(val) => setPoForm((prev) => ({
                         ...prev,
                         advancePayment: val,
-                        advanceAmount: val === "no" ? "" : prev.advanceAmount
+                        advanceAmount: val === "no" ? "0" : (prev.advanceAmount && prev.advanceAmount !== "0" ? prev.advanceAmount : "5000")
                       }))}
                     >
                       <SelectTrigger className="w-full bg-white border-slate-300 font-semibold text-xs h-10">
@@ -1814,7 +1965,7 @@ export default function Stage5() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {(poForm.advancePayment || "yes") === "yes" && (
+                  {(poForm.advancePayment || "no") === "yes" && (
                     <div className="space-y-1.5">
                       <Label className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">Advance Amount (₹) *</Label>
                       <Input
@@ -1934,6 +2085,14 @@ export default function Stage5() {
                         const data = bulkFormData[record.id] || {};
                         const baseTotal = parseFloat(data.totalWithTax) || 0;
                         const pkgShare = getPkgTotals(commonPkgAmount, commonPkgGST, selectedRecordIds.length).perItemPkgTotal;
+
+                        const selectedIdx = parseInt(String(record.data.selectedVendor || "vendor1").replace("vendor", ""), 10) || 1;
+                        const rawSlotGst = v.gst || record.data[`vendor${selectedIdx}Gst`] || record.data.vendor1Gst || data.gst;
+
+                        const isRateLocked = poMode === "create" && !!(v.rate && String(v.rate) !== "-" && String(v.rate).trim() !== "");
+                        const isGstLocked = poMode === "create" && !!(rawSlotGst && String(rawSlotGst) !== "-" && String(rawSlotGst).trim() !== "");
+                        const isDeliveryLocked = poMode === "create" && !!(v.delivery && String(v.delivery) !== "-" && String(v.delivery).trim() !== "");
+
                         return (
                           <tr key={record.id} className="border-t">
                             <td className="px-4 py-3 text-slate-500">{index + 1}</td>
@@ -1948,6 +2107,8 @@ export default function Stage5() {
                                 <Input
                                   type="number"
                                   step="0.01"
+                                  readOnly={isRateLocked}
+                                  disabled={isRateLocked}
                                   value={data.rate !== undefined ? data.rate : (v.rate || "")}
                                   onChange={(e) => {
                                     const newRate = e.target.value;
@@ -1967,7 +2128,8 @@ export default function Stage5() {
                                     }));
                                   }}
                                   placeholder="0.00"
-                                  className="h-8 w-28 text-right font-semibold bg-white border-slate-300"
+                                  title={isRateLocked ? "Locked from Approved Vendor Quotation" : undefined}
+                                  className={`h-8 w-28 text-right font-semibold border-slate-300 ${isRateLocked ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : "bg-white"}`}
                                 />
                               </div>
                             </td>
@@ -1989,11 +2151,10 @@ export default function Stage5() {
                               </Select>
                             </td>
                             <td className="px-4 py-3">
-                              <Input
-                                list={`gst-options-${record.id}`}
-                                value={data.gst || ""}
-                                onChange={(e) => {
-                                  const val = e.target.value;
+                              <Select
+                                value={data.gst || "18%"}
+                                disabled={isGstLocked}
+                                onValueChange={(val) => {
                                   const basic = parseFloat(data.basicValue) || 0;
                                   const total = (basic + basic * gstRateFor(val)).toFixed(2);
                                   setBulkFormData((prev) => ({
@@ -2001,22 +2162,29 @@ export default function Stage5() {
                                     [record.id]: { ...prev[record.id], gst: val, totalWithTax: total },
                                   }));
                                 }}
-                                placeholder="GST %"
-                                className="h-8 min-w-24"
-                              />
-                              <datalist id={`gst-options-${record.id}`}>
-                                <option value="5%" />
-                                <option value="12%" />
-                                <option value="18%" />
-                                <option value="28%" />
-                              </datalist>
+                              >
+                                <SelectTrigger className={`h-8 min-w-28 border-slate-300 ${isGstLocked ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : "bg-white"}`}>
+                                  <SelectValue placeholder="GST %" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-white border text-xs shadow-md z-50">
+                                  {Array.from(new Set([
+                                    ...(data.gst ? [data.gst] : []),
+                                    "0%", "5%", "12%", "18%", "28%"
+                                  ])).map((opt) => (
+                                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </td>
                             <td className="px-4 py-3">
                               <Input
                                 type="date"
+                                readOnly={isDeliveryLocked}
+                                disabled={isDeliveryLocked}
                                 value={data.deliveryDate || ""}
                                 onChange={(e) => setBulkFormData((prev) => ({ ...prev, [record.id]: { ...prev[record.id], deliveryDate: e.target.value } }))}
-                                className="h-8 min-w-36"
+                                title={isDeliveryLocked ? "Locked from Approved Vendor Quotation" : undefined}
+                                className={`h-8 min-w-36 ${isDeliveryLocked ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : ""}`}
                               />
                             </td>
                             <td className="px-4 py-3 text-right font-medium">Rs. {(baseTotal + pkgShare).toFixed(2)}</td>
@@ -2064,40 +2232,56 @@ export default function Stage5() {
             </div>
           </form>
 
-          <DialogFooter className="grid grid-cols-3 gap-1 border-t bg-white p-4">
+          <DialogFooter className="flex items-center justify-between gap-2 border-t bg-white p-4">
             <Button type="button" variant="secondary" onClick={resetPOForm} disabled={isSubmitting}>
               Reset
             </Button>
-            <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
-              <Eye className="mr-2 h-4 w-4" />
-              Preview
-            </Button>
-            <Button
-              onClick={handleBulkSubmit}
-              disabled={
-                isSubmitting ||
-                selectedRecordIds.length === 0 ||
-                !commonPONumber.trim() ||
-                ((poForm.advancePayment || "yes") === "yes" && !poForm.advanceAmount) ||
-                !selectedRecordIds.every((id) => {
-                  const d = bulkFormData[id];
-                  return d?.basicValue && d?.totalWithTax && d?.gst;
-                })
-              }
-              className="bg-indigo-500 text-white hover:bg-indigo-600"
-            >
-              {isSubmitting ? (
-                <>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
+                <Eye className="mr-2 h-4 w-4" />
+                Preview
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDownloadDraftPdf}
+                disabled={selectedRecordIds.length === 0 || isDownloadingPdf}
+                className="bg-white border-slate-300 text-indigo-700 hover:bg-indigo-50 font-medium"
+              >
+                {isDownloadingPdf ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
-                </>
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  {poMode === "revise" ? "Update PO" : "Send PO"}
-                </>
-              )}
-            </Button>
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                Download PDF
+              </Button>
+              <Button
+                onClick={handleBulkSubmit}
+                disabled={
+                  isSubmitting ||
+                  selectedRecordIds.length === 0 ||
+                  !commonPONumber.trim() ||
+                  ((poForm.advancePayment || "no") === "yes" && !poForm.advanceAmount) ||
+                  !selectedRecordIds.every((id) => {
+                    const d = bulkFormData[id];
+                    return d?.basicValue && d?.totalWithTax && d?.gst;
+                  })
+                }
+                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-2 h-4 w-4" />
+                    {poMode === "revise" ? "Update PO" : "Send PO"}
+                  </>
+                )}
+              </Button>
+            </div>
           </DialogFooter>
 
           <div className="hidden">
@@ -2554,6 +2738,16 @@ export default function Stage5() {
                   </div>
                 </div>
 
+                {/* Remarks block */}
+                {poForm.remarks && poForm.remarks.trim() !== "" && (
+                  <div className="pt-4 space-y-1">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Description / Remarks</h4>
+                    <div className="bg-slate-50 border rounded-lg p-3 text-xs text-slate-700 leading-relaxed font-normal whitespace-pre-wrap">
+                      {poForm.remarks}
+                    </div>
+                  </div>
+                )}
+
                 {/* Terms and Conditions block */}
                 <div className="pt-6 space-y-2">
                   <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Terms & Conditions</h4>
@@ -2580,9 +2774,22 @@ export default function Stage5() {
             </div>
           </div>
 
-          <DialogFooter className="p-4 bg-slate-800 shrink-0 border-t border-slate-700">
+          <DialogFooter className="p-4 bg-slate-800 shrink-0 border-t border-slate-700 flex items-center justify-between">
             <Button type="button" variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700" onClick={() => setPreviewOpen(false)}>
               Close Preview
+            </Button>
+            <Button
+              type="button"
+              onClick={handleDownloadDraftPdf}
+              disabled={isDownloadingPdf}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium"
+            >
+              {isDownloadingPdf ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Download PDF
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { X, Loader2, PlusCircle, History as HistoryIcon, LayoutGrid, ClipboardList, FileText, Upload, Search, Check, ChevronsUpDown } from "lucide-react";
+import { X, Loader2, PlusCircle, History as HistoryIcon, LayoutGrid, ClipboardList, FileText, Upload, Search, Check, ChevronsUpDown, Package } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn, parseSheetDate, getFmsTimestamp, getErrorMessage } from "@/lib/utils";
 import {
@@ -153,6 +153,7 @@ export default function Stage1() {
     placeholder,
     searchPlaceholder,
     disabled,
+    stockMap,
   }: {
     options: string[];
     value: string;
@@ -160,6 +161,7 @@ export default function Stage1() {
     placeholder: string;
     searchPlaceholder: string;
     disabled?: boolean;
+    stockMap?: Record<string, number>;
   }) => {
     const [open, setOpen] = useState(false);
     const [searchValue, setSearchValue] = useState("");
@@ -174,9 +176,11 @@ export default function Stage1() {
             className={cn("w-full justify-between font-normal", !value && "text-muted-foreground")}
             disabled={disabled}
           >
-            {value
-              ? options.find((option) => option === value) || value
-              : placeholder}
+            <span className="truncate">
+              {value
+                ? options.find((option) => option === value) || value
+                : placeholder}
+            </span>
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
@@ -202,24 +206,43 @@ export default function Stage1() {
                 </div>
               </CommandEmpty>
               <CommandGroup>
-                {options.map((option) => (
-                  <CommandItem
-                    key={option}
-                    value={option}
-                    onSelect={() => {
-                      onChange(option);
-                      setOpen(false);
-                    }}
-                  >
-                    <Check
-                      className={cn(
-                        "mr-2 h-4 w-4",
-                        value === option ? "opacity-100" : "opacity-0"
+                {options.map((option) => {
+                  const hasStockData = stockMap && option in stockMap;
+                  const stockQty = stockMap ? (stockMap[option] || 0) : null;
+                  return (
+                    <CommandItem
+                      key={option}
+                      value={option}
+                      onSelect={() => {
+                        onChange(option);
+                        setOpen(false);
+                      }}
+                      className="flex items-center justify-between"
+                    >
+                      <div className="flex items-center truncate mr-2">
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4 shrink-0",
+                            value === option ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        <span className="truncate">{option}</span>
+                      </div>
+                      {stockMap && (
+                        <span
+                          className={cn(
+                            "ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0",
+                            stockQty && stockQty > 0
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-slate-100 text-slate-500"
+                          )}
+                        >
+                          Stock: {stockQty || 0}
+                        </span>
                       )}
-                    />
-                    {option}
-                  </CommandItem>
-                ))}
+                    </CommandItem>
+                  );
+                })}
               </CommandGroup>
             </CommandList>
           </Command>
@@ -288,8 +311,15 @@ export default function Stage1() {
 
 
 
+  // Stock and UOM maps
+  const [itemStockMap, setItemStockMap] = useState<Record<string, number>>({});
+  const [itemUomMap, setItemUomMap] = useState<Record<string, string>>({});
+
   // Fetch "Created By" options from Dropdown sheet column A
   const [createdByOptions, setCreatedByOptions] = useState<string[]>([]);
+  // Master Category options state
+  const [masterCategoryList, setMasterCategoryList] = useState<string[]>([]);
+
   // Fetch "Warehouse Location" options from Dropdown sheet column B
   const [warehouseOptions, setWarehouseOptions] = useState<string[]>([]);
   // Fetch "UOM" options from Dropdown sheet column N (Index 13)
@@ -297,17 +327,20 @@ export default function Stage1() {
   // Fetch "Delivery Location" options from Master → Delivery Locations
   const [deliveryLocationOptions, setDeliveryLocationOptions] = useState<string[]>([]);
   // Fetch dropdown data for Category (D), Item Name (E), Item Code (C)
-  const [dropdownData, setDropdownData] = useState<Array<{ itemCode: string; category: string; itemName: string }>>([]);
+  const [dropdownData, setDropdownData] = useState<Array<{ itemCode: string; category: string; itemName: string; uom?: string }>>([]);
 
   useEffect(() => {
     const fetchDropdownOptions = async () => {
       try {
-        const [cbRes, whRes, uomRes, itemRes, addrRes] = await Promise.all([
+        const [cbRes, whRes, uomRes, itemRes, addrRes, mrRes, poRes, catRes] = await Promise.all([
           supabase.from("master_created_by").select("name").eq("is_active", true),
           supabase.from("master_warehouses").select("name").eq("is_active", true),
           supabase.from("master_uoms").select("name").eq("is_active", true),
           supabase.from("master_items").select("item_code, category, item_name, uom").eq("is_active", true),
           supabase.from("master_delivery_locations").select("name").eq("is_active", true),
+          supabase.from("material_receipts").select("po_id, accepted_quantity, received_quantity"),
+          supabase.from("purchase_orders").select("id, item_code, item_name"),
+          supabase.from("master_categories").select("name").eq("is_active", true),
         ]);
 
         const cbOpts = (cbRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
@@ -322,12 +355,43 @@ export default function Stage1() {
         const addrOpts = (addrRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
         setDeliveryLocationOptions(addrOpts);
 
-        const itemData = (itemRes.data || []).map((r: any) => ({
-          category: r.category || "",
-          itemName: r.item_name || "",
-          itemCode: r.item_code || "",
-        })).filter((item: any) => item.category && item.itemName);
+        const catOpts = (catRes.data || []).map((r: any) => r.name).filter((v: any) => v && String(v).trim() !== "");
+        setMasterCategoryList(catOpts);
+
+        const uomMap: Record<string, string> = {};
+        const itemData = (itemRes.data || []).map((r: any) => {
+          if (r.item_name && r.uom) uomMap[r.item_name] = r.uom;
+          if (r.item_code && r.uom) uomMap[r.item_code] = r.uom;
+          return {
+            category: r.category || "",
+            itemName: r.item_name || "",
+            itemCode: r.item_code || "",
+            uom: r.uom || "",
+          };
+        }).filter((item: any) => item.category && item.itemName);
         setDropdownData(itemData);
+        setItemUomMap(uomMap);
+
+        // Compute stock from material_receipts joined with purchase_orders
+        const poMap: Record<string, { item_code?: string; item_name?: string }> = {};
+        (poRes.data || []).forEach((po: any) => {
+          poMap[po.id] = { item_code: po.item_code, item_name: po.item_name };
+        });
+
+        const stockMap: Record<string, number> = {};
+        (mrRes.data || []).forEach((mr: any) => {
+          const qty = Number(mr.accepted_quantity !== undefined && mr.accepted_quantity !== null ? mr.accepted_quantity : mr.received_quantity || 0) || 0;
+          const poInfo = poMap[mr.po_id];
+          if (poInfo) {
+            if (poInfo.item_name) {
+              stockMap[poInfo.item_name] = (stockMap[poInfo.item_name] || 0) + qty;
+            }
+            if (poInfo.item_code) {
+              stockMap[poInfo.item_code] = (stockMap[poInfo.item_code] || 0) + qty;
+            }
+          }
+        });
+        setItemStockMap(stockMap);
       } catch (e) {
         console.error("Error fetching dropdown options:", e);
       }
@@ -335,12 +399,17 @@ export default function Stage1() {
     fetchDropdownOptions();
   }, []);
 
-  // Get unique categories from dropdown data
-  const categoryOptions = useMemo(() => [...new Set(dropdownData.map(item => item.category))].filter(Boolean), [dropdownData]);
+  // Combine categories from master_categories table and existing catalog items
+  const categoryOptions = useMemo(() => {
+    const fromItems = dropdownData.map(item => item.category);
+    const combined = [...masterCategoryList, ...fromItems].map(c => String(c).trim()).filter(Boolean);
+    return Array.from(new Set(combined));
+  }, [masterCategoryList, dropdownData]);
 
-  // Get items filtered by selected category
+  // Get items filtered by selected category (case-insensitive)
   const getItemsByCategory = (category: string) => {
-    const items = dropdownData.filter(item => item.category === category);
+    const targetCat = category.trim().toLowerCase();
+    const items = dropdownData.filter(item => (item.category || "").trim().toLowerCase() === targetCat);
     // Deduplicate by itemName to prevent duplicate key errors in the dropdown
     return Array.from(new Map(items.map(item => [item.itemName, item])).values());
   };
@@ -383,6 +452,12 @@ export default function Stage1() {
         }));
 
         await supabase.from("master_items").upsert(rowsToInsert, { onConflict: "item_code" });
+
+        // Save unique category names to master_categories table
+        const uniqueCats = Array.from(new Set(newOptions.map(opt => opt.category).filter(Boolean)));
+        for (const cat of uniqueCats) {
+          await supabase.from("master_categories").upsert({ name: cat, is_active: true }, { onConflict: "name" });
+        }
       } catch (e) {
         console.error("Failed to save new options:", e);
       }
@@ -480,10 +555,12 @@ export default function Stage1() {
         const selectedItem = dropdownData.find(
           (d) => d.category === prev.category && d.itemName === value
         );
+        const autoUom = selectedItem?.uom || itemUomMap[value] || prev.uom;
         return {
           ...prev,
           itemName: value,
-          itemCode: selectedItem?.itemCode || "",
+          itemCode: selectedItem?.itemCode || prev.itemCode || "",
+          uom: autoUom || prev.uom,
         };
       }
       return { ...prev, [field]: value };
@@ -729,6 +806,7 @@ export default function Stage1() {
                   placeholder={itemInput.category ? "Select or type item..." : "Select category first"}
                   searchPlaceholder="Search or create item..."
                   disabled={!itemInput.category}
+                  stockMap={itemStockMap}
                 />
               </div>
 
@@ -746,7 +824,22 @@ export default function Stage1() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="space-y-1.5">
-                <Label>Quantity <span className="text-red-500">*</span></Label>
+                <div className="flex items-center justify-between">
+                  <Label>Quantity <span className="text-red-500">*</span></Label>
+                  {itemInput.itemName && (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border",
+                        (itemStockMap[itemInput.itemName] || itemStockMap[itemInput.itemCode] || 0) > 0
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                          : "bg-amber-50 text-amber-700 border-amber-300"
+                      )}
+                    >
+                      <Package className="w-3 h-3" />
+                      Avail: {itemStockMap[itemInput.itemName] || itemStockMap[itemInput.itemCode] || 0} {itemInput.uom || itemUomMap[itemInput.itemName] || "Nos"}
+                    </span>
+                  )}
+                </div>
                 <Input
                   type="number"
                   min="1"
@@ -794,7 +887,7 @@ export default function Stage1() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="leadTime">Expected Requirement Date <span className="text-red-500">*</span></Label>
+                <Label htmlFor="leadTime">Expected Date of Raw Material Delivery <span className="text-red-500">*</span></Label>
                 <Input
                   id="leadTime"
                   type="date"
@@ -1009,19 +1102,28 @@ export default function Stage1() {
                       setEditFormData({
                         ...editFormData,
                         itemName: val,
-                        itemCode: selectedItem?.itemCode || ""
+                        itemCode: selectedItem?.itemCode || "",
+                        uom: selectedItem?.uom || itemUomMap[val] || editFormData.uom,
                       });
                     }}
                     placeholder={editFormData.category ? "Select item" : "Select category first"}
                     searchPlaceholder="Search item..."
                     disabled={!editFormData.category}
+                    stockMap={itemStockMap}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Quantity</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Quantity</Label>
+                    {editFormData.itemName && (
+                      <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        Avail: {itemStockMap[editFormData.itemName] || itemStockMap[editFormData.itemCode] || 0} {editFormData.uom || itemUomMap[editFormData.itemName] || "Nos"}
+                      </span>
+                    )}
+                  </div>
                   <Input
                     type="number"
                     min="1"
@@ -1056,7 +1158,7 @@ export default function Stage1() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Expected Requirement Date</Label>
+                  <Label>Expected Date of Raw Material Delivery</Label>
                   <Input
                     type="date"
                     value={editFormData.leadTime}

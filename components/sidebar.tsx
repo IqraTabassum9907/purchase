@@ -141,15 +141,15 @@ export default function Sidebar() {
         // a PO whose payment plan needs an advance stays parked in Payment's
         // own Pending tab (not counted here) until "Need Advance Payment
         // Again" is explicitly recorded.
-        const advanceStatusByPoId = new Map<string, string>();
+        const advancePaymentsByPoId = new Map<string, boolean>();
         (g.vp || []).forEach((p: any) => {
           if (!p.po_id || p.payment_type !== "Advance") return;
-          advanceStatusByPoId.set(p.po_id, p.advance_status || ""); // ascending order — last write wins = latest
+          advancePaymentsByPoId.set(p.po_id, true);
         });
         newCounts["Follow UP / Lifting"] = g.pos.filter((p: any) => {
           if (actualLiftedPoIds.has(p.id)) return false;
           const requiresAdvanceDecision = !String(p.payment_type || "").toLowerCase().includes("no advance");
-          if (requiresAdvanceDecision && advanceStatusByPoId.get(p.id) !== "need_again") return false;
+          if (requiresAdvanceDecision && !advancePaymentsByPoId.has(p.id)) return false;
           return true;
         }).length;
       }
@@ -257,14 +257,9 @@ export default function Sidebar() {
     window.addEventListener("stageUpdated", handleUpdate);
     window.addEventListener("focus", handleUpdate);
 
-    const interval = setInterval(() => {
-      fetchCounts();
-    }, 3000);
-
     return () => {
       window.removeEventListener("stageUpdated", handleUpdate);
       window.removeEventListener("focus", handleUpdate);
-      clearInterval(interval);
     };
   }, [fetchCounts]);
 

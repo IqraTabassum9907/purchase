@@ -337,10 +337,16 @@ export default function FollowUpLifting() {
       // on to Follow UP / Lifting now ("need_again") or should stay parked in
       // Payment > Advance Pending ("not_needed_again"). POs whose payment
       // type never required an advance in the first place skip this gate.
-      const advanceStatusByPoId = new Map<string, string>();
+      const advanceStatusByPoId = new Map<string, { status: string; paid: number; amount: number }>();
       (advPaymentsResult.data || []).forEach((p: any) => {
         if (!p.po_id || p.payment_type !== "Advance") return;
-        advanceStatusByPoId.set(p.po_id, p.advance_status || ""); // ascending order — last write wins = latest
+        const existing = advanceStatusByPoId.get(p.po_id) || { status: "", paid: 0, amount: 0 };
+        const newPaid = existing.paid + (parseFloat(p.amount) || 0);
+        advanceStatusByPoId.set(p.po_id, {
+          status: p.advance_status || existing.status || "",
+          paid: newPaid,
+          amount: parseFloat(p.advance_amount || "0") || existing.amount,
+        });
       });
 
       // Latest "Arrange Logistics" details per PO — kept visible in Pending
@@ -467,7 +473,10 @@ export default function FollowUpLifting() {
             // back in Payment's own Pending tab instead).
             const poPayTypeLower = String(po.payment_type || "").toLowerCase();
             const requiresAdvanceDecision = !poPayTypeLower.includes("no advance");
-            if (requiresAdvanceDecision && advanceStatusByPoId.get(po.id) !== "need_again") {
+            const advInfo = advanceStatusByPoId.get(po.id);
+            const advRequired = parseFloat(po.advance_amount || po.advance_amt || "0") || advInfo?.amount || 0;
+            const isAdvCleared = !requiresAdvanceDecision || (!!advInfo && ((advInfo.paid >= (advRequired - 0.01)) || advInfo.status === "not_needed_again" || advInfo.status === "completed" || advInfo.status === "need_again" || advInfo.paid > 0));
+            if (requiresAdvanceDecision && !isAdvCleared) {
               rows.push({
                 id: `${row.id}__${po.id}`,
                 rowIndex: row.originalIndex,

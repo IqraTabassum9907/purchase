@@ -69,12 +69,12 @@ export default function DelegateApproval() {
   const [divisionFilter, setDivisionFilter] = useState<string>("all");
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
-  const [selectedApprovers, setSelectedApprovers] = useState<string[]>([]);
+  const [selectedApprover, setSelectedApprover] = useState<string>("");
 
   // Per-row "Action" form — delegate a single indent via its own dialog.
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogRecord, setDialogRecord] = useState<any>(null);
-  const [dialogApprovers, setDialogApprovers] = useState<string[]>([]);
+  const [dialogApprover, setDialogApprover] = useState<string>("");
   const [isDialogSubmitting, setIsDialogSubmitting] = useState(false);
 
   const fetchData = async () => {
@@ -119,54 +119,64 @@ export default function DelegateApproval() {
 
   useEffect(() => {
     fetchData();
-  }, []);
 
-  useEffect(() => {
-    const fetchOptions = async () => {
-      try {
-        const [usersRes, whRes] = await Promise.all([
-          supabase.from("users_master").select("username, full_name"),
-          supabase.from("master_warehouses").select("name").eq("is_active", true),
-        ]);
-        setApproverOptions(
-          (usersRes.data || [])
-            .map((u: any) => ({ username: u.username, fullName: u.full_name || u.username }))
-            .filter((u: ApproverOption) => u.username)
-        );
-        setWarehouseOptions((whRes.data || []).map((w: any) => w.name).filter(Boolean));
-      } catch (e) {
-        console.error("Error fetching dropdown options:", e);
-      }
-    };
-    fetchOptions();
-  }, []);
-
-  const filtered = useMemo(
-    () =>
-      sheetRecords
-        .filter((r) => divisionFilter === "all" || r.warehouseLocation === divisionFilter)
-        .filter((r) => {
-          const q = searchTerm.toLowerCase();
-          if (!q) return true;
-          return (
-            r.indentNumber?.toLowerCase().includes(q) ||
-            r.itemName?.toLowerCase().includes(q) ||
-            r.createdBy?.toLowerCase().includes(q)
+    // Fetch users for approver dropdown
+    supabase
+      .from("users_master")
+      .select("username, full_name")
+      .order("full_name", { ascending: true })
+      .then(({ data, error }) => {
+        if (error) console.error("Error loading users_master:", error);
+        if (!error && data) {
+          setApproverOptions(
+            data
+              .filter((u: any) => u.username)
+              .map((u: any) => ({ username: u.username, fullName: u.full_name || u.username }))
           );
-        }),
-    [sheetRecords, searchTerm, divisionFilter]
-  );
+        }
+      });
 
-  // Pending = not yet delegated to anyone. History = delegated at least once
-  // (and now visible in Indent Approval too).
-  const pendingList = useMemo(
-    () => filtered.filter((r) => (delegationsByIndent[r.id] || []).length === 0),
-    [filtered, delegationsByIndent]
-  );
-  const historyList = useMemo(
-    () => filtered.filter((r) => (delegationsByIndent[r.id] || []).length > 0),
-    [filtered, delegationsByIndent]
-  );
+    // Fetch warehouse locations for division filter
+    supabase
+      .from("master_warehouses")
+      .select("name")
+      .eq("is_active", true)
+      .then(({ data }) => {
+        if (data) {
+          setWarehouseOptions(data.map((w: any) => w.name).filter(Boolean));
+        }
+      });
+  }, []);
+
+  const pendingList = useMemo(() => {
+    return sheetRecords
+      .filter((r) => divisionFilter === "all" || r.warehouseLocation === divisionFilter)
+      .filter((r) => {
+        const searchLower = searchTerm.toLowerCase();
+        if (!searchLower) return true;
+        return (
+          r.indentNumber?.toLowerCase().includes(searchLower) ||
+          r.itemName?.toLowerCase().includes(searchLower) ||
+          r.createdBy?.toLowerCase().includes(searchLower)
+        );
+      })
+      .filter((r) => (delegationsByIndent[r.id] || []).length === 0);
+  }, [sheetRecords, searchTerm, divisionFilter, delegationsByIndent]);
+
+  const historyList = useMemo(() => {
+    return sheetRecords
+      .filter((r) => divisionFilter === "all" || r.warehouseLocation === divisionFilter)
+      .filter((r) => {
+        const searchLower = searchTerm.toLowerCase();
+        if (!searchLower) return true;
+        return (
+          r.indentNumber?.toLowerCase().includes(searchLower) ||
+          r.itemName?.toLowerCase().includes(searchLower) ||
+          r.createdBy?.toLowerCase().includes(searchLower)
+        );
+      })
+      .filter((r) => (delegationsByIndent[r.id] || []).length > 0);
+  }, [sheetRecords, searchTerm, divisionFilter, delegationsByIndent]);
 
   useEffect(() => {
     reportPendingCount("Delegate for Approval", pendingList.length);
@@ -184,21 +194,18 @@ export default function DelegateApproval() {
     else setSelectedRecords(pendingList.map((r) => r.id));
   };
 
-  const toggleApprover = (username: string) => {
-    setSelectedApprovers((prev) => (prev.includes(username) ? prev.filter((x) => x !== username) : [...prev, username]));
-  };
-
   const handleDelegate = async () => {
-    if (selectedRecords.length === 0 || selectedApprovers.length === 0) return;
+    if (selectedRecords.length === 0 || !selectedApprover) return;
     setIsSubmitting(true);
     try {
       const { delegateIndents } = await import("@/lib/supabase/queries");
-      const approvers = approverOptions.filter((a) => selectedApprovers.includes(a.username));
+      const targetApprover = approverOptions.find((a) => a.username === selectedApprover);
+      if (!targetApprover) return;
       const delegatedBy = localStorage.getItem("user") || "unknown";
-      await delegateIndents(selectedRecords, approvers, delegatedBy);
-      toast.success(`Delegated ${selectedRecords.length} item(s) to ${approvers.length} approver(s).`);
+      await delegateIndents(selectedRecords, [targetApprover], delegatedBy);
+      toast.success(`Delegated ${selectedRecords.length} item(s) to ${targetApprover.fullName}.`);
       setSelectedRecords([]);
-      setSelectedApprovers([]);
+      setSelectedApprover("");
       fetchData();
     } catch (e) {
       console.error("Delegation failed:", e);
@@ -219,29 +226,27 @@ export default function DelegateApproval() {
 
   const openDelegateDialog = (record: any) => {
     setDialogRecord(record);
-    setDialogApprovers((delegationsByIndent[record.id] || []).map((d) => d.username));
+    const existing = delegationsByIndent[record.id] || [];
+    setDialogApprover(existing[0]?.username || "");
     setDialogOpen(true);
   };
 
-  const toggleDialogApprover = (username: string) => {
-    setDialogApprovers((prev) => (prev.includes(username) ? prev.filter((x) => x !== username) : [...prev, username]));
-  };
-
   const handleDialogSave = async () => {
-    if (!dialogRecord || dialogApprovers.length === 0) {
-      toast.error("Select at least one approver.");
+    if (!dialogRecord || !dialogApprover) {
+      toast.error("Please select an approver.");
       return;
     }
     setIsDialogSubmitting(true);
     try {
       const { delegateIndents } = await import("@/lib/supabase/queries");
-      const approvers = approverOptions.filter((a) => dialogApprovers.includes(a.username));
+      const targetApprover = approverOptions.find((a) => a.username === dialogApprover);
+      if (!targetApprover) return;
       const delegatedBy = localStorage.getItem("user") || "unknown";
-      await delegateIndents([dialogRecord.id], approvers, delegatedBy);
-      toast.success(`Delegated ${dialogRecord.indentNumber} to ${approvers.length} approver(s).`);
+      await delegateIndents([dialogRecord.id], [targetApprover], delegatedBy);
+      toast.success(`Delegated ${dialogRecord.indentNumber} to ${targetApprover.fullName}.`);
       setDialogOpen(false);
       setDialogRecord(null);
-      setDialogApprovers([]);
+      setDialogApprover("");
       fetchData();
     } catch (e) {
       console.error("Delegation failed:", e);
@@ -333,36 +338,25 @@ export default function DelegateApproval() {
         {/* ---------- PENDING ---------- */}
         <TabsContent value="pending" className="mt-0 flex-1 flex flex-col overflow-hidden">
           <div className="flex flex-col sm:flex-row items-center gap-3 mb-4 shrink-0">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full sm:w-64 justify-start bg-white">
-                  {selectedApprovers.length === 0
-                    ? "Select approver(s)..."
-                    : `${selectedApprovers.length} approver${selectedApprovers.length !== 1 ? "s" : ""} selected`}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64 p-2 max-h-72 overflow-y-auto">
-                <div className="space-y-1">
-                  {approverOptions.length === 0 && (
-                    <p className="text-xs text-slate-400 px-2 py-1">No users found.</p>
-                  )}
-                  {approverOptions.map((a) => (
-                    <div
-                      key={a.username}
-                      className="flex items-center space-x-2 py-1.5 px-2 rounded hover:bg-slate-50 cursor-pointer"
-                      onClick={() => toggleApprover(a.username)}
-                    >
-                      <Checkbox checked={selectedApprovers.includes(a.username)} onCheckedChange={() => toggleApprover(a.username)} />
-                      <Label className="text-sm font-normal cursor-pointer">{a.fullName}</Label>
-                    </div>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
+            <Select value={selectedApprover} onValueChange={setSelectedApprover}>
+              <SelectTrigger className="w-full sm:w-64 bg-white">
+                <SelectValue placeholder="Select approver..." />
+              </SelectTrigger>
+              <SelectContent className="bg-white border text-xs shadow-md z-50">
+                {approverOptions.length === 0 && (
+                  <SelectItem value="_none" disabled>No users found</SelectItem>
+                )}
+                {approverOptions.map((a) => (
+                  <SelectItem key={a.username} value={a.username}>
+                    {a.fullName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <Button
               onClick={handleDelegate}
-              disabled={selectedRecords.length === 0 || selectedApprovers.length === 0 || isSubmitting}
+              disabled={selectedRecords.length === 0 || !selectedApprover || isSubmitting}
               className="bg-blue-700 hover:bg-blue-800 text-white flex items-center gap-2"
             >
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
@@ -585,45 +579,19 @@ export default function DelegateApproval() {
           </DialogHeader>
 
           <div className="space-y-3">
-            <Label className="text-sm font-semibold text-slate-700">Select Approver(s)</Label>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full justify-start bg-white">
-                  {dialogApprovers.length === 0
-                    ? "Select approver(s)..."
-                    : `${dialogApprovers.length} approver${dialogApprovers.length !== 1 ? "s" : ""} selected`}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[--radix-popover-trigger-width] p-2 max-h-64 overflow-y-auto">
-                <div className="space-y-1">
-                  {approverOptions.length === 0 && (
-                    <p className="text-xs text-slate-400 px-2 py-1">No users found.</p>
-                  )}
-                  {approverOptions.map((a) => (
-                    <div
-                      key={a.username}
-                      className="flex items-center space-x-2 py-1.5 px-2 rounded hover:bg-slate-50 cursor-pointer"
-                      onClick={() => toggleDialogApprover(a.username)}
-                    >
-                      <Checkbox checked={dialogApprovers.includes(a.username)} onCheckedChange={() => toggleDialogApprover(a.username)} />
-                      <Label className="text-sm font-normal cursor-pointer">{a.fullName}</Label>
-                    </div>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {dialogApprovers.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {approverOptions
-                  .filter((a) => dialogApprovers.includes(a.username))
-                  .map((a) => (
-                    <Badge key={a.username} variant="secondary" className="bg-sky-100 text-sky-800 border-sky-200">
-                      {a.fullName}
-                    </Badge>
-                  ))}
-              </div>
-            )}
+            <Label className="text-sm font-semibold text-slate-700">Select Approver <span className="text-red-500">*</span></Label>
+            <Select value={dialogApprover} onValueChange={setDialogApprover}>
+              <SelectTrigger className="w-full bg-white border-slate-200">
+                <SelectValue placeholder="Choose single approver..." />
+              </SelectTrigger>
+              <SelectContent className="bg-white border text-xs shadow-md z-50">
+                {approverOptions.map((a) => (
+                  <SelectItem key={a.username} value={a.username}>
+                    {a.fullName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <DialogFooter>
@@ -633,7 +601,7 @@ export default function DelegateApproval() {
             <Button
               type="button"
               onClick={handleDialogSave}
-              disabled={dialogApprovers.length === 0 || isDialogSubmitting}
+              disabled={!dialogApprover || isDialogSubmitting}
               className="bg-blue-700 hover:bg-blue-800 text-white"
             >
               {isDialogSubmitting ? (
