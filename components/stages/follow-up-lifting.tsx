@@ -293,6 +293,7 @@ export default function FollowUpLifting() {
   const [transporterList, setTransporterList] = useState<string[]>([]);
   const [areaList, setAreaList] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [divisionFilter, setDivisionFilter] = useState<string>("all");
   const [tatRules, setTatRules] = useState<any[]>([]);
 
   const fetchData = async () => {
@@ -362,23 +363,11 @@ export default function FollowUpLifting() {
       // lifted; it never gates the Pending/History transition on its own.
       const logisticsByPoId = new Map<string, { transporterName: string; rate: string; ratePerKg: string; transportType: string; freightType: string; totalAmount: string }>();
       {
-        const fullSelect = "po_id, transporter_name, freight_amount, rate_per_kg, transport_type, freight_type, status, updated_at";
-        let logisticsRows: any[] | null;
-        let logisticsErr: any;
-        ({ data: logisticsRows, error: logisticsErr } = await supabase
+        const { data: logisticsRows } = await supabase
           .from("transporter_followups")
-          .select(fullSelect)
+          .select("*")
           .eq("status", "Logistics Arranged")
-          .order("updated_at", { ascending: true }));
-        if (logisticsErr && isMissingColumnError(logisticsErr)) {
-          // freight_type / rate_per_kg / transport_type migration not run yet — fall back
-          // to the columns that have always existed on this table.
-          ({ data: logisticsRows, error: logisticsErr } = await supabase
-            .from("transporter_followups")
-            .select("po_id, transporter_name, freight_amount, status, updated_at")
-            .eq("status", "Logistics Arranged")
-            .order("updated_at", { ascending: true }));
-        }
+          .order("updated_at", { ascending: true });
         (logisticsRows || []).forEach((r: any) => {
           if (!r.po_id) return;
           const fType = r.freight_type || (r.rate_per_kg ? "Per kg Rate" : (r.freight_amount ? "Fixed Rate" : ""));
@@ -409,6 +398,7 @@ export default function FollowUpLifting() {
           id: lift.id,
           createdAt: indent?.data.createdAt || "",
           indentNumber: indent?.data.indentNumber || "",
+          warehouseLocation: indent?.data.warehouseLocation || "",
           liftNo: `LIFT-${String(i + 1).padStart(3, "0")}`,
           vendorName: po?.vendor_name || "",
           poNumber: po?.po_number || "",
@@ -449,6 +439,7 @@ export default function FollowUpLifting() {
               history: [],
               data: {
                 indentNumber: row.data.indentNumber,
+                warehouseLocation: row.data.warehouseLocation || "",
                 itemName: row.data.itemName,
                 supplierName: row.data.selectedVendorName || row.data.vendor1Name || "-",
                 vendorType: row.data.vendorType || "",
@@ -497,6 +488,7 @@ export default function FollowUpLifting() {
                 history: [],
                 data: {
                   indentNumber: row.data.indentNumber,
+                  warehouseLocation: row.data.warehouseLocation || "",
                   itemName: po.item_name || row.data.itemName,
                   supplierName: po.vendor_name || row.data.selectedVendorName || row.data.vendor1Name || "-",
                   quantity: String(po.quantity || row.data.quantity),
@@ -541,6 +533,7 @@ export default function FollowUpLifting() {
                     : [],
                   data: {
                     indentNumber: row.data.indentNumber,
+                    warehouseLocation: row.data.warehouseLocation || "",
                     itemName: po.item_name || row.data.itemName,
                     supplierName: po.vendor_name || row.data.selectedVendorName || row.data.vendor1Name || "-",
                     vendorType: row.data.vendorType || "",
@@ -1297,6 +1290,7 @@ export default function FollowUpLifting() {
     const term = searchTerm.toLowerCase();
     return sheetRecords
       .filter((r) => r.status === "pending")
+      .filter((r) => divisionFilter === "all" || r.data.warehouseLocation === divisionFilter)
       .filter((r) => {
         const v = getVendorData(r);
         return (
@@ -1308,23 +1302,25 @@ export default function FollowUpLifting() {
           v.poNumber?.toLowerCase().includes(term)
         );
       });
-  }, [sheetRecords, searchTerm]);
+  }, [sheetRecords, searchTerm, divisionFilter]);
 
   useEffect(() => { reportPendingCount("Follow UP / Lifting", pending.length); }, [pending.length]);
 
   const history = useMemo(() => {
     const term = searchTerm.toLowerCase();
-    return receivingAccountsData.filter((r) => {
-      return (
-        r.indentNumber?.toLowerCase().includes(term) ||
-        r.liftNo?.toLowerCase().includes(term) ||
-        r.vendorName?.toLowerCase().includes(term) ||
-        r.poNumber?.toLowerCase().includes(term) ||
-        r.itemName?.toLowerCase().includes(term) ||
-        r.vehicleNo?.toLowerCase().includes(term)
-      );
-    });
-  }, [receivingAccountsData, searchTerm]);
+    return receivingAccountsData
+      .filter((r) => divisionFilter === "all" || r.warehouseLocation === divisionFilter)
+      .filter((r) => {
+        return (
+          r.indentNumber?.toLowerCase().includes(term) ||
+          r.liftNo?.toLowerCase().includes(term) ||
+          r.vendorName?.toLowerCase().includes(term) ||
+          r.poNumber?.toLowerCase().includes(term) ||
+          r.itemName?.toLowerCase().includes(term) ||
+          r.vehicleNo?.toLowerCase().includes(term)
+        );
+      });
+  }, [receivingAccountsData, searchTerm, divisionFilter]);
 
   const pendingPagination = usePagination(pending, 15);
   const historyPagination = usePagination(history, 15);
@@ -1434,6 +1430,17 @@ export default function FollowUpLifting() {
                 className="pl-9 bg-white"
               />
             </div>
+            <Select value={divisionFilter} onValueChange={setDivisionFilter}>
+              <SelectTrigger className="w-44 bg-white shrink-0">
+                <SelectValue placeholder="Division" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Divisions</SelectItem>
+                {areaList.map((w) => (
+                  <SelectItem key={w} value={w}>{w}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="h-8 w-px bg-slate-200 mx-2" />
             <div className="flex items-center gap-4">
               <Label className="text-sm font-medium hidden md:inline-block">Show Columns:</Label>

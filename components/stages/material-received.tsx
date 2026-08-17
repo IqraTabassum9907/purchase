@@ -1421,12 +1421,12 @@ export default function Stage7() {
                                     <Table>
                                         <TableHeader className="bg-slate-50">
                                             <TableRow>
-                                                <TableHead className="w-[180px] text-xs font-bold text-slate-600">Item Details</TableHead>
-                                                <TableHead className="w-[100px] text-xs font-bold text-slate-600 text-center">Lifting Qty</TableHead>
-                                                <TableHead className="w-[120px] text-xs font-bold text-slate-600 text-center">Received Qty <span className="text-red-500">*</span></TableHead>
-                                                <TableHead className="w-[100px] text-xs font-bold text-slate-600 text-center">Different Qty</TableHead>
-                                                <TableHead className="w-[130px] text-xs font-bold text-slate-600 text-center">Item Image</TableHead>
-                                                <TableHead className="w-[180px] text-xs font-bold text-slate-600 text-center">Damage</TableHead>
+                                                <TableHead className="w-[170px] text-xs font-bold text-slate-600">Item Details</TableHead>
+                                                <TableHead className="w-[95px] text-xs font-bold text-slate-600 text-center">Lifting Qty</TableHead>
+                                                <TableHead className="w-[115px] text-xs font-bold text-slate-600 text-center">Received Qty <span className="text-red-500">*</span></TableHead>
+                                                <TableHead className="w-[95px] text-xs font-bold text-slate-600 text-center">Different Qty</TableHead>
+                                                <TableHead className="w-[125px] text-xs font-bold text-slate-600 text-center">Item Image</TableHead>
+                                                <TableHead className="min-w-[270px] text-xs font-bold text-slate-600 text-center">Damage</TableHead>
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody>
@@ -1438,19 +1438,19 @@ export default function Stage7() {
 
                                                 return (
                                                     <TableRow key={item.recordId} className="hover:bg-slate-50/50 transition-colors">
-                                                        <TableCell className="text-xs">
+                                                        <TableCell className="text-xs align-top py-3">
                                                             <div className="font-bold text-slate-800">Ind: {item.indentNumber}</div>
                                                             <div className="text-slate-500 font-medium">Lift: {item.liftNumber}</div>
                                                             <div className="text-slate-400 truncate max-w-[150px] font-medium" title={item.itemName}>{item.itemName}</div>
                                                         </TableCell>
-                                                        <TableCell>
+                                                        <TableCell className="align-top py-3">
                                                             <Input
                                                                 value={rec?.data?.liftingQty || "0"}
                                                                 readOnly
                                                                 className="bg-slate-50 border-slate-100 h-8 text-xs font-semibold text-slate-600 rounded-md text-center"
                                                             />
                                                         </TableCell>
-                                                        <TableCell>
+                                                        <TableCell className="align-top py-3">
                                                             <Input
                                                                 type="number"
                                                                 value={item.receivedQty}
@@ -1463,7 +1463,7 @@ export default function Stage7() {
                                                                 required
                                                             />
                                                         </TableCell>
-                                                        <TableCell>
+                                                        <TableCell className="align-top py-3">
                                                             <Input
                                                                 value={differentQtyVal.toFixed(2)}
                                                                 readOnly
@@ -1475,7 +1475,7 @@ export default function Stage7() {
                                                                     }`}
                                                             />
                                                         </TableCell>
-                                                        <TableCell>
+                                                        <TableCell className="align-top py-3">
                                                             <div className="space-y-1">
                                                                 <input
                                                                     id={`bulkItemImage-${idx}`}
@@ -1514,8 +1514,8 @@ export default function Stage7() {
                                                                 )}
                                                             </div>
                                                         </TableCell>
-                                                        <TableCell>
-                                                            <div className="space-y-1.5">
+                                                        <TableCell className="align-top py-3">
+                                                            <div className="space-y-2 min-w-[260px]">
                                                                 <Select
                                                                     value={item.damageReceived || "no"}
                                                                     onValueChange={(v) => {
@@ -1524,7 +1524,7 @@ export default function Stage7() {
                                                                         setBulkItems(newItems);
                                                                     }}
                                                                 >
-                                                                    <SelectTrigger className="h-8 text-xs bg-white">
+                                                                    <SelectTrigger className={`h-8 text-xs ${item.damageReceived === "yes" ? "bg-rose-50 border-rose-300 text-rose-800 font-semibold" : "bg-white border-slate-200"}`}>
                                                                         <SelectValue />
                                                                     </SelectTrigger>
                                                                     <SelectContent>
@@ -1533,29 +1533,75 @@ export default function Stage7() {
                                                                     </SelectContent>
                                                                 </Select>
                                                                 {item.damageReceived === "yes" && (
-                                                                    <>
-                                                                        <Input
-                                                                            type="number"
-                                                                            value={item.damagedQty}
-                                                                            onChange={(e) => {
-                                                                                const newItems = [...bulkItems];
-                                                                                newItems[idx].damagedQty = e.target.value;
-                                                                                setBulkItems(newItems);
-                                                                            }}
-                                                                            placeholder="Damaged qty"
-                                                                            className="h-8 text-xs rounded-md bg-white"
-                                                                        />
-                                                                        <Input
-                                                                            value={item.damageReason}
-                                                                            onChange={(e) => {
-                                                                                const newItems = [...bulkItems];
-                                                                                newItems[idx].damageReason = e.target.value;
-                                                                                setBulkItems(newItems);
-                                                                            }}
-                                                                            placeholder="Reason"
-                                                                            className="h-8 text-xs rounded-md bg-white"
-                                                                        />
-                                                                    </>
+                                                                    <div className="p-2.5 bg-rose-50/70 border border-rose-200 rounded-lg space-y-2 text-left">
+                                                                        <div className="grid grid-cols-2 gap-2">
+                                                                            <div className="space-y-0.5">
+                                                                                <Label className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Damaged Qty</Label>
+                                                                                <Input
+                                                                                    type="number"
+                                                                                    value={item.damagedQty}
+                                                                                    onChange={(e) => {
+                                                                                        const newItems = [...bulkItems];
+                                                                                        newItems[idx].damagedQty = e.target.value;
+                                                                                        setBulkItems(newItems);
+                                                                                    }}
+                                                                                    placeholder="0"
+                                                                                    className="h-7 text-xs rounded bg-white border-rose-200 focus:border-rose-400 font-semibold"
+                                                                                />
+                                                                            </div>
+                                                                            <div className="space-y-0.5">
+                                                                                <Label className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Reason</Label>
+                                                                                <Input
+                                                                                    value={item.damageReason}
+                                                                                    onChange={(e) => {
+                                                                                        const newItems = [...bulkItems];
+                                                                                        newItems[idx].damageReason = e.target.value;
+                                                                                        setBulkItems(newItems);
+                                                                                    }}
+                                                                                    placeholder="Reason"
+                                                                                    className="h-7 text-xs rounded bg-white border-rose-200 focus:border-rose-400"
+                                                                                />
+                                                                            </div>
+                                                                        </div>
+                                                                        <div className="space-y-0.5">
+                                                                            <Label className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Damage Image</Label>
+                                                                            <input
+                                                                                id={`bulkDamageImage-${idx}`}
+                                                                                type="file"
+                                                                                accept="image/*"
+                                                                                onChange={(e) => {
+                                                                                    const newItems = [...bulkItems];
+                                                                                    newItems[idx].damageImage = e.target.files?.[0] || null;
+                                                                                    setBulkItems(newItems);
+                                                                                }}
+                                                                                className="hidden"
+                                                                            />
+                                                                            {!item.damageImage ? (
+                                                                                <label
+                                                                                    htmlFor={`bulkDamageImage-${idx}`}
+                                                                                    className="flex items-center justify-center h-7 border border-dashed border-rose-300 rounded-md cursor-pointer hover:border-rose-400 hover:bg-rose-100/50 transition-colors px-2 text-rose-600 bg-white"
+                                                                                >
+                                                                                    <Upload className="w-3 h-3 mr-1 text-rose-500" />
+                                                                                    <span className="text-[10px] font-semibold">Upload Photo</span>
+                                                                                </label>
+                                                                            ) : (
+                                                                                <div className="flex items-center justify-between gap-1.5 p-1 bg-white border border-rose-200 rounded-md shadow-xs">
+                                                                                    <span className="text-[9px] font-medium text-rose-900 truncate max-w-[170px]">{item.damageImage.name}</span>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => {
+                                                                                            const newItems = [...bulkItems];
+                                                                                            newItems[idx].damageImage = null;
+                                                                                            setBulkItems(newItems);
+                                                                                        }}
+                                                                                        className="text-rose-400 hover:text-red-600 hover:bg-rose-50 p-0.5 rounded transition-colors"
+                                                                                    >
+                                                                                        <X className="w-3 h-3" />
+                                                                                    </button>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         </TableCell>
