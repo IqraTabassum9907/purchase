@@ -169,6 +169,12 @@ export default function TransporterFollowUp() {
                     const isDeliveredOrReceived = (latestTransporter && ["received", "delivered", "completed", "complete"].includes(String(latestTransporter.status || "").toLowerCase()));
                     const status = isDeliveredOrReceived ? "history" : "pending";
 
+                    const latestIntransit = poTransporters.filter((t: any) => t.status === "Intransit")
+                        .sort((a: any, b: any) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())[0];
+                    const lastTimestamp = totalIntransit > 0
+                        ? (latestIntransit?.updated_at || latestTransporter?.updated_at || "")
+                        : (latestTransporter?.updated_at || "");
+
                     rows.push({
                         id: `${indentRow.data.indentNumber}_${po.po_number}`,
                         _poId: po.id,
@@ -183,12 +189,16 @@ export default function TransporterFollowUp() {
                             invoiceNumber: "",
                             itemName: indentRow.data.itemName,
                             liftingQty: String(po.quantity || indentRow.data.quantity || ""),
+                            uom: indentRow.data.uom || "",
+                            transportType: latestTransporter?.transport_type || "",
                             transporterName: latestTransporter?.transporter_name || "",
                             vehicleNo: latestTransporter?.vehicle_number || "",
                             contactNo: "",
                             freightAmt: "",
                             plannedDate: po.delivery_date || "",
                             actualDate: latestTransporter?.status === "Received" ? latestTransporter.dispatch_date || "" : "",
+                            lastFollowUpDate: lastTimestamp || "",
+                            nextFollowUpDate: latestTransporter?.expected_arrival_date || "",
                             expectedDate: latestTransporter?.expected_arrival_date || "",
                             remarks: "",
                             totalFollowUps: totalIntransit,
@@ -208,7 +218,15 @@ export default function TransporterFollowUp() {
                         const latestLiftingTransporter = pickLatestTransporter(
                             liftingTransporters.length > 0 ? liftingTransporters : legacyPoTransporters
                         );
-                        const liftingIntransitCount = liftingTransporters.filter((t: any) => t.status === "Intransit").length;
+                        const liftingIntransitList = (liftingTransporters.length > 0 ? liftingTransporters : legacyPoTransporters).filter((t: any) => t.status === "Intransit");
+                        const liftingIntransitCount = liftingIntransitList.length;
+                        const latestIntransit = liftingIntransitList
+                            .sort((a: any, b: any) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())[0];
+
+                        // Date from updated_at column from transporter_followups table
+                        const lastFollowUpTimestamp = liftingIntransitCount > 0
+                            ? (latestIntransit?.updated_at || latestLiftingTransporter?.updated_at || "")
+                            : (latestLiftingTransporter?.updated_at || "");
 
                         // NOTE: vendor_liftings.lifting_status "Complete" only means the material
                         // was lifted/dispatched from the vendor — it has nothing to do with the
@@ -232,13 +250,17 @@ export default function TransporterFollowUp() {
                                 poNumber: po.po_number,
                                 invoiceNumber: "",
                                 itemName: indentRow.data.itemName,
-                                liftingQty: String(lifting.quantity || po.quantity || indentRow.data.quantity || ""),
+                                liftingQty: String(lifting.lifting_qty || lifting.quantity || po.quantity || indentRow.data.quantity || ""),
+                                uom: indentRow.data.uom || "",
+                                transportType: latestLiftingTransporter?.transport_type || (poTransporters.find((t: any) => t.transport_type)?.transport_type) || "",
                                 transporterName: latestLiftingTransporter?.transporter_name || lifting.contact_person || "",
                                 vehicleNo: lifting.vehicle_number || latestLiftingTransporter?.vehicle_number || "",
                                 contactNo: lifting.driver_contact || "",
                                 freightAmt: "",
                                 plannedDate: lifting.expected_lifting_date || po.delivery_date || "",
                                 actualDate: lifting.actual_lifting_date || "",
+                                lastFollowUpDate: lastFollowUpTimestamp || "",
+                                nextFollowUpDate: lifting.followup_date || latestLiftingTransporter?.expected_arrival_date || "",
                                 expectedDate: lifting.followup_date || "",
                                 remarks: lifting.remarks || "",
                                 totalFollowUps: liftingIntransitCount,
@@ -283,6 +305,7 @@ export default function TransporterFollowUp() {
                     r.data.indentNumber?.toLowerCase().includes(searchLower) ||
                     r.data.itemName?.toLowerCase().includes(searchLower) ||
                     r.data.vendorName?.toLowerCase().includes(searchLower) ||
+                    r.data.transportType?.toLowerCase().includes(searchLower) ||
                     r.data.transporterName?.toLowerCase().includes(searchLower) ||
                     String(r.data.poNumber || "").toLowerCase().includes(searchLower) ||
                     String(r.data.invoiceNumber || "").toLowerCase().includes(searchLower)
@@ -295,8 +318,8 @@ export default function TransporterFollowUp() {
             const aValue = a.data[sortConfig.key] || "";
             const bValue = b.data[sortConfig.key] || "";
 
-            // Date sorting for Expected Date
-            if (sortConfig.key === "expectedDate") {
+            // Date sorting for date columns
+            if (sortConfig.key === "expectedDate" || sortConfig.key === "lastFollowUpDate" || sortConfig.key === "nextFollowUpDate" || sortConfig.key === "plannedDate" || sortConfig.key === "actualDate") {
                 const dateA = new Date(aValue).getTime() || 0;
                 const dateB = new Date(bValue).getTime() || 0;
                 if (dateA < dateB) return sortConfig.direction === "asc" ? -1 : 1;
@@ -319,6 +342,7 @@ export default function TransporterFollowUp() {
                 r.data.indentNumber?.toLowerCase().includes(searchLower) ||
                 r.data.itemName?.toLowerCase().includes(searchLower) ||
                 r.data.vendorName?.toLowerCase().includes(searchLower) ||
+                r.data.transportType?.toLowerCase().includes(searchLower) ||
                 r.data.transporterName?.toLowerCase().includes(searchLower) ||
                 String(r.data.poNumber || "").toLowerCase().includes(searchLower) ||
                 String(r.data.invoiceNumber || "").toLowerCase().includes(searchLower)
@@ -337,12 +361,14 @@ export default function TransporterFollowUp() {
         { key: "itemName", label: "Item Name" },
         { key: "plannedDate", label: "Expected Date" },
         { key: "totalFollowUps", label: "Total Follow-Ups" },
-        { key: "expectedDate", label: "Last Follow-Up Date" },
+        { key: "lastFollowUpDate", label: "Last Follow-Up Date" },
+        { key: "nextFollowUpDate", label: "Next Followup Date" },
         { key: "remarks", label: "Remarks" },
         { key: "liftNo", label: "Unit Tracking No." },
         { key: "vendorName", label: "Supplier" },
         { key: "poNumber", label: "PO Number" },
         { key: "liftingQty", label: "Dispatch Qty" },
+        { key: "transportType", label: "Transport Type" },
         { key: "transporterName", label: "Transporter Name" },
         { key: "freightAmt", label: "Freight Amt" },
         { key: "vehicleNo", label: "Vehicle No" },
@@ -355,12 +381,14 @@ export default function TransporterFollowUp() {
         { key: "plannedDate", label: "Expected Date" },
         { key: "actualDate", label: "Actual" },
         { key: "totalFollowUps", label: "Total Follow-Ups" },
-        { key: "expectedDate", label: "Last Follow-Up Date" },
+        { key: "lastFollowUpDate", label: "Last Follow-Up Date" },
+        { key: "nextFollowUpDate", label: "Next Followup Date" },
         { key: "remarks", label: "Remarks" },
         { key: "liftNo", label: "Unit Tracking No." },
         { key: "vendorName", label: "Supplier" },
         { key: "poNumber", label: "PO Number" },
         { key: "liftingQty", label: "Dispatch Qty" },
+        { key: "transportType", label: "Transport Type" },
         { key: "transporterName", label: "Transporter Name" },
         { key: "freightAmt", label: "Freight Amt" },
         { key: "vehicleNo", label: "Vehicle No" },
@@ -471,6 +499,7 @@ export default function TransporterFollowUp() {
                     transporter_name: record.data.transporterName || "",
                     vehicle_number: record.data.vehicleNo || "",
                     bilty_number: record.data.lrNo || null,
+                    transport_type: record.data.transportType || null,
                     freight_amount: record.data.freightAmt || record.data.freightAmount ? parseFloat(record.data.freightAmt || record.data.freightAmount) : null,
                     status: formData.status,
                     expected_arrival_date: formData.expectedDelivery || null,
@@ -554,7 +583,7 @@ export default function TransporterFollowUp() {
                 const rowData = pending.map((record) => {
                     return pendingColumns.map((col) => {
                         const val = record.data[col.key];
-                        if (col.key === "plannedDate" || col.key === "expectedDate") {
+                        if (col.key === "plannedDate" || col.key === "expectedDate" || col.key === "lastFollowUpDate" || col.key === "nextFollowUpDate" || col.key === "actualDate") {
                             return formatDateDash(val);
                         }
                         return val === undefined || val === null || String(val).trim() === "" ? "-" : String(val);
@@ -641,7 +670,8 @@ export default function TransporterFollowUp() {
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="indentNumber">Indent No</SelectItem>
-                                        <SelectItem value="expectedDate">Last Follow-Up Date</SelectItem>
+                                        <SelectItem value="lastFollowUpDate">Last Follow-Up Date</SelectItem>
+                                        <SelectItem value="nextFollowUpDate">Next Followup Date</SelectItem>
                                     </SelectContent>
                                 </Select>
                             )}
@@ -759,6 +789,23 @@ export default function TransporterFollowUp() {
                                                         );
                                                     }
 
+                                                    if (c.key === "lastFollowUpDate" || c.key === "nextFollowUpDate" || c.key === "expectedDate") {
+                                                        return (
+                                                            <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 whitespace-nowrap">
+                                                                {val ? formatDateDash(val) : "-"}
+                                                            </TableCell>
+                                                        );
+                                                    }
+
+                                                    if (c.key === "liftingQty") {
+                                                        const uom = rec.data.uom;
+                                                        return (
+                                                            <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 whitespace-nowrap">
+                                                                {safeValue(val)}{uom ? <span className="ml-1 text-xs text-slate-500 font-medium">{uom}</span> : null}
+                                                            </TableCell>
+                                                        );
+                                                    }
+
                                                     // Default Logic
                                                     return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{safeValue(val)}</TableCell>;
                                                 })}
@@ -805,8 +852,17 @@ export default function TransporterFollowUp() {
                                                 }
 
                                                 // Actual & Expected Date Logic
-                                                if (c.key === "actualDate" || c.key === "expectedDate") {
-                                                    return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700">{formatDateDash(val)}</TableCell>;
+                                                if (c.key === "actualDate" || c.key === "expectedDate" || c.key === "lastFollowUpDate" || c.key === "nextFollowUpDate") {
+                                                    return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 whitespace-nowrap">{val ? formatDateDash(val) : "-"}</TableCell>;
+                                                }
+
+                                                if (c.key === "liftingQty") {
+                                                    const uom = rec.data.uom;
+                                                    return (
+                                                        <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 whitespace-nowrap">
+                                                            {safeValue(val)}{uom ? <span className="ml-1 text-xs text-slate-500 font-medium">{uom}</span> : null}
+                                                        </TableCell>
+                                                    );
                                                 }
 
                                                 // Default Logic
@@ -858,6 +914,7 @@ export default function TransporterFollowUp() {
                                                 <tr className="text-left text-gray-500 border-b">
                                                     <th className="pb-1 font-medium">Indent No</th>
                                                     <th className="pb-1 font-medium">Unit Tracking No.</th>
+                                                    <th className="pb-1 font-medium">Transport Type</th>
                                                     <th className="pb-1 font-medium">Transporter</th>
                                                     <th className="pb-1 font-medium">Vehicle</th>
                                                 </tr>
@@ -869,6 +926,7 @@ export default function TransporterFollowUp() {
                                                         <tr key={r.id} className="border-b last:border-0 border-gray-100">
                                                             <td className="py-1">{r.data.indentNumber}</td>
                                                             <td className="py-1">{r.data.liftNo}</td>
+                                                            <td className="py-1 truncate max-w-[100px]">{r.data.transportType || "-"}</td>
                                                             <td className="py-1 truncate max-w-[100px]" title={r.data.transporterName}>{r.data.transporterName}</td>
                                                             <td className="py-1">{r.data.vehicleNo}</td>
                                                         </tr>
@@ -883,38 +941,46 @@ export default function TransporterFollowUp() {
                             <>
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <Label className="text-xs text-gray-500">Transporter Name</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium truncate">
-                                            {selectedRecord?.data.transporterName || "-"}
+                                        <Label className="text-xs text-gray-500">Transport Type</Label>
+                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
+                                            {selectedRecord?.data.transportType || "-"}
                                         </div>
                                     </div>
                                     <div>
-                                        <Label className="text-xs text-gray-500">Vehicle Number</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
-                                            {selectedRecord?.data.vehicleNo || "-"}
+                                        <Label className="text-xs text-gray-500">Transporter Name</Label>
+                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium truncate">
+                                            {selectedRecord?.data.transporterName || "-"}
                                         </div>
                                     </div>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
+                                        <Label className="text-xs text-gray-500">Vehicle Number</Label>
+                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
+                                            {selectedRecord?.data.vehicleNo || "-"}
+                                        </div>
+                                    </div>
+                                    <div>
                                         <Label className="text-xs text-gray-500">Contact Number</Label>
                                         <div className="p-2 bg-gray-50 rounded text-sm font-medium">
                                             {selectedRecord?.data.contactNo || "-"}
                                         </div>
                                     </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <Label className="text-xs text-gray-500">Unit Tracking No.</Label>
                                         <div className="p-2 bg-gray-50 rounded text-sm font-medium">
                                             {selectedRecord?.data.liftNo || "-"}
                                         </div>
                                     </div>
-                                </div>
-
-                                <div>
-                                    <Label className="text-xs text-gray-500">Indent Number</Label>
-                                    <div className="p-2 bg-gray-50 rounded text-sm font-medium">
-                                        {selectedRecord?.data.indentNumber || "-"}
+                                    <div>
+                                        <Label className="text-xs text-gray-500">Indent Number</Label>
+                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
+                                            {selectedRecord?.data.indentNumber || "-"}
+                                        </div>
                                     </div>
                                 </div>
                             </>

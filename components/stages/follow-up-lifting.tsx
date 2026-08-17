@@ -79,6 +79,7 @@ interface LiftingEntry {
   billDate?: string;
   areaLifting?: string;
   transportRateType?: string;
+  freightType?: string;
   freightAmount: string;
   advanceAmount: string;
   paymentDate: string;
@@ -190,6 +191,12 @@ const TransporterCombobox = ({
   );
 };
 
+const isExFactoryType = (type: string | undefined | null) => {
+  if (!type) return false;
+  const t = String(type).trim().toLowerCase();
+  return t === "ex-factory only" || t === "ex-factory" || t === "ex factory" || t === "ex factory only";
+};
+
 const defaultLiftingData = (existLift: any = {}, recordQty: string = "0", defaultTransportType: string = ""): LiftingEntry => ({
   liftNumber: existLift.liftNumber || "",
   liftingQty: existLift.liftingQty || recordQty,
@@ -200,6 +207,7 @@ const defaultLiftingData = (existLift: any = {}, recordQty: string = "0", defaul
   billDate: existLift.billDate || "",
   areaLifting: existLift.areaLifting || "",
   transportRateType: existLift.transportRateType || "",
+  freightType: existLift.freightType || (existLift.transportRatePerKg ? "Per kg Rate" : (existLift.transportRate ? "Fixed Rate" : "")),
   freightAmount: existLift.freightAmount || "",
   advanceAmount: existLift.advanceAmount || "",
   paymentDate: existLift.paymentDate || "",
@@ -352,32 +360,35 @@ export default function FollowUpLifting() {
       // Latest "Arrange Logistics" details per PO — kept visible in Pending
       // (and prefilled into Material Lifting) until the PO is actually
       // lifted; it never gates the Pending/History transition on its own.
-      const logisticsByPoId = new Map<string, { transporterName: string; rate: string; ratePerKg: string; transportType: string }>();
+      const logisticsByPoId = new Map<string, { transporterName: string; rate: string; ratePerKg: string; transportType: string; freightType: string; totalAmount: string }>();
       {
-        const fullSelect = "po_id, transporter_name, freight_amount, rate_per_kg, transport_type, status, created_at";
+        const fullSelect = "po_id, transporter_name, freight_amount, rate_per_kg, transport_type, freight_type, status, updated_at";
         let logisticsRows: any[] | null;
         let logisticsErr: any;
         ({ data: logisticsRows, error: logisticsErr } = await supabase
           .from("transporter_followups")
           .select(fullSelect)
           .eq("status", "Logistics Arranged")
-          .order("created_at", { ascending: true }));
+          .order("updated_at", { ascending: true }));
         if (logisticsErr && isMissingColumnError(logisticsErr)) {
-          // rate_per_kg / transport_type migration not run yet — fall back
+          // freight_type / rate_per_kg / transport_type migration not run yet — fall back
           // to the columns that have always existed on this table.
           ({ data: logisticsRows, error: logisticsErr } = await supabase
             .from("transporter_followups")
-            .select("po_id, transporter_name, freight_amount, status, created_at")
+            .select("po_id, transporter_name, freight_amount, status, updated_at")
             .eq("status", "Logistics Arranged")
-            .order("created_at", { ascending: true }));
+            .order("updated_at", { ascending: true }));
         }
         (logisticsRows || []).forEach((r: any) => {
           if (!r.po_id) return;
+          const fType = r.freight_type || (r.rate_per_kg ? "Per kg Rate" : (r.freight_amount ? "Fixed Rate" : ""));
           logisticsByPoId.set(r.po_id, { // ascending order — last write wins = latest
             transporterName: r.transporter_name || "",
             rate: r.freight_amount != null ? String(r.freight_amount) : "",
             ratePerKg: r.rate_per_kg != null ? String(r.rate_per_kg) : "",
             transportType: r.transport_type || "",
+            freightType: fType,
+            totalAmount: r.freight_amount != null ? String(r.freight_amount) : "",
           });
         });
       }
@@ -509,57 +520,71 @@ export default function FollowUpLifting() {
 
             const latestLifting = poLiftings.length > 0 ? poLiftings[poLiftings.length - 1] : null;
 
+            const resolvedTransportType =
+              po.transport_type ||
+              logisticsByPoId.get(po.id)?.transportType ||
+              (row.data.selectedVendor === "vendor1" ? row.data.vendor1TransportType :
+               row.data.selectedVendor === "vendor2" ? row.data.vendor2TransportType :
+               row.data.selectedVendor === "vendor3" ? row.data.vendor3TransportType : "") ||
+              row.data.transportType ||
+              row.data.vendor1TransportType ||
+              "";
+
             rows.push({
               id: `${row.id}__${po.id}`,   // unique id per PO row
               rowIndex: row.originalIndex,
               stage: 5,
               status,
               createdAt: row.data.createdAt,
-              history: status === "completed"
-                ? [{ stage: 5, date: latestLifting?.actual_lifting_date || row.data.createdAt, data: {} }]
-                : [],
-              data: {
-                indentNumber: row.data.indentNumber,
-                itemName: po.item_name || row.data.itemName,
-                supplierName: po.vendor_name || row.data.selectedVendorName || row.data.vendor1Name || "-",
-                vendorType: row.data.vendorType || "",
-                quantity: String(po.quantity || row.data.quantity),
-                selectedVendor: row.data.selectedVendor,
-                vendor1Name: row.data.vendor1Name,
-                vendor1PoNumber: po.po_number,
-                vendor2Name: row.data.vendor2Name,
-                vendor2PoNumber: po.po_number,
-                vendor3Name: row.data.vendor3Name,
-                vendor3PoNumber: po.po_number,
-                finalVendorName: po.vendor_name || row.data.selectedVendorName,
-                // "Next Follow Up Date" = the date actually chosen in the Follow-Up
-                // form (followup_date); "Last Follow Up Date" = when that follow-up
-                // was logged (its own record timestamp) — these were swapped before.
-                estimatedDate: latestLifting?.followup_date || "",
-                remarksFollowUp: latestLifting?.remarks || "",
-                lastFollowUpDate: latestLifting?.updated_at || "",
-                totalLifted: String(totalLiftedSoFar),
-                cancelledQty: String(cancelledQty),
-                pendingLifted: String(pendingLiftQty),
-                poNumber: po.po_number,
-                transportType: po.transport_type || "",
-                logisticsTransporterName: logisticsByPoId.get(po.id)?.transporterName || "",
-                logisticsRate: logisticsByPoId.get(po.id)?.rate || "",
-                logisticsRatePerKg: logisticsByPoId.get(po.id)?.ratePerKg || "",
-                logisticsTransportType: logisticsByPoId.get(po.id)?.transportType || po.transport_type || "",
-                liftingData: latestLifting && latestLifting.lifting_status === "Complete"
-                  ? {
-                      liftNumber: latestLifting.id?.slice(0, 8) || "",
-                      liftingQty: String(pendingLiftQty),
-                      transporterName: "",
-                      vehicleNumber: latestLifting.vehicle_number || "",
-                      contactNumber: latestLifting.driver_contact || "",
-                      dispatchDate: latestLifting.actual_lifting_date || "",
-                    }
-                  : {
-                      liftingQty: String(pendingLiftQty),
-                    },
-              },
+                  history: status === "completed"
+                    ? [{ stage: 5, date: latestLifting?.actual_lifting_date || row.data.createdAt, data: {} }]
+                    : [],
+                  data: {
+                    indentNumber: row.data.indentNumber,
+                    itemName: po.item_name || row.data.itemName,
+                    supplierName: po.vendor_name || row.data.selectedVendorName || row.data.vendor1Name || "-",
+                    vendorType: row.data.vendorType || "",
+                    quantity: String(po.quantity || row.data.quantity),
+                    selectedVendor: row.data.selectedVendor,
+                    vendor1Name: row.data.vendor1Name,
+                    vendor1PoNumber: po.po_number,
+                    vendor2Name: row.data.vendor2Name,
+                    vendor2PoNumber: po.po_number,
+                    vendor3Name: row.data.vendor3Name,
+                    vendor3PoNumber: po.po_number,
+                    finalVendorName: po.vendor_name || row.data.selectedVendorName,
+                    // "Next Follow Up Date" = the date actually chosen in the Follow-Up
+                    // form (followup_date); "Last Follow Up Date" = when that follow-up
+                    // was logged (its own record timestamp) — these were swapped before.
+                    estimatedDate: latestLifting?.followup_date || "",
+                    remarksFollowUp: latestLifting?.remarks || "",
+                    lastFollowUpDate: latestLifting?.updated_at || "",
+                    totalLifted: String(totalLiftedSoFar),
+                    cancelledQty: String(cancelledQty),
+                    pendingLifted: String(pendingLiftQty),
+                    poNumber: po.po_number,
+                    transportType: resolvedTransportType,
+                    logisticsTransporterName: logisticsByPoId.get(po.id)?.transporterName || "",
+                    logisticsRate: logisticsByPoId.get(po.id)?.rate || "",
+                    logisticsRatePerKg: logisticsByPoId.get(po.id)?.ratePerKg || "",
+                    logisticsTransportType: logisticsByPoId.get(po.id)?.transportType || resolvedTransportType,
+                    logisticsFreightType: logisticsByPoId.get(po.id)?.freightType || "",
+                    logisticsTotalAmount: logisticsByPoId.get(po.id)?.totalAmount || "",
+                    liftingData: latestLifting && latestLifting.lifting_status === "Complete"
+                      ? {
+                          liftNumber: latestLifting.id?.slice(0, 8) || "",
+                          liftingQty: String(pendingLiftQty),
+                          transporterName: "",
+                          vehicleNumber: latestLifting.vehicle_number || "",
+                          contactNumber: latestLifting.driver_contact || "",
+                          dispatchDate: latestLifting.actual_lifting_date || "",
+                          transportType: resolvedTransportType,
+                        }
+                      : {
+                          liftingQty: String(pendingLiftQty),
+                          transportType: resolvedTransportType,
+                        },
+                  },
               basicValue: po.total_amount || 0,
               _poId: po.id,
               _indentId: row.id,
@@ -663,23 +688,69 @@ export default function FollowUpLifting() {
       setCommonVendorPO(null);
     }
 
+    const firstRecord = sheetRecords.find((r) => r.id === ids[0]);
+    const initialTransportType =
+      firstRecord?.data?.transportType ||
+      firstRecord?.data?.logisticsTransportType ||
+      firstRecord?.data?.liftingData?.transportType ||
+      "";
+
+    const initialTransporterName =
+      firstRecord?.data?.logisticsTransporterName ||
+      firstRecord?.data?.liftingData?.transporterName ||
+      "";
+    const initialRatePerKg =
+      firstRecord?.data?.logisticsRatePerKg ||
+      firstRecord?.data?.liftingData?.transportRatePerKg ||
+      "";
+    const initialFreightAmount =
+      firstRecord?.data?.logisticsTotalAmount ||
+      firstRecord?.data?.logisticsRate ||
+      firstRecord?.data?.liftingData?.freightAmount ||
+      "";
+
     setUnifiedFormData({
       status: "follow-up",
       followUpDate: "",
       remarks: "",
-      liftingData: defaultLiftingData({}, "0", sheetRecords.find((r) => r.id === ids[0])?.data.transportType || ""),
+      liftingData: defaultLiftingData(
+        {
+          transportType: initialTransportType,
+          transporterName: initialTransporterName,
+          transportRatePerKg: initialRatePerKg,
+          freightAmount: initialFreightAmount,
+        },
+        "0",
+        initialTransportType
+      ),
     });
 
     const initialData = ids.map((id) => {
       const record = sheetRecords.find((r) => r.id === id)!;
       const existLift = record.data.liftingData || {};
+      const recTransportType =
+        record.data.transportType ||
+        record.data.logisticsTransportType ||
+        existLift.transportType ||
+        initialTransportType ||
+        "";
 
       return {
         recordId: id,
         status: "follow-up",
         followUpDate: "",
         remarks: "",
-        liftingData: defaultLiftingData(existLift, String(record.data.quantity || 0), record.data.transportType || ""),
+        liftingData: defaultLiftingData(
+          {
+            ...existLift,
+            transportType: recTransportType,
+            transporterName: record.data.logisticsTransporterName || existLift.transporterName || "",
+            transportRatePerKg: record.data.logisticsRatePerKg || existLift.transportRatePerKg || "",
+            freightAmount: record.data.logisticsTotalAmount || record.data.logisticsRate || existLift.freightAmount || "",
+          },
+          String(record.data.quantity || 0),
+          recTransportType
+        ),
         indentNumber: record.data.indentNumber,
         quantity: record.data.quantity,
       };
@@ -706,11 +777,22 @@ export default function FollowUpLifting() {
 
     if (newMode === "follow-up") {
       setVendorPOMismatchError(null);
+      const firstRecord = sheetRecords.find((r) => r.id === selectedRecordIds[0]);
+      const curTransportType =
+        unifiedFormData?.liftingData?.transportType ||
+        bulkFormData[0]?.liftingData?.transportType ||
+        firstRecord?.data?.transportType ||
+        firstRecord?.data?.logisticsTransportType ||
+        "";
+
       setUnifiedFormData(prev => ({
         status: "follow-up",
         followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
         remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
-        liftingData: defaultLiftingData(),
+        liftingData: {
+          ...(prev?.liftingData || defaultLiftingData()),
+          transportType: curTransportType,
+        },
       }));
       setBulkFormData(prev => prev.map(item => ({
         ...item,
@@ -728,6 +810,8 @@ export default function FollowUpLifting() {
         transportRate: firstPrevLift?.transportRate || firstRecord?.data?.logisticsRate || "",
         transportRatePerKg: firstPrevLift?.transportRatePerKg || firstRecord?.data?.logisticsRatePerKg || "",
         transportType: firstPrevLift?.transportType || firstRecord?.data?.logisticsTransportType || firstRecord?.data?.transportType || "",
+        freightType: firstPrevLift?.freightType || firstRecord?.data?.logisticsFreightType || (firstRecord?.data?.logisticsRatePerKg ? "Per kg Rate" : (firstRecord?.data?.logisticsRate ? "Fixed Rate" : "")),
+        freightAmount: firstPrevLift?.freightAmount || firstRecord?.data?.logisticsTotalAmount || firstRecord?.data?.logisticsRate || "",
       };
       setUnifiedFormData(prev => ({
         status: "arrange-logistics",
@@ -743,6 +827,8 @@ export default function FollowUpLifting() {
           transportRate: prevLift?.transportRate || record?.data?.logisticsRate || "",
           transportRatePerKg: prevLift?.transportRatePerKg || record?.data?.logisticsRatePerKg || "",
           transportType: prevLift?.transportType || record?.data?.logisticsTransportType || record?.data?.transportType || "",
+          freightType: prevLift?.freightType || record?.data?.logisticsFreightType || (record?.data?.logisticsRatePerKg ? "Per kg Rate" : (record?.data?.logisticsRate ? "Fixed Rate" : "")),
+          freightAmount: prevLift?.freightAmount || record?.data?.logisticsTotalAmount || record?.data?.logisticsRate || "",
         };
         return {
           ...item,
@@ -772,16 +858,31 @@ export default function FollowUpLifting() {
 
       setVendorPOMismatchError(null);
       const firstRecordForLift = sheetRecords.find(r => r.id === selectedRecordIds[0]);
+      const prevArrangedLift = bulkFormData[0]?.liftingData;
+      const initialFreightAmount = prevArrangedLift?.freightAmount || firstRecordForLift?.data?.logisticsTotalAmount || firstRecordForLift?.data?.logisticsRate || "";
+      const initialTransportRate = prevArrangedLift?.transportRate || firstRecordForLift?.data?.logisticsRate || "";
+      const initialTransportRatePerKg = prevArrangedLift?.transportRatePerKg || firstRecordForLift?.data?.logisticsRatePerKg || "";
+      const initialTransportType =
+        unifiedFormData?.liftingData?.transportType ||
+        prevArrangedLift?.transportType ||
+        firstRecordForLift?.data?.transportType ||
+        firstRecordForLift?.data?.logisticsTransportType ||
+        "";
+      const initialTransporterName = prevArrangedLift?.transporterName || firstRecordForLift?.data?.logisticsTransporterName || "";
+      const initialFreightType = prevArrangedLift?.freightType || firstRecordForLift?.data?.logisticsFreightType || (initialTransportRatePerKg ? "Per kg Rate" : (initialTransportRate ? "Fixed Rate" : ""));
+
       setUnifiedFormData({
         status: "lift-material",
         followUpDate: "",
         remarks: "",
         liftingData: defaultLiftingData({
-          transporterName: firstRecordForLift?.data?.logisticsTransporterName || "",
-          transportRate: firstRecordForLift?.data?.logisticsRate || "",
-          transportRatePerKg: firstRecordForLift?.data?.logisticsRatePerKg || "",
-          transportType: firstRecordForLift?.data?.logisticsTransportType || firstRecordForLift?.data?.transportType || "",
-        }),
+          transporterName: initialTransporterName,
+          transportRate: initialTransportRate,
+          transportRatePerKg: initialTransportRatePerKg,
+          transportType: initialTransportType,
+          freightType: initialFreightType,
+          freightAmount: initialFreightAmount,
+        }, "0", initialTransportType),
       });
 
       const qtys: Record<string, string> = {};
@@ -814,6 +915,8 @@ export default function FollowUpLifting() {
             transportRate: item.liftingData?.transportRate || existLift.transportRate || record?.data?.logisticsRate || "",
             transportRatePerKg: item.liftingData?.transportRatePerKg || existLift.transportRatePerKg || record?.data?.logisticsRatePerKg || "",
             transportType: item.liftingData?.transportType || existLift.transportType || record?.data?.logisticsTransportType || record?.data?.transportType || "",
+            freightType: item.liftingData?.freightType || existLift.freightType || record?.data?.logisticsFreightType || (item.liftingData?.transportRatePerKg ? "Per kg Rate" : (item.liftingData?.transportRate ? "Fixed Rate" : "")),
+            freightAmount: item.liftingData?.freightAmount || existLift.freightAmount || record?.data?.logisticsTotalAmount || record?.data?.logisticsRate || "",
           },
         };
       }));
@@ -894,6 +997,14 @@ export default function FollowUpLifting() {
           return;
         }
 
+        if (record.status === "lift-material" && !lift.contactNumber?.trim()) {
+          toast.error(`Contact No is required for Material Lifting (Indent ${sheetRecord.data.indentNumber}).`, {
+            style: { background: "red", color: "white", border: "none" }
+          });
+          setIsSubmitting(false);
+          return;
+        }
+
         const uniqueLiftNo = getUniqueLiftNumber(sheetRecord.data.indentNumber);
         lift.liftNumber = uniqueLiftNo;
 
@@ -917,13 +1028,25 @@ export default function FollowUpLifting() {
         // reference — it never touches vendor_liftings, so it can never by
         // itself move a PO out of Pending or into History.
         if (isArrangeLogisticsMode) {
+          if (!lift.transporterName?.trim()) {
+            toast.error("Please select or enter a Transporter Name for Arrange Logistics");
+            setIsSubmitting(false);
+            return;
+          }
+
           if (sheetRecord._poId) {
+            const numRatePerKg = parseFloat(lift.transportRatePerKg || "") || null;
+            const numFreightAmount = parseFloat(lift.freightAmount || "") || (numRatePerKg && modalBatchTotalQty > 0 ? numRatePerKg * modalBatchTotalQty : null);
+            const resolvedTransportType = lift.transportType || sheetRecord.data.logisticsTransportType || sheetRecord.data.transportType || null;
+            const freightType = numRatePerKg ? "Per kg Rate" : (numFreightAmount ? "Fixed Rate" : null);
+
             let logisticsPayload: any = {
               po_id: sheetRecord._poId,
-              transporter_name: lift.transporterName || "",
-              freight_amount: parseFloat(lift.transportRate || "") || null,
-              rate_per_kg: parseFloat(lift.transportRatePerKg || "") || null,
-              transport_type: lift.transportType || null,
+              transporter_name: lift.transporterName.trim(),
+              freight_amount: numFreightAmount,
+              rate_per_kg: numRatePerKg,
+              transport_type: resolvedTransportType,
+              freight_type: freightType,
               status: "Logistics Arranged",
               dispatch_date: toYMD(new Date().toISOString()),
             };
@@ -938,7 +1061,9 @@ export default function FollowUpLifting() {
             }
             if (logisticsError) {
               console.error("Failed to save logistics details:", logisticsError);
-              toast.error("Failed to save logistics details");
+              toast.error(logisticsError.message || "Failed to save logistics details");
+              setIsSubmitting(false);
+              return;
             }
           }
           continue;
@@ -984,6 +1109,7 @@ export default function FollowUpLifting() {
           // never a completion event.
           await supabase.from("transporter_followups").insert({
             po_id: sheetRecord._poId,
+            transporter_name: lift.transporterName?.trim() || "Follow-up",
             lifting_id: insertedLifting?.id || null,
             status: "Intransit",
             dispatch_date: toYMD(new Date().toISOString()),
@@ -1069,7 +1195,8 @@ export default function FollowUpLifting() {
 
     if (processMode === "arrange-logistics") {
       const e = isUnifiedMode ? unifiedFormData?.liftingData : bulkFormData[0]?.liftingData;
-      return !!(e?.transporterName && e?.transportType);
+      if (!e) return false;
+      return !!(e.transporterName && e.transporterName.trim() !== "");
     }
 
     if (isUnifiedMode && unifiedFormData) {
@@ -1127,9 +1254,11 @@ export default function FollowUpLifting() {
               if (col.key === "logistics") {
                 const parts = [
                   record.data.logisticsTransporterName && `Transporter: ${record.data.logisticsTransporterName}`,
-                  record.data.logisticsRate && `Rate: ${record.data.logisticsRate}`,
-                  record.data.logisticsRatePerKg && `Rate/Kg: ${record.data.logisticsRatePerKg}`,
-                  record.data.logisticsTransportType && `Type: ${record.data.logisticsTransportType}`,
+                  record.data.logisticsFreightType && `Freight: ${record.data.logisticsFreightType}`,
+                  record.data.logisticsRatePerKg && `Rate/Kg: ₹${record.data.logisticsRatePerKg}`,
+                  record.data.logisticsRate && `Fixed Rate: ₹${record.data.logisticsRate}`,
+                  record.data.logisticsTotalAmount && `Total: ₹${record.data.logisticsTotalAmount}`,
+                  record.data.logisticsTransportType && `Transport: ${record.data.logisticsTransportType}`,
                 ].filter(Boolean);
                 return parts.length > 0 ? parts.join(" | ") : "-";
               }
@@ -1274,11 +1403,13 @@ export default function FollowUpLifting() {
     return null;
   };
 
-  // "Arrange Logistics" only applies when WE have to arrange the transport
-  // ("Ex-Factory in Transport Office" / "F.O.R.") — "Ex-Factory Only" means
-  // the vendor handles their own pickup, so that tab has nothing to do there.
-  const activeModalRecord = sheetRecords.find((r) => r.id === bulkFormData[0]?.recordId);
-  const logisticsNeededForModal = String(activeModalRecord?.data?.transportType || "").trim().toLowerCase() === "ex-factory in transport office";
+  const modalBatchTotalQty = useMemo(() => {
+    return bulkFormData.reduce((sum, item) => {
+      const rec = sheetRecords.find((r) => r.id === item.recordId);
+      const q = parseFloat(String(rec?.data?.quantity || 0).replace(/,/g, "")) || 0;
+      return sum + q;
+    }, 0);
+  }, [bulkFormData, sheetRecords]);
 
   return (
     <div className="p-6 h-[calc(100vh-4.5rem)] flex flex-col overflow-hidden">
@@ -1452,16 +1583,22 @@ export default function FollowUpLifting() {
                                 ) : col.key === "lastFollowUpDate" || col.key === "estimatedDate" ? (
                                   formatDateDash(record.data[col.key])
                                 ) : col.key === "logistics" ? (
-                                  record.data.logisticsTransporterName || record.data.logisticsRate || record.data.logisticsRatePerKg || record.data.logisticsTransportType ? (
+                                  record.data.logisticsTransporterName || record.data.logisticsRate || record.data.logisticsRatePerKg || record.data.logisticsTransportType || record.data.logisticsFreightType ? (
                                     <div className="text-xs space-y-0.5 whitespace-nowrap">
                                       {record.data.logisticsTransporterName && (
                                         <div><span className="text-slate-400">Transporter:</span> <span className="font-semibold text-slate-800">{record.data.logisticsTransporterName}</span></div>
                                       )}
-                                      {record.data.logisticsRate && (
-                                        <div><span className="text-slate-400">Rate:</span> <span className="font-semibold text-slate-800">₹{record.data.logisticsRate}</span></div>
+                                      {record.data.logisticsFreightType && (
+                                        <div><Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] py-0 px-1.5">{record.data.logisticsFreightType}</Badge></div>
                                       )}
                                       {record.data.logisticsRatePerKg && (
                                         <div><span className="text-slate-400">Rate/Kg:</span> <span className="font-semibold text-slate-800">₹{record.data.logisticsRatePerKg}</span></div>
+                                      )}
+                                      {record.data.logisticsRate && (
+                                        <div><span className="text-slate-400">Fixed Rate:</span> <span className="font-semibold text-slate-800">₹{record.data.logisticsRate}</span></div>
+                                      )}
+                                      {record.data.logisticsTotalAmount && (
+                                        <div><span className="text-slate-400">Total Freight:</span> <span className="font-semibold text-slate-800">₹{record.data.logisticsTotalAmount}</span></div>
                                       )}
                                       {record.data.logisticsTransportType && (
                                         <Badge variant="secondary" className="bg-slate-100 text-slate-700 text-[10px] mt-0.5">{record.data.logisticsTransportType}</Badge>
@@ -1592,48 +1729,65 @@ export default function FollowUpLifting() {
             </div>
 
             {/* Mode Switch Header inside Modal */}
-            {!vendorPOMismatchError && (
-              <div className="flex bg-slate-200/60 p-1 rounded-lg w-fit mx-auto mt-4 shrink-0 border border-slate-300/30">
-                <button
-                  type="button"
-                  onClick={() => toggleDialogMode("follow-up")}
-                  className={cn(
-                    "px-6 py-1.5 text-xs font-semibold rounded-md transition-all duration-200",
-                    processMode === "follow-up"
-                      ? "bg-white text-slate-950 shadow-sm"
-                      : "text-slate-500 hover:text-slate-900"
-                  )}
-                >
-                  Follow-UP
-                </button>
-                {logisticsNeededForModal && (
+            {!vendorPOMismatchError && (() => {
+              // Determine if ALL selected records are pure Ex-Factory
+              const selectedTransportTypes = bulkFormData.map((item) => {
+                const rec = sheetRecords.find((r) => r.id === item.recordId);
+                return (
+                  unifiedFormData?.liftingData.transportType ||
+                  item.liftingData?.transportType ||
+                  rec?.data?.transportType ||
+                  rec?.data?.logisticsTransportType ||
+                  ""
+                );
+              });
+              const isExFactory =
+                selectedTransportTypes.length > 0 &&
+                selectedTransportTypes.every((t) => isExFactoryType(t));
+
+              return (
+                <div className="flex bg-slate-200/60 p-1 rounded-lg w-fit mx-auto mt-4 shrink-0 border border-slate-300/30">
                   <button
                     type="button"
-                    onClick={() => toggleDialogMode("arrange-logistics")}
+                    onClick={() => toggleDialogMode("follow-up")}
                     className={cn(
                       "px-6 py-1.5 text-xs font-semibold rounded-md transition-all duration-200",
-                      processMode === "arrange-logistics"
+                      processMode === "follow-up"
                         ? "bg-white text-slate-950 shadow-sm"
                         : "text-slate-500 hover:text-slate-900"
                     )}
                   >
-                    Arrange Logistics
+                    Follow-UP
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => toggleDialogMode("lift-material")}
-                  className={cn(
-                    "px-6 py-1.5 text-xs font-semibold rounded-md transition-all duration-200",
-                    processMode === "lift-material"
-                      ? "bg-white text-slate-950 shadow-sm"
-                      : "text-slate-500 hover:text-slate-900"
+                  {!isExFactory && (
+                    <button
+                      type="button"
+                      onClick={() => toggleDialogMode("arrange-logistics")}
+                      className={cn(
+                        "px-6 py-1.5 text-xs font-semibold rounded-md transition-all duration-200",
+                        processMode === "arrange-logistics"
+                          ? "bg-white text-slate-950 shadow-sm"
+                          : "text-slate-500 hover:text-slate-900"
+                      )}
+                    >
+                      Arrange Logistics
+                    </button>
                   )}
-                >
-                  Material Lifting
-                </button>
-              </div>
-            )}
+                  <button
+                    type="button"
+                    onClick={() => toggleDialogMode("lift-material")}
+                    className={cn(
+                      "px-6 py-1.5 text-xs font-semibold rounded-md transition-all duration-200",
+                      processMode === "lift-material"
+                        ? "bg-white text-slate-950 shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    )}
+                  >
+                    Material Lifting
+                  </button>
+                </div>
+              );
+            })()}
           </DialogHeader>
 
           {/* Modal Form Scroll Area */}
@@ -1730,11 +1884,18 @@ export default function FollowUpLifting() {
                   /* Arrange Logistics Form */
                   <form onSubmit={handleBulkSubmit} className="space-y-6">
                     <div className="border border-slate-200 rounded-2xl p-6 bg-slate-50/30 shadow-sm space-y-4">
-                      <h4 className="font-semibold text-xs text-slate-400 uppercase tracking-wider mb-2">Logistics Information</h4>
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-xs text-slate-400 uppercase tracking-wider">Logistics Information</h4>
+                        {modalBatchTotalQty > 0 && (
+                          <Badge variant="outline" className="bg-slate-100 text-slate-700 text-xs">
+                            Total Quantity: <span className="font-bold ml-1">{modalBatchTotalQty.toLocaleString()}</span>
+                          </Badge>
+                        )}
+                      </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-2">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
-                            Transporter Name *
+                            Transporter Name <span className="text-red-500">*</span>
                           </Label>
                           <TransporterCombobox
                             value={
@@ -1756,42 +1917,15 @@ export default function FollowUpLifting() {
                             options={transporterList}
                           />
                         </div>
+
                         <div className="space-y-2">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
-                            Transporting Rate (₹)
+                            Per Kg Amount (₹)
                           </Label>
                           <Input
                             type="number"
                             step="0.01"
-                            placeholder="Enter transporting rate..."
-                            value={
-                              (isUnifiedMode ? unifiedFormData?.liftingData.transportRate : null) ||
-                              bulkFormData[0]?.liftingData.transportRate ||
-                              ""
-                            }
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setUnifiedFormData((prev) => ({
-                                status: "arrange-logistics",
-                                followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
-                                remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
-                                liftingData: { ...(prev?.liftingData || bulkFormData[0]?.liftingData || defaultLiftingData()), transportRate: val },
-                              }));
-                              setBulkFormData((prev) =>
-                                prev.map((item) => ({ ...item, status: "arrange-logistics", liftingData: { ...item.liftingData, transportRate: val } }))
-                              );
-                            }}
-                            className="bg-white border-slate-200 h-10 shadow-sm"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
-                            Transporting Rate (per KG)
-                          </Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="Enter rate per kg..."
+                            placeholder="Enter per kg amount..."
                             value={
                               (isUnifiedMode ? unifiedFormData?.liftingData.transportRatePerKg : null) ||
                               bulkFormData[0]?.liftingData.transportRatePerKg ||
@@ -1799,18 +1933,76 @@ export default function FollowUpLifting() {
                             }
                             onChange={(e) => {
                               const val = e.target.value;
+                              const numPerKg = parseFloat(val) || 0;
+                              const autoTotal = numPerKg > 0 && modalBatchTotalQty > 0 ? (numPerKg * modalBatchTotalQty).toFixed(2) : "";
                               setUnifiedFormData((prev) => ({
                                 status: "arrange-logistics",
                                 followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
                                 remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
-                                liftingData: { ...(prev?.liftingData || bulkFormData[0]?.liftingData || defaultLiftingData()), transportRatePerKg: val },
+                                liftingData: {
+                                  ...(prev?.liftingData || bulkFormData[0]?.liftingData || defaultLiftingData()),
+                                  transportRatePerKg: val,
+                                  freightAmount: autoTotal,
+                                },
                               }));
                               setBulkFormData((prev) =>
-                                prev.map((item) => ({ ...item, status: "arrange-logistics", liftingData: { ...item.liftingData, transportRatePerKg: val } }))
+                                prev.map((item) => ({
+                                  ...item,
+                                  status: "arrange-logistics",
+                                  liftingData: {
+                                    ...item.liftingData,
+                                    transportRatePerKg: val,
+                                    freightAmount: autoTotal,
+                                  },
+                                }))
                               );
                             }}
                             className="bg-white border-slate-200 h-10 shadow-sm"
                           />
+                        </div>
+
+                        <div className="space-y-2 md:col-span-2">
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">
+                            Total Amount (₹)
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="Calculated total amount..."
+                            value={
+                              (isUnifiedMode ? unifiedFormData?.liftingData.freightAmount : null) ||
+                              bulkFormData[0]?.liftingData.freightAmount ||
+                              ""
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setUnifiedFormData((prev) => ({
+                                status: "arrange-logistics",
+                                followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
+                                remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
+                                liftingData: {
+                                  ...(prev?.liftingData || bulkFormData[0]?.liftingData || defaultLiftingData()),
+                                  freightAmount: val,
+                                },
+                              }));
+                              setBulkFormData((prev) =>
+                                prev.map((item) => ({
+                                  ...item,
+                                  status: "arrange-logistics",
+                                  liftingData: {
+                                    ...item.liftingData,
+                                    freightAmount: val,
+                                  },
+                                }))
+                              );
+                            }}
+                            className="bg-white border-slate-200 h-10 shadow-sm"
+                          />
+                          {modalBatchTotalQty > 0 && parseFloat((isUnifiedMode ? unifiedFormData?.liftingData.transportRatePerKg : null) || bulkFormData[0]?.liftingData.transportRatePerKg || "0") > 0 && (
+                            <p className="text-[11px] text-slate-500 mt-1">
+                              Calculation: ₹{parseFloat((isUnifiedMode ? unifiedFormData?.liftingData.transportRatePerKg : null) || bulkFormData[0]?.liftingData.transportRatePerKg || "0").toLocaleString()} × {modalBatchTotalQty.toLocaleString()} Qty = ₹{parseFloat((isUnifiedMode ? unifiedFormData?.liftingData.freightAmount : null) || bulkFormData[0]?.liftingData.freightAmount || "0").toLocaleString()}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1961,7 +2153,7 @@ export default function FollowUpLifting() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">Contact No</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">Contact No <span className="text-red-500">*</span></Label>
                           <Input
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
                             value={unifiedFormData.liftingData.contactNumber}
@@ -1972,10 +2164,11 @@ export default function FollowUpLifting() {
                               } : null)
                             }
                             placeholder="Driver contact info"
+                            required
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">AREA LIFTING</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">ADDRESS FOR LIFTING</Label>
                           <Input
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
                             value={unifiedFormData.liftingData.areaLifting || ""}
@@ -1985,7 +2178,7 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, areaLifting: e.target.value }
                               } : null)
                             }
-                            placeholder="Enter lifting area"
+                            placeholder="Enter lifting address"
                           />
                         </div>
                         <div className="space-y-1.5">
@@ -2030,39 +2223,9 @@ export default function FollowUpLifting() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TOTAL TRANSPORTING AMOUNT</Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            className="bg-white border-green-200 h-10 shadow-sm w-full"
-                            value={unifiedFormData.liftingData.freightAmount}
-                            onChange={(e) =>
-                              setUnifiedFormData((prev) => prev ? {
-                                ...prev,
-                                liftingData: { ...prev.liftingData, freightAmount: e.target.value }
-                              } : null)
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TRANSPORTING RATE (₹)</Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="From Arrange Logistics"
-                            className="bg-white border-green-200 h-10 shadow-sm w-full"
-                            value={unifiedFormData.liftingData.transportRate || ""}
-                            onChange={(e) =>
-                              setUnifiedFormData((prev) => prev ? {
-                                ...prev,
-                                liftingData: { ...prev.liftingData, transportRate: e.target.value }
-                              } : null)
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1.5">
                           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TRANSPORT TYPE</Label>
                           <Select
+                            disabled
                             value={unifiedFormData.liftingData.transportType || ""}
                             onValueChange={(val) =>
                               setUnifiedFormData((prev) => prev ? {
@@ -2071,36 +2234,77 @@ export default function FollowUpLifting() {
                               } : null)
                             }
                           >
-                            <SelectTrigger className="bg-white border-green-200 h-10 shadow-sm w-full">
+                            <SelectTrigger className="bg-slate-50 border-green-200 h-10 shadow-sm w-full cursor-not-allowed opacity-90 font-medium text-slate-800">
                               <SelectValue placeholder="Select transport type" />
                             </SelectTrigger>
                             <SelectContent className="bg-white border">
+                              <SelectItem value="Door to Door">Door to Door</SelectItem>
+                              <SelectItem value="Factory to Factory">Factory to Factory</SelectItem>
                               <SelectItem value="Ex-Factory Only">Ex-Factory Only</SelectItem>
+                              <SelectItem value="Ex-Factory">Ex-Factory</SelectItem>
                               <SelectItem value="Ex-Factory in Transport Office">Ex-Factory in Transport Office</SelectItem>
+                              <SelectItem value="Ex-Factory + Transport">Ex-Factory + Transport</SelectItem>
                               <SelectItem value="F.O.R.">F.O.R.</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILTY *</Label>
-                          <Select
-                            value={unifiedFormData.liftingData.hasBilty || "No"}
-                            onValueChange={(val) =>
-                              setUnifiedFormData((prev) => prev ? {
-                                ...prev,
-                                liftingData: { ...prev.liftingData, hasBilty: val }
-                              } : null)
-                            }
-                          >
-                            <SelectTrigger className="bg-white border-green-200 h-10 shadow-sm w-full">
-                              <SelectValue placeholder="Bilty Status" />
-                            </SelectTrigger>
-                            <SelectContent className="bg-white border">
-                              <SelectItem value="Yes">Yes</SelectItem>
-                              <SelectItem value="No">No</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        {!isExFactoryType(unifiedFormData.liftingData.transportType) && (
+                          <>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TRANSPORTING RATE (₹)</Label>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder="From Arrange Logistics"
+                                className="bg-white border-green-200 h-10 shadow-sm w-full"
+                                value={unifiedFormData.liftingData.transportRatePerKg || ""}
+                                onChange={(e) =>
+                                  setUnifiedFormData((prev) => prev ? {
+                                    ...prev,
+                                    liftingData: { ...prev.liftingData, transportRatePerKg: e.target.value }
+                                  } : null)
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TOTAL TRANSPORTING AMOUNT</Label>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                className="bg-white border-green-200 h-10 shadow-sm w-full"
+                                value={unifiedFormData.liftingData.freightAmount}
+                                onChange={(e) =>
+                                  setUnifiedFormData((prev) => prev ? {
+                                    ...prev,
+                                    liftingData: { ...prev.liftingData, freightAmount: e.target.value }
+                                  } : null)
+                                }
+                              />
+                            </div>
+                          </>
+                        )}
+                        {!isExFactoryType(unifiedFormData.liftingData.transportType) && (
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILTY *</Label>
+                            <Select
+                              value={unifiedFormData.liftingData.hasBilty || "No"}
+                              onValueChange={(val) =>
+                                setUnifiedFormData((prev) => prev ? {
+                                  ...prev,
+                                  liftingData: { ...prev.liftingData, hasBilty: val }
+                                } : null)
+                              }
+                            >
+                              <SelectTrigger className="bg-white border-green-200 h-10 shadow-sm w-full">
+                                <SelectValue placeholder="Bilty Status" />
+                              </SelectTrigger>
+                              <SelectContent className="bg-white border">
+                                <SelectItem value="Yes">Yes</SelectItem>
+                                <SelectItem value="No">No</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
 
                         {unifiedFormData.liftingData.hasBilty === "Yes" && (
                           <div className="space-y-1.5">

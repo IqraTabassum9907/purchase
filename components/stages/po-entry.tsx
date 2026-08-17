@@ -746,12 +746,6 @@ export default function Stage5() {
       const quantity = parseFloat(record?.data?.quantity) || 0;
       const basicValue = (rateNum * quantity).toFixed(2);
 
-      const selectedId = String(record?.data?.selectedVendor || "vendor1");
-      const slotIdx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
-      const slotGst = record?.data?.[`vendor${slotIdx}Gst`];
-      const vGst = slotGst ? `${slotGst}%` : (record?.data?.vendor1Gst ? `${record.data.vendor1Gst}%` : "18%");
-      const basicNum = parseFloat(basicValue) || 0;
-      const totalNum = (basicNum + basicNum * gstRateFor(vGst)).toFixed(2);
       initialData[id] = {
         rate: rate,
         basicValue: basicValue,
@@ -1146,101 +1140,9 @@ export default function Stage5() {
     setCommonPOCopy(null);
   };
 
-  const handleDownloadDraftPdf = async () => {
-    if (selectedRecordIds.length === 0) {
-      toast.error("No items selected to generate PO PDF.");
-      return;
-    }
-    setIsDownloadingPdf(true);
-    try {
-      const { pdf } = await import("@react-pdf/renderer");
-      const { POPdfDocument } = await import("./po-pdf");
-      const { perItemPkgTotal } = getPkgTotals(commonPkgAmount, commonPkgGST, selectedRecordIds.length);
-
-      const pdfItems = selectedPORecords.map((record: any, idx: number) => {
-        const v = getVendorData(record);
-        const data = bulkFormData[record.id] || {};
-        const total = (parseFloat(data.totalWithTax) || 0) + perItemPkgTotal;
-        return {
-          srNo: idx + 1,
-          itemName: record.data.itemName || "-",
-          indentNumber: record.data.indentNumber || "-",
-          quantity: record.data.quantity || "-",
-          uom: record.data.uom || "",
-          rate: data.rate !== undefined ? data.rate : (v.rate || "0"),
-          hsn: data.hsn || "",
-          gst: data.gst || "",
-          deliveryDate: data.deliveryDate ? formatDateDash(data.deliveryDate) : "-",
-          total: total.toFixed(2),
-          basicValue: data.basicValue || "0",
-        };
-      });
-
-      const blob = await pdf(
-        <POPdfDocument
-          logoUrl={`${window.location.origin}/nutech-logo.png`}
-          companyAddress={NUTECH_ADDRESS}
-          companyGstin={poForm.companyGstin}
-          poNumber={commonPONumber || "DRAFT_PO"}
-          poDate={formatDateDash(poForm.poDate)}
-          supplierName={poForm.supplierName}
-          supplierAddress={poForm.supplierAddress}
-          supplierGstin={poForm.gstin}
-          supplierEmail={poForm.supplierEmail}
-          deliveryLocation={poForm.deliveryLocation}
-          transportType={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || ""}
-          quotationNumber={poForm.quotationNumber}
-          quotationDate={formatDateDash(poForm.quotationDate)}
-          paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
-          advanceAmount={(poForm.advancePayment || "yes") === "yes" ? (poForm.advanceAmount || "") : ""}
-          billingName={poForm.billingName}
-          billingAddress={poForm.billingAddress}
-          destinationName={poForm.destinationName}
-          destinationAddress={poForm.destinationAddress}
-          remarks={poForm.remarks}
-          items={pdfItems}
-          subtotal={poSummary.subtotal.toFixed(2)}
-          gst={poSummary.gst.toFixed(2)}
-          grandTotal={poSummary.grandTotal.toFixed(2)}
-          terms={terms}
-        />
-      ).toBlob();
-
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${commonPONumber || "PO_Draft"}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      toast.success("PO PDF downloaded successfully.");
-    } catch (err: any) {
-      console.error("Error downloading PO PDF:", err);
-      toast.error(`Failed to download PO PDF: ${getErrorMessage(err)}`);
-    } finally {
-      setIsDownloadingPdf(false);
-    }
-  };
-
-  const getVendorData = (record: any, targetVendorName?: string) => {
-    let idx = 1;
-    if (targetVendorName && targetVendorName !== "-" && targetVendorName.trim() !== "") {
-      const match1 = record.data.vendor1Name?.toLowerCase() === targetVendorName.toLowerCase();
-      const match2 = record.data.vendor2Name?.toLowerCase() === targetVendorName.toLowerCase();
-      const match3 = record.data.vendor3Name?.toLowerCase() === targetVendorName.toLowerCase();
-      if (match1) idx = 1;
-      else if (match2) idx = 2;
-      else if (match3) idx = 3;
-      else {
-        const selectedId = String(record.data.selectedVendor || "vendor1");
-        idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
-      }
-    } else {
-      const selectedId = String(record.data.selectedVendor || "vendor1");
-      idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
-    }
-
+  const getVendorData = (record: any) => {
+    const selectedId = String(record.data.selectedVendor || "vendor1");
+    const idx = parseInt(selectedId.replace("vendor", ""), 10) || 1;
     return {
       name: record.data[`vendor${idx}Name`] || "-",
       rate: record.data[`vendor${idx}Rate`],
@@ -1884,31 +1786,15 @@ export default function Stage5() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
-                      {selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-" && (
-                        <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold py-0">
-                          Approved Quotation
-                        </Badge>
-                      )}
-                    </div>
-                    <Select
-                      value={poForm.transportType || "Door to Door"}
-                      disabled={poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-")}
-                      onValueChange={(val) => setPoForm((prev) => ({ ...prev, transportType: val }))}
-                    >
-                      <SelectTrigger className={`w-full border-slate-200 text-xs h-10 ${poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-") ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : "bg-white"}`}>
-                        <SelectValue placeholder="Select Transport Type" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-white border text-xs shadow-md z-50">
-                        {Array.from(new Set([
-                          ...(poForm.transportType ? [poForm.transportType] : []),
-                          ...transportTypeOptions.map((t) => t.value)
-                        ])).filter(Boolean).map((val) => (
-                          <SelectItem key={val} value={val}>{val}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
+                    {/* Prefilled from the vendor's accepted quotation — not editable
+                        here, so it can't drift from what the vendor actually quoted. */}
+                    <Input
+                      value={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || "-"}
+                      readOnly
+                      disabled
+                      className="bg-slate-100 text-slate-600 cursor-not-allowed"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Contact Person</Label>
@@ -2151,10 +2037,11 @@ export default function Stage5() {
                               </Select>
                             </td>
                             <td className="px-4 py-3">
-                              <Select
-                                value={data.gst || "18%"}
-                                disabled={isGstLocked}
-                                onValueChange={(val) => {
+                              <Input
+                                list={`gst-options-${record.id}`}
+                                value={data.gst || ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
                                   const basic = parseFloat(data.basicValue) || 0;
                                   const total = (basic + basic * gstRateFor(val)).toFixed(2);
                                   setBulkFormData((prev) => ({
@@ -2162,19 +2049,15 @@ export default function Stage5() {
                                     [record.id]: { ...prev[record.id], gst: val, totalWithTax: total },
                                   }));
                                 }}
-                              >
-                                <SelectTrigger className={`h-8 min-w-28 border-slate-300 ${isGstLocked ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : "bg-white"}`}>
-                                  <SelectValue placeholder="GST %" />
-                                </SelectTrigger>
-                                <SelectContent className="bg-white border text-xs shadow-md z-50">
-                                  {Array.from(new Set([
-                                    ...(data.gst ? [data.gst] : []),
-                                    "0%", "5%", "12%", "18%", "28%"
-                                  ])).map((opt) => (
-                                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                                placeholder="GST %"
+                                className="h-8 min-w-24"
+                              />
+                              <datalist id={`gst-options-${record.id}`}>
+                                <option value="5%" />
+                                <option value="12%" />
+                                <option value="18%" />
+                                <option value="28%" />
+                              </datalist>
                             </td>
                             <td className="px-4 py-3">
                               <Input
@@ -2236,52 +2119,36 @@ export default function Stage5() {
             <Button type="button" variant="secondary" onClick={resetPOForm} disabled={isSubmitting}>
               Reset
             </Button>
-            <div className="flex items-center gap-2">
-              <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
-                <Eye className="mr-2 h-4 w-4" />
-                Preview
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleDownloadDraftPdf}
-                disabled={selectedRecordIds.length === 0 || isDownloadingPdf}
-                className="bg-white border-slate-300 text-indigo-700 hover:bg-indigo-50 font-medium"
-              >
-                {isDownloadingPdf ? (
+            <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
+              <Eye className="mr-2 h-4 w-4" />
+              Preview
+            </Button>
+            <Button
+              onClick={handleBulkSubmit}
+              disabled={
+                isSubmitting ||
+                selectedRecordIds.length === 0 ||
+                !commonPONumber.trim() ||
+                ((poForm.advancePayment || "yes") === "yes" && !poForm.advanceAmount) ||
+                !selectedRecordIds.every((id) => {
+                  const d = bulkFormData[id];
+                  return d?.basicValue && d?.totalWithTax && d?.gst;
+                })
+              }
+              className="bg-indigo-500 text-white hover:bg-indigo-600"
+            >
+              {isSubmitting ? (
+                <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-2 h-4 w-4" />
-                )}
-                Download PDF
-              </Button>
-              <Button
-                onClick={handleBulkSubmit}
-                disabled={
-                  isSubmitting ||
-                  selectedRecordIds.length === 0 ||
-                  !commonPONumber.trim() ||
-                  ((poForm.advancePayment || "no") === "yes" && !poForm.advanceAmount) ||
-                  !selectedRecordIds.every((id) => {
-                    const d = bulkFormData[id];
-                    return d?.basicValue && d?.totalWithTax && d?.gst;
-                  })
-                }
-                className="bg-indigo-600 hover:bg-indigo-700 text-white"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
-                  </>
-                ) : (
-                  <>
-                    <Send className="mr-2 h-4 w-4" />
-                    {poMode === "revise" ? "Update PO" : "Send PO"}
-                  </>
-                )}
-              </Button>
-            </div>
+                  {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
+                </>
+              ) : (
+                <>
+                  <Send className="mr-2 h-4 w-4" />
+                  {poMode === "revise" ? "Update PO" : "Send PO"}
+                </>
+              )}
+            </Button>
           </DialogFooter>
 
           <div className="hidden">
