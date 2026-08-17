@@ -1936,7 +1936,7 @@ export default function Stage5() {
                       onValueChange={(val) => setPoForm((prev) => ({
                         ...prev,
                         advancePayment: val,
-                        advanceAmount: val === "no" ? "0" : (prev.advanceAmount && prev.advanceAmount !== "0" ? prev.advanceAmount : "5000")
+                        advanceAmount: val === "no" ? "0" : (prev.advanceAmount && prev.advanceAmount !== "0" ? prev.advanceAmount : "")
                       }))}
                     >
                       <SelectTrigger className="w-full bg-white border-slate-300 font-semibold text-xs h-10">
@@ -2216,36 +2216,52 @@ export default function Stage5() {
             <Button type="button" variant="secondary" onClick={resetPOForm} disabled={isSubmitting}>
               Reset
             </Button>
-            <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
-              <Eye className="mr-2 h-4 w-4" />
-              Preview
-            </Button>
-            <Button
-              onClick={handleBulkSubmit}
-              disabled={
-                isSubmitting ||
-                selectedRecordIds.length === 0 ||
-                !commonPONumber.trim() ||
-                ((poForm.advancePayment || "no") === "yes" && !poForm.advanceAmount) ||
-                !selectedRecordIds.every((id) => {
-                  const d = bulkFormData[id];
-                  return d?.basicValue && d?.totalWithTax && d?.gst;
-                })
-              }
-              className="bg-indigo-500 text-white hover:bg-indigo-600"
-            >
-              {isSubmitting ? (
-                <>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
+                <Eye className="mr-2 h-4 w-4" />
+                Preview
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDownloadDraftPdf}
+                disabled={selectedRecordIds.length === 0 || isDownloadingPdf}
+                className="bg-white border-slate-300 text-indigo-700 hover:bg-indigo-50 font-medium"
+              >
+                {isDownloadingPdf ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
-                </>
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  {poMode === "revise" ? "Update PO" : "Send PO"}
-                </>
-              )}
-            </Button>
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                Download PO
+              </Button>
+              <Button
+                onClick={handleBulkSubmit}
+                disabled={
+                  isSubmitting ||
+                  selectedRecordIds.length === 0 ||
+                  !commonPONumber.trim() ||
+                  ((poForm.advancePayment || "no") === "yes" && !poForm.advanceAmount) ||
+                  !selectedRecordIds.every((id) => {
+                    const d = bulkFormData[id];
+                    return d?.basicValue && d?.totalWithTax && d?.gst;
+                  })
+                }
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-2 h-4 w-4" />
+                    {poMode === "revise" ? "Update PO" : "Send PO"}
+                  </>
+                )}
+              </Button>
+            </div>
           </DialogFooter>
 
           <div className="hidden">
