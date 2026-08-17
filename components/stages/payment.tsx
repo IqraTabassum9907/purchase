@@ -533,6 +533,7 @@ export default function UnifiedPaymentHub() {
           const receipts = p.po_id ? (receiptsByPo.get(p.po_id) || []) : [];
           const totalRcvd = receipts.reduce((sum: number, r: any) => sum + (r.received_quantity || 0), 0);
           const poBillings = p.po_id ? (billingByPo.get(p.po_id) || []) : [];
+          const bill = poBillings.length > 0 ? poBillings[0] : null;
           const isBillingComplete = poBillings.some((b: any) =>
             b.verification_status === "Verified" || !!b.accountant_name || !!b.tally_voucher_number || !!b.vendor_invoice_number || (parseFloat(b.invoice_amount) > 0)
           );
@@ -542,7 +543,7 @@ export default function UnifiedPaymentHub() {
 
           return {
             id: `VHIST_${p.id}`,
-            invoiceNo: po?.po_number || "",
+            invoiceNo: bill?.vendor_invoice_number || po?.po_number || "",
             vendor: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.vendor1Name || "-",
             quantity: totalRcvd > 0 ? totalRcvd : (po?.quantity || indent?.data?.quantity || "-"),
             totalRcvd,
@@ -1409,18 +1410,12 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-semibold text-blue-700">{formatAmount(r.data.advancePaidAmount || 0)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-rose-700">{formatAmount(r.data.advancePendingAmount ?? r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-center">
-                          {r.data.advancePaidAmount > 0 && r.data.advancePendingAmount <= 0.01 ? (
+                          {r.data.isBillingComplete ? (
                             <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
-                              Fully Paid
-                            </Badge>
-                          ) : r.data.advancePaidAmount > 0 ? (
-                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 font-semibold text-[10px] whitespace-nowrap">
-                              Partial Paid ({formatAmount(r.data.advancePaidAmount)})
+                              Billing Complete
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 font-semibold text-[10px] whitespace-nowrap">
-                              Unpaid
-                            </Badge>
+                            <span className="text-slate-400">-</span>
                           )}
                         </TableCell>
                         <TableCell className="p-3 text-slate-500">{r.data.paymentTerms}</TableCell>
@@ -1491,9 +1486,13 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-bold text-emerald-700">{formatAmount(r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.data.advancePaidAmount)}</TableCell>
                         <TableCell className="p-3 text-center">
-                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
-                            Fully Paid ({formatAmount(r.data.advancePaidAmount)})
-                          </Badge>
+                          {r.data.isBillingComplete ? (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
+                              Billing Complete
+                            </Badge>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="p-3 text-slate-500 font-mono text-xs">
                           {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
@@ -1549,9 +1548,6 @@ export default function UnifiedPaymentHub() {
                   ) : (
                     vendorPendingPagination.pageData.map((r) => {
                       const overdue = isDueDateOverdueOrToday(r.data.dueDate);
-                      const hasPaidSome = (r.data.totalPaid > 0) || (r.data.advanceAmount > 0);
-                      const isFullyPaid = r.data.pendingAmount <= 0.01;
-                      const paidTotal = (r.data.totalPaid || 0) + (r.data.advanceAmount || 0);
 
                       return (
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
@@ -1564,18 +1560,12 @@ export default function UnifiedPaymentHub() {
                           <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
                           <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
                           <TableCell className="p-3 text-center">
-                            {isFullyPaid ? (
+                            {r.data.isBillingComplete ? (
                               <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
-                                Fully Paid
-                              </Badge>
-                            ) : hasPaidSome ? (
-                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 font-semibold text-[10px] whitespace-nowrap">
-                                Partial Paid ({formatAmount(paidTotal)})
+                                Billing Complete
                               </Badge>
                             ) : (
-                              <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 font-semibold text-[10px] whitespace-nowrap">
-                                Unpaid
-                              </Badge>
+                              <span className="text-slate-400">-</span>
                             )}
                           </TableCell>
                           <TableCell className="p-3 font-semibold">
@@ -1645,9 +1635,13 @@ export default function UnifiedPaymentHub() {
                         </TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
                         <TableCell className="p-3 text-center">
-                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
-                            Fully Paid ({formatAmount(r.amountPaid)})
-                          </Badge>
+                          {r.isBillingComplete ? (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
+                              Billing Complete
+                            </Badge>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.transactionId}</TableCell>
