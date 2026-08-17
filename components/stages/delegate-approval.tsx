@@ -120,18 +120,18 @@ export default function DelegateApproval() {
   useEffect(() => {
     fetchData();
 
-    // Fetch users for approver dropdown
+    // Fetch approvers from master_approvers
     supabase
-      .from("users_master")
-      .select("username, full_name")
-      .order("full_name", { ascending: true })
+      .from("master_approvers")
+      .select("id, name, is_active")
+      .order("name", { ascending: true })
       .then(({ data, error }) => {
-        if (error) console.error("Error loading users_master:", error);
+        if (error) console.error("Error loading master_approvers:", error);
         if (!error && data) {
           setApproverOptions(
             data
-              .filter((u: any) => u.username)
-              .map((u: any) => ({ username: u.username, fullName: u.full_name || u.username }))
+              .filter((a: any) => a.is_active !== false && a.name)
+              .map((a: any) => ({ username: a.name, fullName: a.name }))
           );
         }
       });
@@ -344,7 +344,7 @@ export default function DelegateApproval() {
               </SelectTrigger>
               <SelectContent className="bg-white border text-xs shadow-md z-50">
                 {approverOptions.length === 0 && (
-                  <SelectItem value="_none" disabled>No users found</SelectItem>
+                  <SelectItem value="_none" disabled>No approvers found</SelectItem>
                 )}
                 {approverOptions.map((a) => (
                   <SelectItem key={a.username} value={a.username}>
