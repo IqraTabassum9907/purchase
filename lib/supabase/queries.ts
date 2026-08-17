@@ -61,9 +61,16 @@ export interface FlatIndentRow {
     finalApprovedBy: string;
     negotiationRemarks: string;
     plan4: string;
+    // Quantities & stats
+    indentQty?: string;
+    totalApprovedQty?: string;
+    rejectedQty?: string;
+    pendingApprovalQty?: string;
+    indentApprovalsCount?: string;
     // Extra
     priority: string;
     uom: string;
+    transportType?: string;
     // Stage 5+
     poNumber: string;
     status2: string;
