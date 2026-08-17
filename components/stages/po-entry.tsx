@@ -752,7 +752,6 @@ export default function Stage5() {
       const vGst = slotGst ? `${slotGst}%` : (record?.data?.vendor1Gst ? `${record.data.vendor1Gst}%` : "18%");
       const basicNum = parseFloat(basicValue) || 0;
       const totalNum = (basicNum + basicNum * gstRateFor(vGst)).toFixed(2);
-
       initialData[id] = {
         rate: rate,
         basicValue: basicValue,
@@ -1885,15 +1884,31 @@ export default function Stage5() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
-                    {/* Prefilled from the vendor's accepted quotation — not editable
-                        here, so it can't drift from what the vendor actually quoted. */}
-                    <Input
-                      value={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || "-"}
-                      readOnly
-                      disabled
-                      className="bg-slate-100 text-slate-600 cursor-not-allowed"
-                    />
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
+                      {selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-" && (
+                        <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold py-0">
+                          Approved Quotation
+                        </Badge>
+                      )}
+                    </div>
+                    <Select
+                      value={poForm.transportType || "Door to Door"}
+                      disabled={poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-")}
+                      onValueChange={(val) => setPoForm((prev) => ({ ...prev, transportType: val }))}
+                    >
+                      <SelectTrigger className={`w-full border-slate-200 text-xs h-10 ${poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.transportType && getVendorData(selectedPORecords[0]).transportType !== "-") ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : "bg-white"}`}>
+                        <SelectValue placeholder="Select Transport Type" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white border text-xs shadow-md z-50">
+                        {Array.from(new Set([
+                          ...(poForm.transportType ? [poForm.transportType] : []),
+                          ...transportTypeOptions.map((t) => t.value)
+                        ])).filter(Boolean).map((val) => (
+                          <SelectItem key={val} value={val}>{val}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Contact Person</Label>
@@ -2072,10 +2087,10 @@ export default function Stage5() {
                         const pkgShare = getPkgTotals(commonPkgAmount, commonPkgGST, selectedRecordIds.length).perItemPkgTotal;
 
                         const selectedIdx = parseInt(String(record.data.selectedVendor || "vendor1").replace("vendor", ""), 10) || 1;
-                        const rawSlotGst = v.gst || record.data[`vendor${selectedIdx}Gst`] || record.data.vendor1Gst || data.gst;
+                        const quotedGst = v.gst || record.data?.[`vendor${selectedIdx}Gst`];
 
                         const isRateLocked = poMode === "create" && !!(v.rate && String(v.rate) !== "-" && String(v.rate).trim() !== "");
-                        const isGstLocked = poMode === "create" && !!(rawSlotGst && String(rawSlotGst) !== "-" && String(rawSlotGst).trim() !== "");
+                        const isGstLocked = poMode === "create" && !!(quotedGst && String(quotedGst) !== "-" && String(quotedGst).trim() !== "");
                         const isDeliveryLocked = poMode === "create" && !!(v.delivery && String(v.delivery) !== "-" && String(v.delivery).trim() !== "");
 
                         return (
@@ -2136,11 +2151,10 @@ export default function Stage5() {
                               </Select>
                             </td>
                             <td className="px-4 py-3">
-                              <Input
-                                list={`gst-options-${record.id}`}
-                                value={data.gst || ""}
-                                onChange={(e) => {
-                                  const val = e.target.value;
+                              <Select
+                                value={data.gst || "18%"}
+                                disabled={isGstLocked}
+                                onValueChange={(val) => {
                                   const basic = parseFloat(data.basicValue) || 0;
                                   const total = (basic + basic * gstRateFor(val)).toFixed(2);
                                   setBulkFormData((prev) => ({
@@ -2148,15 +2162,19 @@ export default function Stage5() {
                                     [record.id]: { ...prev[record.id], gst: val, totalWithTax: total },
                                   }));
                                 }}
-                                placeholder="GST %"
-                                className="h-8 min-w-24"
-                              />
-                              <datalist id={`gst-options-${record.id}`}>
-                                <option value="5%" />
-                                <option value="12%" />
-                                <option value="18%" />
-                                <option value="28%" />
-                              </datalist>
+                              >
+                                <SelectTrigger className={`h-8 min-w-28 border-slate-300 ${isGstLocked ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : "bg-white"}`}>
+                                  <SelectValue placeholder="GST %" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-white border text-xs shadow-md z-50">
+                                  {Array.from(new Set([
+                                    ...(data.gst ? [data.gst] : []),
+                                    "0%", "5%", "12%", "18%", "28%"
+                                  ])).map((opt) => (
+                                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </td>
                             <td className="px-4 py-3">
                               <Input
@@ -2218,36 +2236,52 @@ export default function Stage5() {
             <Button type="button" variant="secondary" onClick={resetPOForm} disabled={isSubmitting}>
               Reset
             </Button>
-            <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
-              <Eye className="mr-2 h-4 w-4" />
-              Preview
-            </Button>
-            <Button
-              onClick={handleBulkSubmit}
-              disabled={
-                isSubmitting ||
-                selectedRecordIds.length === 0 ||
-                !commonPONumber.trim() ||
-                ((poForm.advancePayment || "yes") === "yes" && !poForm.advanceAmount) ||
-                !selectedRecordIds.every((id) => {
-                  const d = bulkFormData[id];
-                  return d?.basicValue && d?.totalWithTax && d?.gst;
-                })
-              }
-              className="bg-indigo-500 text-white hover:bg-indigo-600"
-            >
-              {isSubmitting ? (
-                <>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)} disabled={selectedRecordIds.length === 0}>
+                <Eye className="mr-2 h-4 w-4" />
+                Preview
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDownloadDraftPdf}
+                disabled={selectedRecordIds.length === 0 || isDownloadingPdf}
+                className="bg-white border-slate-300 text-indigo-700 hover:bg-indigo-50 font-medium"
+              >
+                {isDownloadingPdf ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
-                </>
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  {poMode === "revise" ? "Update PO" : "Send PO"}
-                </>
-              )}
-            </Button>
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                Download PDF
+              </Button>
+              <Button
+                onClick={handleBulkSubmit}
+                disabled={
+                  isSubmitting ||
+                  selectedRecordIds.length === 0 ||
+                  !commonPONumber.trim() ||
+                  ((poForm.advancePayment || "no") === "yes" && !poForm.advanceAmount) ||
+                  !selectedRecordIds.every((id) => {
+                    const d = bulkFormData[id];
+                    return d?.basicValue && d?.totalWithTax && d?.gst;
+                  })
+                }
+                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {poMode === "revise" ? "Updating PO..." : "Sending PO..."}
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-2 h-4 w-4" />
+                    {poMode === "revise" ? "Update PO" : "Send PO"}
+                  </>
+                )}
+              </Button>
+            </div>
           </DialogFooter>
 
           <div className="hidden">

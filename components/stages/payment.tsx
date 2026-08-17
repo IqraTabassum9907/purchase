@@ -379,7 +379,7 @@ export default function UnifiedPaymentHub() {
               paymentMode: advPay?.payment_mode || "-",
               transactionRef: advPay?.transaction_utr || "-",
               paymentProof: advPay?.proof_url || null,
-              remarks: advPay?.remarks || "-",
+              remarks: advPay?.remarks || po?.remarks || row.data.remarks || row.data.negotiationRemarks || "-",
             }
           };
         });
@@ -593,14 +593,13 @@ export default function UnifiedPaymentHub() {
           const advanceAmount = advancePayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
 
           const isMaterialApproved = receipts.length > 0 || tf.status === "Received" || tf.status === "Approved" || tf.status === "Completed";
-          const isEligibleFreight = freightAmt > 0 || isMaterialApproved || !!tf.transporter_name || !!tf.bilty_number;
-          const isPendingPayment = isMaterialApproved && (totalPaid <= 0 || currentPending > 0.01);
+          const isPendingPayment = isMaterialApproved && freightAmt > 0 && currentPending > 0.01;
 
           return {
             id: `${tf.bilty_number || ""}_${tf.id}`,
             rowIndex: tf.id,
             poId: tf.po_id,
-            status: (isEligibleFreight || isMaterialApproved) && isPendingPayment ? "pending" : "not_ready",
+            status: isPendingPayment ? "pending" : "not_ready",
             data: {
               lrNo: tf.bilty_number || "",
               biltyImage: tf.bilty_copy_url || "",
@@ -649,7 +648,7 @@ export default function UnifiedPaymentHub() {
             id: `RCPT_${rcpt.grn_number || rcpt.id}`,
             rowIndex: rcpt.id,
             poId: rcpt.po_id,
-            status: totalPaid <= 0 || currentPending > 0.01 ? "pending" : "completed",
+            status: freightAmt > 0 && currentPending > 0.01 ? "pending" : "completed",
             data: {
               lrNo: rcpt.grn_number || "",
               biltyImage: rcpt.bilty_invoice_image_url || "",
@@ -673,7 +672,7 @@ export default function UnifiedPaymentHub() {
         }
       });
 
-      const pendingFreightList = freightRows.filter((r: any) => r.status === "pending" && (r.data.totalPaid <= 0 || r.data.pendingAmount > 0.01));
+      const pendingFreightList = freightRows.filter((r: any) => r.status === "pending" && r.data.freightAmount > 0 && r.data.pendingAmount > 0.01);
       const uniqueFreightMap = new Map<string, any>();
       pendingFreightList.forEach((r: any) => {
         const key = `${r.poId || ""}_${r.data.lrNo || r.id}`;
@@ -1331,13 +1330,14 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">Paid So Far</TableHead>
                     <TableHead className="font-bold p-3 text-right">Pending Amt</TableHead>
                     <TableHead className="font-bold p-3">Payment Terms</TableHead>
+                    <TableHead className="font-bold p-3">Remarks</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredAdvPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={13} className="h-32 text-center text-slate-400 font-medium">
                         No pending advance payments found.
                       </TableCell>
                     </TableRow>
@@ -1364,6 +1364,11 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 text-right font-semibold text-blue-700">{formatAmount(r.data.advancePaidAmount || 0)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-rose-700">{formatAmount(r.data.advancePendingAmount ?? r.data.advanceAmount)}</TableCell>
                         <TableCell className="p-3 text-slate-500">{r.data.paymentTerms}</TableCell>
+                        <TableCell className="p-3 text-slate-600 max-w-[220px]">
+                          <span className="text-xs text-slate-700 italic font-normal whitespace-pre-wrap break-words">
+                            {r.data.remarks || "-"}
+                          </span>
+                        </TableCell>
                         <TableCell className="p-3 text-slate-600 font-mono text-xs">
                           {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
                         </TableCell>
@@ -1688,6 +1693,22 @@ export default function UnifiedPaymentHub() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAdvSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-slate-700 space-y-1">
+              <div className="flex items-center justify-between font-semibold text-slate-900">
+                <span>Advance Payment Summary</span>
+                <Badge variant="outline" className="text-[10px] bg-white border-slate-300 text-slate-600">
+                  Indent: IND-{currentAdvRecord?.data?.indentNumber || "-"}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-1.5 pt-1 text-xs font-medium text-slate-700">
+                <span>Advance due: <strong className="text-slate-900 font-semibold">{formatAmount(currentAdvRecord?.data?.advanceAmount)}</strong></span>
+                <span className="text-slate-400">·</span>
+                <span>Paid so far: <strong className="text-slate-900 font-semibold">{formatAmount(currentAdvRecord?.data?.advancePaidAmount || 0)}</strong></span>
+                <span className="text-slate-400">·</span>
+                <span>Pending: <strong className="text-indigo-700 font-bold">{formatAmount(currentAdvRecord?.data?.advancePendingAmount ?? currentAdvRecord?.data?.advanceAmount)}</strong></span>
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-slate-700">Pay Amount (₹)</Label>
               <Input
@@ -1701,8 +1722,7 @@ export default function UnifiedPaymentHub() {
                 className="border-slate-200 focus-visible:ring-slate-400"
               />
               <p className="text-[11px] text-slate-500">
-                Advance due: {formatAmount(currentAdvRecord?.data?.advanceAmount)} · Paid so far: {formatAmount(currentAdvRecord?.data?.advancePaidAmount || 0)} · Pending: {formatAmount(currentAdvRecord?.data?.advancePendingAmount ?? currentAdvRecord?.data?.advanceAmount)}
-                <br />Prefilled with the pending amount — edit it to record a partial payment; the record stays in Pending until fully paid.
+                Prefilled with the pending amount — edit it to record a partial payment; the record stays in Pending until fully paid.
               </p>
             </div>
             <div className="space-y-1.5">
