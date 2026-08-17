@@ -79,7 +79,6 @@ interface LiftingEntry {
   billDate?: string;
   areaLifting?: string;
   transportRateType?: string;
-  freightType?: string;
   freightAmount: string;
   advanceAmount: string;
   paymentDate: string;
@@ -207,7 +206,6 @@ const defaultLiftingData = (existLift: any = {}, recordQty: string = "0", defaul
   billDate: existLift.billDate || "",
   areaLifting: existLift.areaLifting || "",
   transportRateType: existLift.transportRateType || "",
-  freightType: existLift.freightType || (existLift.transportRatePerKg ? "Per kg Rate" : (existLift.transportRate ? "Fixed Rate" : "")),
   freightAmount: existLift.freightAmount || "",
   advanceAmount: existLift.advanceAmount || "",
   paymentDate: existLift.paymentDate || "",
@@ -299,21 +297,29 @@ export default function FollowUpLifting() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [workflow, poResult, liftingResult, transResult, whResult, tatResult, cancelResult, advPaymentsResult] = await Promise.all([
+      const [workflow, poResult, liftingResult, transResult, whResult, tatResult, cancelResult, advPaymentsResult, tfResult] = await Promise.all([
         fetchIndentWorkflow(),
         supabase.from("purchase_orders").select("*"),
         supabase.from("vendor_liftings").select("*"),
         supabase.from("master_transporters").select("transporter_name").eq("is_active", true),
         supabase.from("master_warehouses").select("name").eq("is_active", true),
         supabase.from("master_tat_rules").select("*"),
-        supabase.from("order_cancellations").select("po_id, financial_impact"),
+        supabase.from("order_cancellations").select("*"),
         supabase.from("vendor_payments").select("po_id, payment_type, advance_status, created_at").order("created_at", { ascending: true }),
+        supabase.from("transporter_followups").select("*").order("updated_at", { ascending: true }),
       ]);
 
       if (tatResult.data) setTatRules(tatResult.data);
 
       const poData = poResult.data || [];
       const liftingData = liftingResult.data || [];
+
+      const tfByLiftingId = new Map<string, any>();
+      const tfByPoId = new Map<string, any>();
+      (tfResult.data || []).forEach((t: any) => {
+        if (t.lifting_id) tfByLiftingId.set(t.lifting_id, t);
+        if (t.po_id) tfByPoId.set(t.po_id, t);
+      });
 
       // financial_impact on order_cancellations actually stores the
       // cancelled quantity (see order-cancel.tsx) — sum it per PO so pending
@@ -361,22 +367,16 @@ export default function FollowUpLifting() {
       // Latest "Arrange Logistics" details per PO — kept visible in Pending
       // (and prefilled into Material Lifting) until the PO is actually
       // lifted; it never gates the Pending/History transition on its own.
-      const logisticsByPoId = new Map<string, { transporterName: string; rate: string; ratePerKg: string; transportType: string; freightType: string; totalAmount: string }>();
+      const logisticsByPoId = new Map<string, { transporterName: string; rate: string; ratePerKg: string; transportType: string; totalAmount: string }>();
       {
-        const { data: logisticsRows } = await supabase
-          .from("transporter_followups")
-          .select("*")
-          .eq("status", "Logistics Arranged")
-          .order("updated_at", { ascending: true });
-        (logisticsRows || []).forEach((r: any) => {
+        const logisticsRows = (tfResult.data || []).filter((r: any) => r.status === "Logistics Arranged");
+        logisticsRows.forEach((r: any) => {
           if (!r.po_id) return;
-          const fType = r.freight_type || (r.rate_per_kg ? "Per kg Rate" : (r.freight_amount ? "Fixed Rate" : ""));
           logisticsByPoId.set(r.po_id, { // ascending order — last write wins = latest
             transporterName: r.transporter_name || "",
             rate: r.freight_amount != null ? String(r.freight_amount) : "",
             ratePerKg: r.rate_per_kg != null ? String(r.rate_per_kg) : "",
             transportType: r.transport_type || "",
-            freightType: fType,
             totalAmount: r.freight_amount != null ? String(r.freight_amount) : "",
           });
         });
@@ -394,31 +394,65 @@ export default function FollowUpLifting() {
       const historyRows = liftingData.map((lift, i) => {
         const po = poData.find((p) => p.id === lift.po_id);
         const indent = workflow.find((w) => w.id === po?.indent_id);
+        const tf = (lift.id ? tfByLiftingId.get(lift.id) : null) || (lift.po_id ? tfByPoId.get(lift.po_id) : null);
         return {
           id: lift.id,
           createdAt: indent?.data.createdAt || "",
           indentNumber: indent?.data.indentNumber || "",
           warehouseLocation: indent?.data.warehouseLocation || "",
           liftNo: `LIFT-${String(i + 1).padStart(3, "0")}`,
-          vendorName: po?.vendor_name || "",
-          poNumber: po?.po_number || "",
+          vendorName: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.vendor1Name || "-",
+          poNumber: po?.po_number || "-",
           nextFollowUpDate: lift.followup_date || "",
           remarks: lift.remarks || "",
-          itemName: indent?.data.itemName || "",
-          liftingQty: "",
-          transporterName: "",
-          vehicleNo: lift.vehicle_number || "",
-          contactNo: lift.driver_contact || "",
-          lrNo: "",
-          dispatchDate: lift.actual_lifting_date || "",
-          freightAmount: "",
+          itemName: indent?.data.itemName || po?.item_name || "-",
+          liftingQty: lift.lifting_qty ? `${lift.lifting_qty} ${indent?.data?.uom || ''}`.trim() : "-",
+          transporterName: lift.transporter_name || tf?.transporter_name || logisticsByPoId.get(lift.po_id)?.transporterName || "-",
+          vehicleNo: lift.vehicle_number || tf?.vehicle_number || "-",
+          contactNo: lift.driver_contact || tf?.driver_contact || "-",
+          lrNo: lift.lr_number || tf?.bilty_number || "-",
+          dispatchDate: lift.actual_lifting_date || tf?.dispatch_date || "",
+          freightAmount: lift.freight_amount || tf?.freight_amount || "",
           advanceAmount: "",
           paymentDate: "",
-          paymentStatus: "",
-          biltyCopy: "",
+          paymentStatus: lift.lifting_status || "Complete",
+          biltyCopy: lift.bilty_copy_url || tf?.bilty_copy_url || "",
+          isCancelled: false,
         };
       });
-      setReceivingAccountsData(historyRows);
+
+      const cancelRows = (cancelResult.data || []).map((cancel: any, i: number) => {
+        const po = poData.find((p) => p.id === cancel.po_id);
+        const indent = cancel.indent_id
+          ? workflow.find((w) => w.id === cancel.indent_id)
+          : (po?.indent_id ? workflow.find((w) => w.id === po.indent_id) : null);
+
+        return {
+          id: `CANCEL_${cancel.id || i}`,
+          createdAt: cancel.cancellation_date || indent?.data?.createdAt || "",
+          indentNumber: indent?.data?.indentNumber || "",
+          warehouseLocation: indent?.data?.warehouseLocation || "",
+          liftNo: "CANCELLED",
+          vendorName: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.vendor1Name || "-",
+          poNumber: po?.po_number || "-",
+          nextFollowUpDate: "-",
+          remarks: cancel.cancellation_reason || "Order Cancelled",
+          itemName: indent?.data?.itemName || po?.item_name || "-",
+          liftingQty: cancel.financial_impact ? `${cancel.financial_impact} ${indent?.data?.uom || ''}`.trim() : "-",
+          transporterName: cancel.cancelled_by ? `Stage: ${cancel.cancelled_by}` : "Order Cancel",
+          vehicleNo: "-",
+          lrNo: cancel.cancellation_reason ? `Reason: ${cancel.cancellation_reason}` : "-",
+          dispatchDate: cancel.cancellation_date || "",
+          freightAmount: "-",
+          advanceAmount: "",
+          paymentDate: "",
+          paymentStatus: "Cancelled",
+          biltyCopy: "",
+          isCancelled: true,
+        };
+      });
+
+      setReceivingAccountsData([...historyRows, ...cancelRows]);
 
       // Create ONE ROW per PO (not per indent)
       // This ensures all POs for same indent are separately visible and processable
@@ -538,6 +572,7 @@ export default function FollowUpLifting() {
                     supplierName: po.vendor_name || row.data.selectedVendorName || row.data.vendor1Name || "-",
                     vendorType: row.data.vendorType || "",
                     quantity: String(po.quantity || row.data.quantity),
+                    uom: row.data.uom || "",
                     selectedVendor: row.data.selectedVendor,
                     vendor1Name: row.data.vendor1Name,
                     vendor1PoNumber: po.po_number,
@@ -561,7 +596,6 @@ export default function FollowUpLifting() {
                     logisticsRate: logisticsByPoId.get(po.id)?.rate || "",
                     logisticsRatePerKg: logisticsByPoId.get(po.id)?.ratePerKg || "",
                     logisticsTransportType: logisticsByPoId.get(po.id)?.transportType || resolvedTransportType,
-                    logisticsFreightType: logisticsByPoId.get(po.id)?.freightType || "",
                     logisticsTotalAmount: logisticsByPoId.get(po.id)?.totalAmount || "",
                     liftingData: latestLifting && latestLifting.lifting_status === "Complete"
                       ? {
@@ -793,7 +827,6 @@ export default function FollowUpLifting() {
         transportRate: firstPrevLift?.transportRate || "",
         transportRatePerKg: firstPrevLift?.transportRatePerKg || "",
         transportType: firstPrevLift?.transportType || firstRecord?.data?.logisticsTransportType || firstRecord?.data?.transportType || "",
-        freightType: firstPrevLift?.freightType || "",
         freightAmount: firstPrevLift?.freightAmount || "",
       };
       setUnifiedFormData(prev => ({
@@ -810,7 +843,6 @@ export default function FollowUpLifting() {
           transportRate: prevLift?.transportRate || "",
           transportRatePerKg: prevLift?.transportRatePerKg || "",
           transportType: prevLift?.transportType || record?.data?.logisticsTransportType || record?.data?.transportType || "",
-          freightType: prevLift?.freightType || "",
           freightAmount: prevLift?.freightAmount || "",
         };
         return {
@@ -852,7 +884,6 @@ export default function FollowUpLifting() {
         firstRecordForLift?.data?.logisticsTransportType ||
         "";
       const initialTransporterName = prevArrangedLift?.transporterName || firstRecordForLift?.data?.logisticsTransporterName || "";
-      const initialFreightType = prevArrangedLift?.freightType || firstRecordForLift?.data?.logisticsFreightType || (initialTransportRatePerKg ? "Per kg Rate" : (initialTransportRate ? "Fixed Rate" : ""));
 
       setUnifiedFormData({
         status: "lift-material",
@@ -863,7 +894,6 @@ export default function FollowUpLifting() {
           transportRate: initialTransportRate,
           transportRatePerKg: initialTransportRatePerKg,
           transportType: initialTransportType,
-          freightType: initialFreightType,
           freightAmount: initialFreightAmount,
         }, "0", initialTransportType),
       });
@@ -898,7 +928,6 @@ export default function FollowUpLifting() {
             transportRate: item.liftingData?.transportRate || existLift.transportRate || record?.data?.logisticsRate || "",
             transportRatePerKg: item.liftingData?.transportRatePerKg || existLift.transportRatePerKg || record?.data?.logisticsRatePerKg || "",
             transportType: item.liftingData?.transportType || existLift.transportType || record?.data?.logisticsTransportType || record?.data?.transportType || "",
-            freightType: item.liftingData?.freightType || existLift.freightType || record?.data?.logisticsFreightType || (item.liftingData?.transportRatePerKg ? "Per kg Rate" : (item.liftingData?.transportRate ? "Fixed Rate" : "")),
             freightAmount: item.liftingData?.freightAmount || existLift.freightAmount || record?.data?.logisticsTotalAmount || record?.data?.logisticsRate || "",
           },
         };
@@ -1021,21 +1050,18 @@ export default function FollowUpLifting() {
             const numRatePerKg = parseFloat(lift.transportRatePerKg || "") || null;
             const numFreightAmount = parseFloat(lift.freightAmount || "") || null;
             const resolvedTransportType = lift.transportType || sheetRecord.data.logisticsTransportType || sheetRecord.data.transportType || null;
-            const freightType = numRatePerKg ? "Per kg Rate" : (numFreightAmount ? "Fixed Rate" : null);
-
             let logisticsPayload: any = {
               po_id: sheetRecord._poId,
               transporter_name: lift.transporterName.trim(),
               freight_amount: numFreightAmount,
               rate_per_kg: numRatePerKg,
               transport_type: resolvedTransportType,
-              freight_type: freightType,
               status: "Logistics Arranged",
               dispatch_date: toYMD(new Date().toISOString()),
             };
             let { error: logisticsError } = await supabase.from("transporter_followups").insert(logisticsPayload);
             while (logisticsError && isMissingColumnError(logisticsError)) {
-              const match = /column\s+"?([a-zA-Z_]+)"?/i.exec(logisticsError.message || "");
+              const match = /column\s+"?([a-zA-Z0-9_]+)"?/i.exec(logisticsError.message || "") || /'([a-zA-Z0-9_]+)'\s+column/i.exec(logisticsError.message || "");
               const missingCol = match?.[1];
               if (!missingCol || !(missingCol in logisticsPayload)) break;
               const { [missingCol]: _drop, ...rest } = logisticsPayload;
@@ -1115,7 +1141,7 @@ export default function FollowUpLifting() {
           };
           let { error: dispatchError } = await supabase.from("transporter_followups").insert(dispatchPayload);
           while (dispatchError && isMissingColumnError(dispatchError)) {
-            const match = /column\s+"?([a-zA-Z_]+)"?/i.exec(dispatchError.message || "");
+            const match = /column\s+"?([a-zA-Z0-9_]+)"?/i.exec(dispatchError.message || "") || /'([a-zA-Z0-9_]+)'\s+column/i.exec(dispatchError.message || "");
             const missingCol = match?.[1];
             if (!missingCol || !(missingCol in dispatchPayload)) break;
             const { [missingCol]: _drop, ...rest } = dispatchPayload;
@@ -1237,7 +1263,6 @@ export default function FollowUpLifting() {
               if (col.key === "logistics") {
                 const parts = [
                   record.data.logisticsTransporterName && `Transporter: ${record.data.logisticsTransporterName}`,
-                  record.data.logisticsFreightType && `Freight: ${record.data.logisticsFreightType}`,
                   record.data.logisticsRatePerKg && `Rate/Kg: ₹${record.data.logisticsRatePerKg}`,
                   record.data.logisticsRate && `Fixed Rate: ₹${record.data.logisticsRate}`,
                   record.data.logisticsTotalAmount && `Total: ₹${record.data.logisticsTotalAmount}`,
@@ -1334,9 +1359,10 @@ export default function FollowUpLifting() {
               <div className="flex flex-wrap gap-2 mb-4">
                 {bulkFormData.map((item) => {
                   const record = sheetRecords.find((r) => r.id === item.recordId);
+                  const uomStr = record?.data?.uom ? ` ${record.data.uom}` : "";
                   return (
                     <Badge key={item.recordId} variant="secondary" className="bg-white border-slate-200 px-3 py-1 font-semibold text-slate-700 text-xs">
-                      {record?.data.indentNumber} - {record?.data.itemName} (Qty: {record?.data.quantity})
+                      {record?.data.indentNumber} - {record?.data.itemName} (Qty: {record?.data.quantity}{uomStr})
                     </Badge>
                   );
                 })}
@@ -1364,6 +1390,7 @@ export default function FollowUpLifting() {
     if (bulkFormData.length === 1) {
       const record = sheetRecords.find((r) => r.id === bulkFormData[0].recordId);
       const v = getVendorData(record);
+      const uomStr = record?.data?.uom ? ` ${record.data.uom}` : "";
       return (
         <div className="bg-linear-to-r from-slate-50 to-slate-100/50 border border-slate-200 rounded-xl p-5 mb-6 shadow-sm shrink-0 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
           <div>
@@ -1372,7 +1399,7 @@ export default function FollowUpLifting() {
           </div>
           <div>
             <span className="block text-[10px] uppercase font-bold text-slate-400">Item Details</span>
-            <span className="font-semibold text-slate-800 text-sm">{record?.data.itemName} (Qty: {record?.data.quantity})</span>
+            <span className="font-semibold text-slate-800 text-sm">{record?.data.itemName} (Qty: {record?.data.quantity}{uomStr})</span>
           </div>
           <div>
             <span className="block text-[10px] uppercase font-bold text-slate-400">Vendor Name</span>
@@ -1395,6 +1422,17 @@ export default function FollowUpLifting() {
       const q = parseFloat(String(rec?.data?.quantity || 0).replace(/,/g, "")) || 0;
       return sum + q;
     }, 0);
+  }, [bulkFormData, sheetRecords]);
+
+  const modalBatchUom = useMemo(() => {
+    const uoms = bulkFormData
+      .map((item) => {
+        const rec = sheetRecords.find((r) => r.id === item.recordId);
+        return rec?.data?.uom || "";
+      })
+      .filter(Boolean);
+    const uniqueUoms = Array.from(new Set(uoms));
+    return uniqueUoms.length > 0 ? uniqueUoms.join(", ") : "";
   }, [bulkFormData, sheetRecords]);
 
   return (
@@ -1580,13 +1618,10 @@ export default function FollowUpLifting() {
                                 ) : col.key === "lastFollowUpDate" || col.key === "estimatedDate" ? (
                                   formatDateDash(record.data[col.key])
                                 ) : col.key === "logistics" ? (
-                                  record.data.logisticsTransporterName || record.data.logisticsRate || record.data.logisticsRatePerKg || record.data.logisticsTransportType || record.data.logisticsFreightType ? (
+                                  record.data.logisticsTransporterName || record.data.logisticsRate || record.data.logisticsRatePerKg || record.data.logisticsTransportType ? (
                                     <div className="text-xs space-y-0.5 whitespace-nowrap">
                                       {record.data.logisticsTransporterName && (
                                         <div><span className="text-slate-400">Transporter:</span> <span className="font-semibold text-slate-800">{record.data.logisticsTransporterName}</span></div>
-                                      )}
-                                      {record.data.logisticsFreightType && (
-                                        <div><Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] py-0 px-1.5">{record.data.logisticsFreightType}</Badge></div>
                                       )}
                                       {record.data.logisticsRatePerKg && (
                                         <div><span className="text-slate-400">Rate/Kg:</span> <span className="font-semibold text-slate-800">₹{record.data.logisticsRatePerKg}</span></div>
@@ -1659,18 +1694,36 @@ export default function FollowUpLifting() {
                     </TableRow>
                   ) : (
                     historyPagination.pageData.map((h) => (
-                      <TableRow key={h.id} className="hover:bg-slate-50/50">
-                        <TableCell className="font-bold text-slate-800">{h.liftNo}</TableCell>
+                      <TableRow key={h.id} className={cn("hover:bg-slate-50/50", h.isCancelled && "bg-rose-50/20 hover:bg-rose-50/40")}>
+                        <TableCell className="font-bold text-slate-800">
+                          {h.isCancelled ? (
+                            <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-bold">
+                              Cancelled
+                            </Badge>
+                          ) : (
+                            h.liftNo
+                          )}
+                        </TableCell>
                         <TableCell className="font-mono">{h.indentNumber}</TableCell>
                         <TableCell className="font-semibold text-slate-800">{h.itemName}</TableCell>
                         <TableCell>{h.vendorName}</TableCell>
                         <TableCell className="font-mono">{h.poNumber}</TableCell>
-                        <TableCell className="text-center font-semibold">{h.liftingQty}</TableCell>
+                        <TableCell className="text-center font-semibold">
+                          {h.isCancelled ? (
+                            <span className="text-rose-600 font-semibold">{h.liftingQty}</span>
+                          ) : (
+                            h.liftingQty
+                          )}
+                        </TableCell>
                         <TableCell className="font-mono">{getPlannedDateForRecord(h, "Follow UP / Lifting", tatRules, h.createdAt)}</TableCell>
                         <TableCell>{h.transporterName}</TableCell>
                         <TableCell className="font-mono uppercase">{h.vehicleNo}</TableCell>
                         <TableCell>
-                          {h.lrNo ? (
+                          {h.isCancelled ? (
+                            <span className="text-xs text-rose-700 italic max-w-[180px] truncate block" title={h.remarks}>
+                              {h.remarks}
+                            </span>
+                          ) : h.lrNo && h.lrNo !== "-" ? (
                             <span className="flex items-center gap-1">
                               {h.lrNo}
                               {h.biltyCopy && h.biltyCopy.startsWith("http") && (
@@ -1683,7 +1736,7 @@ export default function FollowUpLifting() {
                         </TableCell>
                         <TableCell>{formatDateDash(h.dispatchDate)}</TableCell>
                         <TableCell className="text-right font-medium">
-                          {h.freightAmount ? `₹ ${parseFloat(String(h.freightAmount).replace(/,/g, '')).toLocaleString()}` : "-"}
+                          {h.freightAmount && h.freightAmount !== "-" ? `₹ ${parseFloat(String(h.freightAmount).replace(/,/g, '')).toLocaleString()}` : "-"}
                         </TableCell>
                       </TableRow>
                     ))
@@ -1885,7 +1938,7 @@ export default function FollowUpLifting() {
                         <h4 className="font-semibold text-xs text-slate-400 uppercase tracking-wider">Logistics Information</h4>
                         {modalBatchTotalQty > 0 && (
                           <Badge variant="outline" className="bg-slate-100 text-slate-700 text-xs">
-                            Total Quantity: <span className="font-bold ml-1">{modalBatchTotalQty.toLocaleString()}</span>
+                            Total Quantity: <span className="font-bold ml-1">{modalBatchTotalQty.toLocaleString()}{modalBatchUom ? ` ${modalBatchUom}` : ""}</span>
                           </Badge>
                         )}
                       </div>
@@ -1930,24 +1983,42 @@ export default function FollowUpLifting() {
                             }
                             onChange={(e) => {
                               const val = e.target.value;
-                              setUnifiedFormData((prev) => ({
-                                status: "arrange-logistics",
-                                followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
-                                remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
-                                liftingData: {
-                                  ...(prev?.liftingData || bulkFormData[0]?.liftingData || defaultLiftingData()),
-                                  transportRatePerKg: val,
-                                },
-                              }));
-                              setBulkFormData((prev) =>
-                                prev.map((item) => ({
-                                  ...item,
+                              const numPerKg = parseFloat(val);
+                              const calcTotal = !isNaN(numPerKg) && modalBatchTotalQty > 0
+                                ? (numPerKg * modalBatchTotalQty).toFixed(2).replace(/\.00$/, "")
+                                : (val === "" ? "" : undefined);
+
+                              setUnifiedFormData((prev) => {
+                                const prevFreight = prev?.liftingData.freightAmount || "";
+                                return {
                                   status: "arrange-logistics",
+                                  followUpDate: prev?.followUpDate || bulkFormData[0]?.followUpDate || "",
+                                  remarks: prev?.remarks || bulkFormData[0]?.remarks || "",
                                   liftingData: {
-                                    ...item.liftingData,
+                                    ...(prev?.liftingData || bulkFormData[0]?.liftingData || defaultLiftingData()),
                                     transportRatePerKg: val,
+                                    freightAmount: calcTotal !== undefined ? calcTotal : prevFreight,
                                   },
-                                }))
+                                };
+                              });
+                              setBulkFormData((prev) =>
+                                prev.map((item) => {
+                                  const itemRec = sheetRecords.find((r) => r.id === item.recordId);
+                                  const itemQty = parseFloat(String(itemRec?.data?.quantity || "0").replace(/,/g, "")) || 0;
+                                  const itemCalc = !isNaN(numPerKg) && itemQty > 0
+                                    ? (numPerKg * itemQty).toFixed(2).replace(/\.00$/, "")
+                                    : (val === "" ? "" : item.liftingData.freightAmount);
+
+                                  return {
+                                    ...item,
+                                    status: "arrange-logistics",
+                                    liftingData: {
+                                      ...item.liftingData,
+                                      transportRatePerKg: val,
+                                      freightAmount: calcTotal !== undefined ? calcTotal : item.liftingData.freightAmount,
+                                    },
+                                  };
+                                })
                               );
                             }}
                             className="bg-white border-slate-200 h-10 shadow-sm"
@@ -2246,12 +2317,26 @@ export default function FollowUpLifting() {
                                 placeholder="From Arrange Logistics"
                                 className="bg-white border-green-200 h-10 shadow-sm w-full"
                                 value={unifiedFormData.liftingData.transportRatePerKg || ""}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const rate = parseFloat(val);
+                                  const totalLiftQty = bulkFormData.reduce((sum, item) => {
+                                    const q = parseFloat(item.liftingData?.liftingQty || unifiedLiftingQtys[item.recordId] || "0") || 0;
+                                    return sum + q;
+                                  }, 0) || modalBatchTotalQty;
+                                  const calcFreight = !isNaN(rate) && totalLiftQty > 0
+                                    ? (rate * totalLiftQty).toFixed(2).replace(/\.00$/, "")
+                                    : (val === "" ? "" : undefined);
+
                                   setUnifiedFormData((prev) => prev ? {
                                     ...prev,
-                                    liftingData: { ...prev.liftingData, transportRatePerKg: e.target.value }
-                                  } : null)
-                                }
+                                    liftingData: {
+                                      ...prev.liftingData,
+                                      transportRatePerKg: val,
+                                      freightAmount: calcFreight !== undefined ? calcFreight : prev.liftingData.freightAmount,
+                                    }
+                                  } : null);
+                                }}
                               />
                             </div>
                             <div className="space-y-1.5">

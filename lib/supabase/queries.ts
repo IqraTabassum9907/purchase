@@ -517,7 +517,12 @@ export async function approveIndent(
  * degrade gracefully instead of failing the whole save.
  */
 export function isMissingColumnError(error: any): boolean {
-  return error?.code === "42703" || /column .* does not exist/i.test(error?.message || "");
+  return (
+    error?.code === "42703" ||
+    error?.code === "PGRST204" ||
+    /column .* does not exist/i.test(error?.message || "") ||
+    /Could not find the '.*' column/i.test(error?.message || "")
+  );
 }
 
 /**

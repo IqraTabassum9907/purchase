@@ -303,18 +303,48 @@ export default function PurchaseDashboard() {
         setStageCounts(counts);
         setStageOverdueCounts(overdueCounts);
 
-        const parsedPurchaseItems = indentWorkflow
-          .filter((r) => r.data.plan4 && !r.data.poNumber)
+        const poIndentIdSet = new Set(pos.map((p: any) => p.indent_id).filter(Boolean));
+
+        // POs that have been created in purchase_orders
+        const createdPoItems = pos.map((po: any) => {
+          const indent = po.indent_id ? indentWorkflow.find((r: any) => r.id === po.indent_id) : null;
+          return {
+            erp: po.po_number || indent?.data.poNumber || indent?.data.indentNumber || "-",
+            material: po.item_name || indent?.data.itemName || "-",
+            party: po.vendor_name || indent?.data.selectedVendorName || indent?.data.vendor1Name || "-",
+            qty: po.quantity || indent?.data.quantity || 0,
+            uom: indent?.data.uom || "",
+            warehouse: (po.id ? warehouseByPoId.get(po.id) : "") || po.delivery_location || indent?.data.warehouseLocation || "-",
+            firm: po.firm_name || "",
+            leadTime: po.delivery_date || indent?.data.leadTime || "-",
+            expDelivery: po.delivery_date || indent?.data.leadTime || "",
+            date: po.created_at || indent?.data.createdAt || "",
+          };
+        });
+
+        // Indents pending PO creation in Make PO
+        const pendingPoItems = indentWorkflow
+          .filter((r) => {
+            if (poIndentIdSet.has(r.id)) return false;
+            const isRegular = r.data.vendorType?.toLowerCase() === "regular";
+            const isApproved = !!r.data.actual1;
+            const hasPlan4 = !!r.data.plan4;
+            return hasPlan4 || (isRegular && isApproved);
+          })
           .map((r) => ({
-            erp: r.data.poNumber || "",
-            material: r.data.itemName,
-            party: r.data.selectedVendorName || r.data.category,
-            qty: r.data.quantity,
-            warehouse: r.data.warehouseLocation,
+            erp: r.data.poNumber || r.data.indentNumber || "-",
+            material: r.data.itemName || "-",
+            party: r.data.selectedVendorName || r.data.vendor1Name || r.data.category || "-",
+            qty: r.data.quantity || 0,
+            uom: r.data.uom || "",
+            warehouse: r.data.warehouseLocation || "-",
             firm: "",
-            leadTime: r.data.leadTime,
-            expDelivery: "",
+            leadTime: r.data.leadTime || "-",
+            expDelivery: r.data.leadTime || "",
+            date: r.data.createdAt || "",
           }));
+
+        const parsedPurchaseItems = [...createdPoItems, ...pendingPoItems];
         setPurchaseItems(parsedPurchaseItems);
 
         const parsedOverviewItems = indentWorkflow.map((r) => {
@@ -328,6 +358,7 @@ export default function PurchaseDashboard() {
             category: r.data.category,
             item: r.data.itemName,
             qty: r.data.quantity,
+            uom: r.data.uom || "",
             warehouse: r.data.warehouseLocation,
             expDelivery: r.data.leadTime,
             leadTime: r.data.leadTime,
@@ -340,14 +371,17 @@ export default function PurchaseDashboard() {
           .filter((t: any) => t.po_id && !receiptsByPo.has(t.po_id))
           .map((t: any) => {
             const po = t.po_id ? pos.find((p: any) => p.id === t.po_id) : null;
+            const indent = po?.indent_id ? indentWorkflow.find((r: any) => r.id === po.indent_id) : null;
             return {
-              erp: po?.po_number || "",
-              material: po?.item_name || "",
-              party: po?.vendor_name || "",
+              erp: po?.po_number || indent?.data.poNumber || indent?.data.indentNumber || "",
+              material: po?.item_name || indent?.data.itemName || "",
+              party: po?.vendor_name || indent?.data.selectedVendorName || "",
+              transporter: t.transporter_name || t.transporter || (indent?.data as any)?.transporterName || (indent?.data as any)?.transporter1Name || "-",
               billImage: "",
               truck: t.vehicle_number || "",
-              date: t.dispatch_date || "",
-              qty: po?.quantity || 0,
+              date: t.expected_arrival_date || t.dispatch_date || "",
+              qty: po?.quantity || indent?.data?.quantity || 0,
+              uom: indent?.data?.uom || "",
               warehouse: po?.id ? warehouseByPoId.get(po.id) || "" : "",
               firm: po?.firm_name || "",
             };
@@ -356,14 +390,16 @@ export default function PurchaseDashboard() {
 
         const rawReceivedList = receipts.map((r: any) => {
           const po = r.po_id ? pos.find((p: any) => p.id === r.po_id) : null;
+          const indent = po?.indent_id ? indentWorkflow.find((row: any) => row.id === po.indent_id) : null;
           return {
-            erp: po?.po_number || r.grn_number || r.po_number || "",
-            material: po?.item_name || r.item_name || r.itemName || "",
-            party: po?.vendor_name || r.vendor_name || r.vendorName || "",
+            erp: po?.po_number || r.grn_number || r.po_number || indent?.data.poNumber || indent?.data.indentNumber || "",
+            material: po?.item_name || r.item_name || r.itemName || indent?.data.itemName || "",
+            party: po?.vendor_name || r.vendor_name || r.vendorName || indent?.data.selectedVendorName || "",
             billImage: r.bilty_invoice_image_url || "",
             truck: "",
             date: r.received_date || r.created_at || "",
             qty: r.received_quantity || r.quantity || 0,
+            uom: indent?.data.uom || "",
             warehouse: po?.id ? warehouseByPoId.get(po.id) || "" : "",
             firm: po?.firm_name || "",
           };
@@ -373,17 +409,21 @@ export default function PurchaseDashboard() {
 
         // Fallback to purchase orders if material_receipts table has 0 records
         if (effectiveReceived.length === 0 && pos.length > 0) {
-          effectiveReceived = pos.map((p: any) => ({
-            erp: p.po_number || "",
-            material: p.item_name || "Material",
-            party: p.vendor_name || "Vendor",
-            billImage: "",
-            truck: "",
-            date: p.created_at || "",
-            qty: p.quantity || 1,
-            warehouse: p.id ? warehouseByPoId.get(p.id) || "" : "",
-            firm: p.firm_name || "",
-          }));
+          effectiveReceived = pos.map((p: any) => {
+            const indent = p.indent_id ? indentWorkflow.find((r: any) => r.id === p.indent_id) : null;
+            return {
+              erp: p.po_number || indent?.data.poNumber || indent?.data.indentNumber || "",
+              material: p.item_name || indent?.data.itemName || "Material",
+              party: p.vendor_name || indent?.data.selectedVendorName || "Vendor",
+              billImage: "",
+              truck: "",
+              date: p.created_at || "",
+              qty: p.quantity || indent?.data.quantity || 1,
+              uom: indent?.data.uom || "",
+              warehouse: p.id ? warehouseByPoId.get(p.id) || "" : "",
+              firm: p.firm_name || "",
+            };
+          });
         }
 
         // Fallback to active indent workflow records if both receipts and pos are empty
@@ -398,6 +438,7 @@ export default function PurchaseDashboard() {
               truck: "",
               date: r.data.createdAt || "",
               qty: parseFloat(String(r.data.approvedQty || r.data.quantity || "1").replace(/,/g, "")) || 1,
+              uom: r.data.uom || "",
               warehouse: r.data.warehouseLocation || "",
               firm: "",
             }));
@@ -573,6 +614,8 @@ export default function PurchaseDashboard() {
         (item.erp && item.erp.toString().toLowerCase().includes(term)) ||
         (item.material && item.material.toLowerCase().includes(term)) ||
         (item.party && item.party.toLowerCase().includes(term)) ||
+        (item.transporter && item.transporter.toLowerCase().includes(term)) ||
+        (item.truck && item.truck.toLowerCase().includes(term)) ||
         // Warranty specific fields
         (item.indentNo && item.indentNo.toString().toLowerCase().includes(term)) ||
         (item.liftNo && item.liftNo.toString().toLowerCase().includes(term)) ||
@@ -1449,6 +1492,23 @@ export default function PurchaseDashboard() {
                       {inTransitSort.key === "party" &&
                         (inTransitSort.direction === "asc" ? "↑" : "↓")}
                     </TableHead>
+                    <TableHead
+                      className="text-xs cursor-pointer hover:bg-gray-50"
+                      onClick={() =>
+                        setInTransitSort({
+                          key: "transporter",
+                          direction:
+                            inTransitSort.key === "transporter" &&
+                              inTransitSort.direction === "asc"
+                              ? "desc"
+                              : "asc",
+                        })
+                      }
+                    >
+                      Transport Name{" "}
+                      {inTransitSort.key === "transporter" &&
+                        (inTransitSort.direction === "asc" ? "↑" : "↓")}
+                    </TableHead>
                     <TableHead className="text-xs">Truck No.</TableHead>
                     <TableHead
                       className="text-xs cursor-pointer hover:bg-gray-50"
@@ -1463,12 +1523,12 @@ export default function PurchaseDashboard() {
                         })
                       }
                     >
-                      Date{" "}
+                      Expected Delivery Date{" "}
                       {inTransitSort.key === "date" &&
                         (inTransitSort.direction === "asc" ? "↑" : "↓")}
                     </TableHead>
                     <TableHead className="text-xs text-right">
-                      Quantity
+                      Lifted
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1482,10 +1542,15 @@ export default function PurchaseDashboard() {
                       <TableCell className="text-xs max-w-48 truncate">
                         {item.party}
                       </TableCell>
-                      <TableCell className="text-xs">{item.truck}</TableCell>
-                      <TableCell className="text-xs">{item.date}</TableCell>
+                      <TableCell className="text-xs max-w-40 truncate">
+                        {item.transporter || "-"}
+                      </TableCell>
+                      <TableCell className="text-xs">{item.truck || "-"}</TableCell>
+                      <TableCell className="text-xs">{item.date || "-"}</TableCell>
                       <TableCell className="text-right font-medium text-xs">
-                        {item.qty}
+                        {item.qty !== undefined && item.qty !== null && item.qty !== ""
+                          ? `${typeof item.qty === 'number' ? (item.qty % 1 === 0 ? item.qty : item.qty.toFixed(2)) : item.qty} ${item.uom || ''}`.trim()
+                          : "-"}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1613,7 +1678,7 @@ export default function PurchaseDashboard() {
                   {finalReceivedData.map((item: any, idx: number) => (
                     <TableRow key={idx}>
                       <TableCell className="font-medium text-xs">
-                        {item.erp}
+                        {item.erp || "-"}
                       </TableCell>
                       <TableCell className="text-xs">{item.material}</TableCell>
                       <TableCell className="text-xs max-w-48 truncate">
@@ -1638,7 +1703,9 @@ export default function PurchaseDashboard() {
                         {item.date ? new Date(item.date).toLocaleDateString() : "-"}
                       </TableCell>
                       <TableCell className="text-right font-medium text-xs">
-                        {item.qty}
+                        {item.qty !== undefined && item.qty !== null && item.qty !== ""
+                          ? `${typeof item.qty === 'number' ? (item.qty % 1 === 0 ? item.qty : item.qty.toFixed(2)) : item.qty} ${item.uom || ''}`.trim()
+                          : "-"}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1699,12 +1766,14 @@ export default function PurchaseDashboard() {
                   {finalPendingData.map((item: any, idx: number) => (
                     <TableRow key={idx}>
                       <TableCell className="font-medium text-xs">
-                        {item.erp}
+                        {item.erp || "-"}
                       </TableCell>
                       <TableCell className="text-xs">{item.material}</TableCell>
                       <TableCell className="text-xs">{item.party}</TableCell>
                       <TableCell className="text-right text-xs">
-                        {typeof item.qty === 'number' ? item.qty.toFixed(2) : item.qty}
+                        {item.qty !== undefined && item.qty !== null && item.qty !== ""
+                          ? `${typeof item.qty === 'number' ? (item.qty % 1 === 0 ? item.qty : item.qty.toFixed(2)) : item.qty} ${item.uom || ''}`.trim()
+                          : "-"}
                       </TableCell>
                       <TableCell className="text-xs">{item.warehouse}</TableCell>
                       <TableCell className="text-xs">{item.leadTime}</TableCell>

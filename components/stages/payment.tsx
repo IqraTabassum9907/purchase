@@ -365,6 +365,7 @@ export default function UnifiedPaymentHub() {
               indentNumber: row.data.indentNumber,
               itemName: row.data.itemName,
               quantity: row.data.quantity,
+              uom: row.data.uom || "",
               selectedVendorName: po.vendor_name || row.data.selectedVendorName || row.data.finalVendorName || row.data.vendor1Name || "Regular Vendor",
               poNumber: po.po_number || "-",
               totalValue: po.total_amount || "-",
@@ -452,6 +453,7 @@ export default function UnifiedPaymentHub() {
               vendor: vendorName,
               poNumber: po?.po_number || "",
               quantity: po?.quantity || indent?.data?.quantity || "-",
+              uom: indent?.data?.uom || "",
               totalRcvd,
               poCopy: po?.po_copy_url || "",
               qty: receipts.map((r: any) => r.received_quantity).join(", "),
@@ -516,6 +518,7 @@ export default function UnifiedPaymentHub() {
             invoiceNo: po?.po_number || "",
             vendor: po?.vendor_name || indent?.data?.selectedVendorName || indent?.data?.vendor1Name || "-",
             quantity: po?.quantity || indent?.data?.quantity || "-",
+            uom: indent?.data?.uom || "",
             amountPaid: p.amount,
             status: p.status,
             date: toDate(p.payment_date),
@@ -543,6 +546,7 @@ export default function UnifiedPaymentHub() {
             lrNo: tf?.bilty_number || "",
             transporter: tf?.transporter_name || "",
             quantity: po?.quantity || indent?.data?.quantity || "-",
+            uom: indent?.data?.uom || "",
             amountPaid: p.amount,
             status: p.status,
             date: toDate(p.payment_date),
@@ -606,6 +610,7 @@ export default function UnifiedPaymentHub() {
               freightAmount: freightAmt,
               transporter: tf.transporter_name || "",
               quantity: receipt?.received_quantity || po?.quantity || "-",
+              uom: indent?.data?.uom || "",
               vehicleNo: tf.vehicle_number || lifting?.vehicle_number || "",
               contact: tf.driver_contact || lifting?.driver_contact || "",
               advanceAmount,
@@ -628,6 +633,7 @@ export default function UnifiedPaymentHub() {
         if (rcpt.po_id && !processedPoIds.has(rcpt.po_id)) {
           processedPoIds.add(rcpt.po_id);
           const po = poById.get(rcpt.po_id);
+          const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
           const lifting = liftingByPo.get(rcpt.po_id);
           const tf = (tfData || []).find((t: any) => t.po_id === rcpt.po_id);
           const payments = (paymentsByPo.get(rcpt.po_id) || []).filter((p: any) => p.payment_type === "Freight Payment");
@@ -655,6 +661,7 @@ export default function UnifiedPaymentHub() {
               freightAmount: freightAmt,
               transporter: tf?.transporter_name || po?.vendor_name || "-",
               quantity: rcpt.received_quantity || po?.quantity || "-",
+              uom: indent?.data?.uom || "",
               vehicleNo: tf?.vehicle_number || lifting?.vehicle_number || "-",
               contact: tf?.driver_contact || lifting?.driver_contact || "-",
               advanceAmount,
@@ -1356,7 +1363,9 @@ export default function UnifiedPaymentHub() {
                         </TableCell>
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName}</TableCell>
-                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">
+                          {r.data.quantity && r.data.quantity !== "-" ? `${r.data.quantity} ${r.data.uom || ''}`.trim() : "-"}
+                        </TableCell>
                         <TableCell className="p-3 text-slate-600">{r.data.selectedVendorName}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
@@ -1421,7 +1430,9 @@ export default function UnifiedPaymentHub() {
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-semibold text-slate-700">IND-{r.data.indentNumber}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.itemName}</TableCell>
-                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">
+                          {r.data.quantity && r.data.quantity !== "-" ? `${r.data.quantity} ${r.data.uom || ''}`.trim() : "-"}
+                        </TableCell>
                         <TableCell className="p-3 text-slate-600">{r.data.selectedVendorName}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalValue)}</TableCell>
@@ -1484,7 +1495,9 @@ export default function UnifiedPaymentHub() {
                         <TableRow key={r.id} className={cn("hover:bg-slate-50/50", overdue && "bg-red-50/30 hover:bg-red-50/50")}>
                           <TableCell className="p-3 font-semibold text-slate-800">{r.data.invoiceNo}</TableCell>
                           <TableCell className="p-3 font-semibold text-slate-900">{r.data.vendor}</TableCell>
-                          <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
+                          <TableCell className="p-3 text-right font-medium text-slate-700">
+                            {r.data.quantity && r.data.quantity !== "-" ? `${r.data.quantity} ${r.data.uom || ''}`.trim() : "-"}
+                          </TableCell>
                           <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
                           <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
                           <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
@@ -1498,7 +1511,9 @@ export default function UnifiedPaymentHub() {
                           </TableCell>
                           <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                           <TableCell className="p-3">{renderSafeValue(r.data.invoiceCopy)}</TableCell>
-                          <TableCell className="p-3 text-right font-medium">{r.data.totalRcvd}</TableCell>
+                          <TableCell className="p-3 text-right font-medium">
+                            {r.data.totalRcvd && r.data.totalRcvd !== "-" ? `${r.data.totalRcvd} ${r.data.uom || ''}`.trim() : "-"}
+                          </TableCell>
                           <TableCell className="p-3 text-slate-500 max-w-[200px] truncate">{r.data.receivedItems}</TableCell>
                         </TableRow>
                       );
@@ -1547,7 +1562,9 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.invoiceNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.vendor}</TableCell>
-                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.quantity}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">
+                          {r.quantity && r.quantity !== "-" ? `${r.quantity} ${r.uom || ''}`.trim() : "-"}
+                        </TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.transactionId}</TableCell>
@@ -1602,7 +1619,9 @@ export default function UnifiedPaymentHub() {
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-semibold text-slate-800">{r.data.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.transporter}</TableCell>
-                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.data.quantity}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">
+                          {r.data.quantity && r.data.quantity !== "-" ? `${r.data.quantity} ${r.data.uom || ''}`.trim() : "-"}
+                        </TableCell>
                         <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.freightAmount)}</TableCell>
                         <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
                         <TableCell className="p-3 font-mono text-xs">{r.data.vehicleNo}</TableCell>
@@ -1655,7 +1674,9 @@ export default function UnifiedPaymentHub() {
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.transporter}</TableCell>
-                        <TableCell className="p-3 text-right font-medium text-slate-700">{r.quantity}</TableCell>
+                        <TableCell className="p-3 text-right font-medium text-slate-700">
+                          {r.quantity && r.quantity !== "-" ? `${r.quantity} ${r.uom || ''}`.trim() : "-"}
+                        </TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.transactionId}</TableCell>
