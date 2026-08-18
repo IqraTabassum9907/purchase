@@ -59,11 +59,11 @@ import { PaginationBar } from "@/components/ui/pagination-bar";
 // Column definitions for Vendor Invoices
 const VENDOR_PENDING_COLUMNS = [
   { key: "invoiceNo", label: "Invoice No." },
-  { key: "totalPaid", label: "Paid" },
+  { key: "totalPaid", label: "Total Paid Amount" },
   { key: "pendingAmount", label: "Pending" },
   { key: "plan1", label: "Planned" },
   { key: "invoiceDate", label: "Inv. Date" },
-  { key: "dueDate", label: "Due Date" },
+  { key: "billingDate", label: "Billing Date" },
   { key: "vendor", label: "Vendor" },
   { key: "poNumber", label: "PO Number" },
   { key: "invoiceCopy", label: "Invoice Copy" },
@@ -210,7 +210,6 @@ export default function UnifiedPaymentHub() {
   const [vendorRecords, setVendorRecords] = useState<any[]>([]);
   const [vendorHistory, setVendorHistory] = useState<any[]>([]);
   const [vendorSelectedColumns, setVendorSelectedColumns] = useState<string[]>(ALL_VENDOR_PENDING_KEYS);
-  const [showOverdueOnly, setShowOverdueOnly] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkStep, setBulkStep] = useState<"vendor" | "invoices">("vendor");
   const [selectedBulkVendor, setSelectedBulkVendor] = useState("");
@@ -469,6 +468,7 @@ export default function UnifiedPaymentHub() {
               invoiceNo: invNo,
               invoiceCopy: bill.tally_bill_copy_url || "",
               invoiceDate: toDate(bill.invoice_date),
+              billingDate: toDate(bill.invoice_date || bill.created_at) || "-",
               dueDate: po?.delivery_date || "-",
               vendor: vendorName,
               poNumber: po?.po_number || "",
@@ -538,6 +538,7 @@ export default function UnifiedPaymentHub() {
             b.verification_status === "Verified" || !!b.accountant_name || !!b.tally_voucher_number || !!b.vendor_invoice_number || (parseFloat(b.invoice_amount) > 0)
           );
           const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Vendor Payment") : [];
+          const totalPaid = payments.reduce((sum: number, pp: any) => sum + (parseFloat(pp.amount) || 0), 0);
           const plan1 = payments.length > 0 ? payments[0].created_at : null;
           const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
 
@@ -548,6 +549,7 @@ export default function UnifiedPaymentHub() {
             quantity: totalRcvd > 0 ? totalRcvd : (po?.quantity || indent?.data?.quantity || "-"),
             totalRcvd,
             isBillingComplete,
+            totalPaid: totalPaid || p.amount || 0,
             uom: indent?.data?.uom || "",
             amountPaid: p.amount,
             status: p.status,
@@ -757,18 +759,15 @@ export default function UnifiedPaymentHub() {
 
   // --- Filtering Vendor Invoice rows ---
   const filteredVendorPending = useMemo(() => {
-    let result = vendorRecords.filter((r: any) => (
+    return vendorRecords.filter((r: any) => (
       r.data.invoiceNo?.toLowerCase().includes(searchLower) ||
       r.data.vendor?.toLowerCase().includes(searchLower) ||
       r.data.receivedItems?.toLowerCase().includes(searchLower) ||
       r.data.poNumber?.toLowerCase().includes(searchLower) ||
-      r.data.dueDate?.toLowerCase().includes(searchLower)
+      r.data.billingDate?.toLowerCase().includes(searchLower) ||
+      r.data.invoiceDate?.toLowerCase().includes(searchLower)
     ));
-    if (showOverdueOnly) {
-      result = result.filter((r: any) => isDueDateOverdueOrToday(r.data.dueDate));
-    }
-    return result;
-  }, [vendorRecords, searchLower, showOverdueOnly]);
+  }, [vendorRecords, searchLower]);
 
   const filteredVendorHistory = useMemo(() => {
     return vendorHistory.filter((r: any) => (
@@ -1333,17 +1332,6 @@ export default function UnifiedPaymentHub() {
                 )
               </button>
             </div>
-
-            {/* Overdue switch for vendor payments */}
-            {workflow === "vendor" && activeTab === "pending" && (
-              <Button
-                variant={showOverdueOnly ? "destructive" : "outline"}
-                onClick={() => setShowOverdueOnly(!showOverdueOnly)}
-                className="h-9 px-3 rounded-lg text-xs font-bold"
-              >
-                Overdue Only
-              </Button>
-            )}
           </div>
         </div>
 
@@ -1529,8 +1517,8 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3 text-right">Total Bill Value</TableHead>
                     <TableHead className="font-bold p-3 text-right text-indigo-700">Advance Paid</TableHead>
                     <TableHead className="font-bold p-3 text-right">Pending Amount</TableHead>
-                    <TableHead className="font-bold p-3 text-center">Paid</TableHead>
-                    <TableHead className="font-bold p-3">Due Date</TableHead>
+                    <TableHead className="font-bold p-3 text-right text-emerald-700">Total Paid Amount</TableHead>
+                    <TableHead className="font-bold p-3">Billing Date</TableHead>
                     <TableHead className="font-bold p-3">Planned Date</TableHead>
                     <TableHead className="font-bold p-3">PO Number</TableHead>
                     <TableHead className="font-bold p-3">Invoice Copy</TableHead>
@@ -1559,19 +1547,11 @@ export default function UnifiedPaymentHub() {
                           <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
                           <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
                           <TableCell className="p-3 text-right font-bold text-red-600">{formatAmount(r.data.pendingAmount)}</TableCell>
-                          <TableCell className="p-3 text-center">
-                            {r.data.isBillingComplete ? (
-                              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
-                                Billing Complete
-                              </Badge>
-                            ) : (
-                              <span className="text-slate-400">-</span>
-                            )}
+                          <TableCell className="p-3 text-right font-bold text-emerald-600">
+                            {formatAmount(r.data.totalPaid)}
                           </TableCell>
-                          <TableCell className="p-3 font-semibold">
-                            <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold", overdue ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-600")}>
-                              {r.data.dueDate}
-                            </span>
+                          <TableCell className="p-3 font-semibold text-slate-700">
+                            {r.data.billingDate && r.data.billingDate !== "-" ? r.data.billingDate : (r.data.invoiceDate && r.data.invoiceDate !== "-" ? r.data.invoiceDate : "-")}
                           </TableCell>
                           <TableCell className="p-3 text-slate-500 font-mono text-xs">
                             {getPlannedDateForRecord(r.data, "Payment", tatRules, r.createdAt)}
@@ -1609,7 +1589,7 @@ export default function UnifiedPaymentHub() {
                     <TableHead className="font-bold p-3">Vendor</TableHead>
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
                     <TableHead className="font-bold p-3 text-right">Amount Paid</TableHead>
-                    <TableHead className="font-bold p-3 text-center">Paid</TableHead>
+                    <TableHead className="font-bold p-3 text-right text-emerald-700">Total Paid Amount</TableHead>
                     <TableHead className="font-bold p-3">Payment Mode</TableHead>
                     <TableHead className="font-bold p-3">Transaction ID</TableHead>
                     <TableHead className="font-bold p-3">Status</TableHead>
@@ -1634,14 +1614,8 @@ export default function UnifiedPaymentHub() {
                           {r.quantity && r.quantity !== "-" ? `${r.quantity} ${r.uom || ''}`.trim() : "-"}
                         </TableCell>
                         <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.amountPaid)}</TableCell>
-                        <TableCell className="p-3 text-center">
-                          {r.isBillingComplete ? (
-                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold text-[10px] whitespace-nowrap">
-                              Billing Complete
-                            </Badge>
-                          ) : (
-                            <span className="text-slate-400">-</span>
-                          )}
+                        <TableCell className="p-3 text-right font-bold text-emerald-600">
+                          {formatAmount(r.totalPaid)}
                         </TableCell>
                         <TableCell className="p-3 text-slate-600">{r.mode}</TableCell>
                         <TableCell className="p-3 font-mono text-xs text-slate-700">{r.transactionId}</TableCell>
@@ -1948,6 +1922,7 @@ export default function UnifiedPaymentHub() {
                       <TableHead className="p-3">PO Number</TableHead>
                       <TableHead className="p-3 text-right">Total</TableHead>
                       <TableHead className="p-3 text-right">Advance</TableHead>
+                      <TableHead className="p-3 text-right text-emerald-700">Total Paid Amount</TableHead>
                       <TableHead className="p-3 text-right">Pending Amount</TableHead>
                       <TableHead className="p-3 text-right">Paying Amount</TableHead>
                     </TableRow>
@@ -1974,6 +1949,7 @@ export default function UnifiedPaymentHub() {
                             <TableCell className="p-3 font-mono text-xs">{r.data.poNumber}</TableCell>
                             <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.totalVal)}</TableCell>
                             <TableCell className="p-3 text-right text-indigo-600 font-bold">{formatAmount(r.data.advanceAmount)}</TableCell>
+                            <TableCell className="p-3 text-right text-emerald-600 font-bold">{formatAmount(r.data.totalPaid)}</TableCell>
                             <TableCell className="p-3 text-right font-bold text-slate-800">{formatAmount(r.data.pendingAmount)}</TableCell>
                             <TableCell className="p-3">
                               <Input

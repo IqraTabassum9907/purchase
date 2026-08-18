@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "@/lib/utils";
 import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -96,6 +97,7 @@ export default function PurchaseDashboard() {
   const [receivedSearch, setReceivedSearch] = useState("");
   const [pendingSearch, setPendingSearch] = useState("");
   const [warrantySearch, setWarrantySearch] = useState("");
+  const [poSubTab, setPoSubTab] = useState<"pending" | "completed">("pending");
 
 
 
@@ -307,47 +309,82 @@ export default function PurchaseDashboard() {
 
         const poIndentIdSet = new Set(pos.map((p: any) => p.indent_id).filter(Boolean));
 
+        const liftedQtyMap = new Map<string, number>();
+        liftings.forEach((l: any) => {
+          if (l.po_id) {
+            const q = parseFloat(String(l.lifted_quantity || l.quantity || 0).replace(/,/g, "")) || 0;
+            liftedQtyMap.set(l.po_id, (liftedQtyMap.get(l.po_id) || 0) + q);
+          }
+        });
+
+        const receivedQtyMap = new Map<string, number>();
+        receipts.forEach((r: any) => {
+          if (r.po_id) {
+            const q = parseFloat(String(r.received_quantity || r.quantity || 0).replace(/,/g, "")) || 0;
+            receivedQtyMap.set(r.po_id, (receivedQtyMap.get(r.po_id) || 0) + q);
+          }
+        });
+
+        const canceledQtyMap = new Map<string, number>();
+        cancellations.forEach((c: any) => {
+          if (c.po_id) {
+            const q = parseFloat(String(c.canceled_quantity || c.cancelled_quantity || c.quantity || 0).replace(/,/g, "")) || 0;
+            canceledQtyMap.set(c.po_id, (canceledQtyMap.get(c.po_id) || 0) + q);
+          }
+        });
+
         // POs that have been created in purchase_orders
         const createdPoItems = pos.map((po: any) => {
           const indent = po.indent_id ? indentWorkflow.find((r: any) => r.id === po.indent_id) : null;
+          const poQty = parseFloat(String(po.quantity || indent?.data.quantity || 0).replace(/,/g, "")) || 0;
+          const liftedQty = liftedQtyMap.get(po.id) || 0;
+          const receivedQty = receivedQtyMap.get(po.id) || 0;
+          const canceledQty = canceledQtyMap.get(po.id) || 0;
+          const pendingQty = Math.max(0, poQty - receivedQty - canceledQty);
+          const isComplete = (receivedQty >= poQty && poQty > 0) || po.status === "completed" || po.status === "delivered" || receiptsByPo.has(po.id);
+
+          let stageStatus = "Completed";
+          if (!isComplete) {
+            if (po.has_advance_payment && !paymentsByPo.has(po.id)) {
+              stageStatus = "Payment";
+            } else if (!liftingsByPo.has(po.id)) {
+              stageStatus = "Follow UP / Lifting";
+            } else if (!transportsByPo.has(po.id)) {
+              stageStatus = "Transporter Follow-Up";
+            } else if (!receiptsByPo.has(po.id)) {
+              stageStatus = "Material Received";
+            } else if (!billingsByPo.has(po.id)) {
+              stageStatus = "Billing";
+            } else {
+              stageStatus = "Vendor Payment";
+            }
+          }
+
           return {
+            id: po.id,
             erp: po.po_number || indent?.data.poNumber || indent?.data.indentNumber || "-",
             material: po.item_name || indent?.data.itemName || "-",
             party: po.vendor_name || indent?.data.selectedVendorName || indent?.data.vendor1Name || "-",
-            qty: po.quantity || indent?.data.quantity || 0,
+            poQty,
+            liftedQty,
+            receivedQty,
+            canceledQty,
+            pendingQty,
+            qty: poQty,
             uom: indent?.data.uom || "",
             warehouse: (po.id ? warehouseByPoId.get(po.id) : "") || po.delivery_location || indent?.data.warehouseLocation || "-",
             firm: po.firm_name || "",
             leadTime: po.delivery_date || indent?.data.leadTime || "-",
             expDelivery: po.delivery_date || indent?.data.leadTime || "",
             date: po.created_at || indent?.data.createdAt || "",
+            poPdfUrl: po.po_pdf_url || po.po_file_url || "",
+            isComplete,
+            status: stageStatus,
           };
         });
 
-        // Indents pending PO creation in Make PO
-        const pendingPoItems = indentWorkflow
-          .filter((r) => {
-            if (poIndentIdSet.has(r.id)) return false;
-            const isRegular = r.data.vendorType?.toLowerCase() === "regular";
-            const isApproved = !!r.data.actual1;
-            const hasPlan4 = !!r.data.plan4;
-            return hasPlan4 || (isRegular && isApproved);
-          })
-          .map((r) => ({
-            erp: r.data.poNumber || r.data.indentNumber || "-",
-            material: r.data.itemName || "-",
-            party: r.data.selectedVendorName || r.data.vendor1Name || r.data.category || "-",
-            qty: r.data.quantity || 0,
-            uom: r.data.uom || "",
-            warehouse: r.data.warehouseLocation || "-",
-            firm: "",
-            leadTime: r.data.leadTime || "-",
-            expDelivery: r.data.leadTime || "",
-            date: r.data.createdAt || "",
-          }));
-
-        const parsedPurchaseItems = [...createdPoItems, ...pendingPoItems];
-        setPurchaseItems(parsedPurchaseItems);
+        // Only include POs that have actually been created in purchase_orders
+        setPurchaseItems(createdPoItems);
 
         const parsedOverviewItems = indentWorkflow.map((r) => {
           let status = "Pending";
@@ -656,6 +693,9 @@ export default function PurchaseDashboard() {
   const finalInTransitData = useMemo(() => searchData(sortedInTransitData, inTransitSearch), [sortedInTransitData, inTransitSearch]);
   const finalReceivedData = useMemo(() => searchData(sortedReceivedData, receivedSearch), [sortedReceivedData, receivedSearch]);
   const finalPendingData = useMemo(() => searchData(sortedPendingData, pendingSearch), [sortedPendingData, pendingSearch]);
+  const poPendingData = useMemo(() => finalPendingData.filter((item: any) => !item.isComplete), [finalPendingData]);
+  const poCompletedData = useMemo(() => finalPendingData.filter((item: any) => item.isComplete), [finalPendingData]);
+  const displayedPoItems = useMemo(() => poSubTab === "pending" ? poPendingData : poCompletedData, [poSubTab, poPendingData, poCompletedData]);
   const finalWarrantyData = useMemo(() => searchData(sortedWarrantyData, warrantySearch), [sortedWarrantyData, warrantySearch]);
 
   // Export to CSV function
@@ -1105,7 +1145,7 @@ export default function PurchaseDashboard() {
             Overview
           </TabsTrigger>
           <TabsTrigger value="purchase" className="text-xs sm:text-sm">
-            Purchase Data
+            Purchase Order
           </TabsTrigger>
           <TabsTrigger value="intransit" className="text-xs sm:text-sm">
             In-Transit
@@ -1883,73 +1923,156 @@ export default function PurchaseDashboard() {
           </Card>
         </TabsContent>
 
-        {/* PURCHASE DATA → PENDING TAB */}
+        {/* PURCHASE ORDER TAB */}
         <TabsContent value="purchase" className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
               <Clock className="h-5 w-5 text-orange-500" />
-              <h3 className="text-lg font-semibold">
-                Pending Orders from PO Sheet
+              <h3 className="text-lg font-semibold text-slate-900">
+                {poSubTab === "pending" ? "Pending Orders (In Follow-Up)" : "Completed Orders (Delivered & Received)"}
               </h3>
             </div>
-            <Badge variant="secondary" className="bg-orange-50 text-orange-700">
-              {finalPendingData.length} Orders
-            </Badge>
+            
+            {/* Sub-tabs for Pending / Completed */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+              <button
+                type="button"
+                onClick={() => setPoSubTab("pending")}
+                className={cn(
+                  "px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2",
+                  poSubTab === "pending"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                )}
+              >
+                <span>Pending</span>
+                <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px] px-2 py-0.5">
+                  {poPendingData.length}
+                </Badge>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPoSubTab("completed")}
+                className={cn(
+                  "px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2",
+                  poSubTab === "completed"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                )}
+              >
+                <span>Completed</span>
+                <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 text-[10px] px-2 py-0.5">
+                  {poCompletedData.length}
+                </Badge>
+              </button>
+            </div>
           </div>
 
-          {/* Search */}
-          <div className="flex items-center gap-2">
+          {/* Search & Export */}
+          <div className="flex items-center justify-between gap-2">
             <Input
               placeholder="Search by ERP, material, or party..."
               value={pendingSearch}
               onChange={(e) => setPendingSearch(e.target.value)}
-              className="max-w-sm"
+              className="max-w-sm bg-white"
             />
             <Button
               variant="outline"
               size="sm"
-              onClick={() => exportToCSV(finalPendingData, "pending-data.csv")}
-              className="flex items-center gap-1"
+              onClick={() => {
+                const exportData = displayedPoItems.map((item: any) => ({
+                  "ERP PO Number": item.erp || "-",
+                  "Material Name": item.material || "-",
+                  "Party Name": item.party || "-",
+                  "PO Qty": item.poQty ? `${item.poQty} ${item.uom || ''}`.trim() : "-",
+                  "Total Lifted Qty": item.liftedQty ? `${item.liftedQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim(),
+                  "Received Qty": item.receivedQty ? `${item.receivedQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim(),
+                  "Canceled Qty": item.canceledQty ? `${item.canceledQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim(),
+                  "Pending Qty": item.pendingQty ? `${item.pendingQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim(),
+                  "Warehouse": item.warehouse || "-",
+                  "Expected Date of Delivery": item.leadTime || "-",
+                  "Exp. Delivery": item.expDelivery || "-",
+                  "Status": item.status || "-",
+                }));
+                exportToCSV(exportData, `purchase-orders-${poSubTab}.csv`);
+              }}
+              className="flex items-center gap-1 font-semibold"
             >
-              <Download className="h-3 w-3" />
+              <Download className="h-3.5 w-3.5" />
               Export CSV
             </Button>
           </div>
 
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
+          <Card className="border shadow-sm">
+            <CardContent className="p-0 overflow-auto">
+              <Table className="text-xs">
+                <TableHeader className="bg-slate-50">
                   <TableRow>
-                    <TableHead className="text-xs">ERP PO Number</TableHead>
-                    <TableHead className="text-xs">Material Name</TableHead>
-                    <TableHead className="text-xs">Party Name</TableHead>
-                    <TableHead className="text-xs text-right">Quantity</TableHead>
-                    <TableHead className="text-xs">Warehouse</TableHead>
-                    <TableHead className="text-xs">Expected Date of Raw Material Delivery</TableHead>
-                    <TableHead className="text-xs">Exp. Delivery</TableHead>
+                    <TableHead className="font-bold text-slate-700">ERP PO Number</TableHead>
+                    <TableHead className="font-bold text-slate-700">Material Name</TableHead>
+                    <TableHead className="font-bold text-slate-700">Party Name</TableHead>
+                    <TableHead className="font-bold text-slate-700 text-right">PO Qty</TableHead>
+                    <TableHead className="font-bold text-slate-700 text-right">Total Lifted Qty</TableHead>
+                    <TableHead className="font-bold text-slate-700 text-right">Received Qty</TableHead>
+                    <TableHead className="font-bold text-slate-700 text-right">Canceled Qty</TableHead>
+                    <TableHead className="font-bold text-slate-700 text-right">Pending Qty</TableHead>
+                    <TableHead className="font-bold text-slate-700">Warehouse</TableHead>
+                    <TableHead className="font-bold text-slate-700">Exp. Delivery</TableHead>
+                    <TableHead className="font-bold text-slate-700">Status</TableHead>
+                    <TableHead className="font-bold text-slate-700 text-center">PO Copy</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {finalPendingData.map((item: any, idx: number) => (
-                    <TableRow key={idx}>
-                      <TableCell className="font-medium text-xs">
-                        {item.erp || "-"}
-                      </TableCell>
-                      <TableCell className="text-xs">{item.material}</TableCell>
-                      <TableCell className="text-xs">{item.party}</TableCell>
-                      <TableCell className="text-right text-xs">
-                        {item.qty !== undefined && item.qty !== null && item.qty !== ""
-                          ? `${typeof item.qty === 'number' ? (item.qty % 1 === 0 ? item.qty : item.qty.toFixed(2)) : item.qty} ${item.uom || ''}`.trim()
-                          : "-"}
-                      </TableCell>
-                      <TableCell className="text-xs">{item.warehouse}</TableCell>
-                      <TableCell className="text-xs">{item.leadTime}</TableCell>
-                      <TableCell className="text-xs">
-                        {item.expDelivery}
+                  {displayedPoItems.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
+                        No {poSubTab} purchase orders found.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    displayedPoItems.map((item: any, idx: number) => (
+                      <TableRow key={idx} className="hover:bg-slate-50/50">
+                        <TableCell className="font-semibold text-slate-900">{item.erp || "-"}</TableCell>
+                        <TableCell className="font-medium text-slate-800">{item.material}</TableCell>
+                        <TableCell className="text-slate-700">{item.party}</TableCell>
+                        <TableCell className="text-right font-semibold text-slate-800">{item.poQty ? `${item.poQty} ${item.uom || ''}`.trim() : "-"}</TableCell>
+                        <TableCell className="text-right text-indigo-600 font-semibold">{item.liftedQty ? `${item.liftedQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim()}</TableCell>
+                        <TableCell className="text-right text-emerald-600 font-semibold">{item.receivedQty ? `${item.receivedQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim()}</TableCell>
+                        <TableCell className="text-right text-rose-600 font-medium">{item.canceledQty ? `${item.canceledQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim()}</TableCell>
+                        <TableCell className="text-right text-amber-600 font-bold">{item.pendingQty ? `${item.pendingQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim()}</TableCell>
+                        <TableCell className="text-slate-600">{item.warehouse}</TableCell>
+                        <TableCell className="text-slate-600">{item.expDelivery}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={cn(
+                            "text-[10px] font-semibold whitespace-nowrap px-2 py-0.5",
+                            item.status === "Completed" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                            item.status === "Follow UP / Lifting" ? "bg-blue-50 text-blue-700 border-blue-200" :
+                            item.status === "Transporter Follow-Up" ? "bg-purple-50 text-purple-700 border-purple-200" :
+                            item.status === "Material Received" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                            item.status === "Billing" ? "bg-teal-50 text-teal-700 border-teal-200" :
+                            "bg-orange-50 text-orange-700 border-orange-200"
+                          )}>
+                            {item.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {item.poPdfUrl ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 flex items-center gap-1.5 px-2 py-1 font-semibold mx-auto"
+                              onClick={() => window.open(item.poPdfUrl, "_blank")}
+                            >
+                              <FileText className="h-3.5 w-3.5 text-blue-600" />
+                              <span>PO Copy</span>
+                            </Button>
+                          ) : (
+                            <span className="text-slate-400 font-medium">-</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>

@@ -115,12 +115,13 @@ export async function fetchIndentWorkflow(forceRefresh = false): Promise<FlatInd
   inFlightWorkflowPromise = (async () => {
     try {
       // Single parallel roundtrip: Fetch all indents and related tables concurrently
-      const [indentsRes, approvalRes, quotationRes, avRes, poRes] = await Promise.all([
+      const [indentsRes, approvalRes, quotationRes, avRes, poRes, delRes] = await Promise.all([
         supabase.from("indents").select("*").order("created_at", { ascending: true }),
         supabase.from("indent_approvals").select("*"),
         supabase.from("quotation_submissions").select("*"),
         supabase.from("approved_vendors").select("*"),
         supabase.from("purchase_orders").select("indent_id, po_number, status, vendor_name"),
+        supabase.from("indent_delegations").select("*"),
       ]);
 
       if (indentsRes.error) throw indentsRes.error;
@@ -134,6 +135,7 @@ export async function fetchIndentWorkflow(forceRefresh = false): Promise<FlatInd
       const quotations = quotationRes.data || [];
       const approvedVendors = avRes.data || [];
       const purchaseOrders = poRes.data || [];
+      const delegations = delRes.data || [];
 
       // Build lookup maps
       const approvalMap = new Map<string, any[]>();
@@ -141,6 +143,14 @@ export async function fetchIndentWorkflow(forceRefresh = false): Promise<FlatInd
         const list = approvalMap.get(a.indent_id) || [];
         list.push(a);
         approvalMap.set(a.indent_id, list);
+      });
+
+      const delMap = new Map<string, string[]>();
+      delegations.forEach((d: any) => {
+        const list = delMap.get(d.indent_id) || [];
+        const name = d.approver_name || d.approver_username;
+        if (name && !list.includes(name)) list.push(name);
+        delMap.set(d.indent_id, list);
       });
 
       // For quotations: group by indent_id, sort by created_at
@@ -202,67 +212,73 @@ export async function fetchIndentWorkflow(forceRefresh = false): Promise<FlatInd
 
         const submittedQuots = vendorQuots.filter((q) => q.quoted_rate !== null && q.quoted_rate !== undefined && String(q.quoted_rate).trim() !== "" && String(q.quoted_rate) !== "-" && parseFloat(String(q.quoted_rate)) > 0);
 
-        return {
-          id: indent.id,
-          originalIndex: idx + 7,
-          status,
-          data: {
-            createdAt: formatDate(indent.created_at),
-            indentNumber: indent.indent_number || "",
-            createdBy: indent.created_by || "",
-            category: indent.category || "",
-            itemName: indent.item_name || "",
-            quantity: String(effectiveQty),
-            indentQty: String(totalIndentQty),
-            totalApprovedQty: String(totalApprovedQty),
-            rejectedQty: String(rejectedQty),
-            pendingApprovalQty: status === "completed" ? "0" : String(Math.max(0, totalIndentQty - totalApprovedQty)),
-            indentApprovalsCount: String(indentApprovals.length),
-            warehouseLocation: indent.warehouse_location || "",
-            itemCode: indent.item_code || "",
-            leadTime: indent.required_date || "",
-            deliveryLocation: indent.delivery_location || "",
-            // Stage 2
-            plan1: "",
-            actual1: lastApproval ? formatDate(lastApproval.approved_at) : "",
-            delay: "",
-            approvedQty: String(effectiveQty),
-            vendorType: lastApproval?.vendor_type || "",
-            remarks: lastApproval?.rejection_reason || lastApproval?.remarks || "",
-            attachment: indent.attachment_url || "",
-            // Stage 3
-            vendor1Name: q1?.vendor_name || "",
-            vendor1Rate: q1 ? String(q1.quoted_rate || "") : "",
-            vendor1Terms: q1?.payment_terms || "",
-            vendor1Delivery: q1?.delivery_terms || "",
-            vendor1Approved: q1?.is_selected ? "Yes" : "No",
-            vendor1Remarks: q1?.remarks || "",
-            vendor1Gst: q1?.gst_percent != null ? String(q1.gst_percent) : "",
-            vendor1TransportType: q1?.transport_type || "",
-            vendor1PdfUrl: q1?.quotation_pdf_url || q1?.quotation_file_url || "",
-            vendor2Name: q2?.vendor_name || "",
-            vendor2Rate: q2 ? String(q2.quoted_rate || "") : "",
-            vendor2Terms: q2?.payment_terms || "",
-            vendor2Delivery: q2?.delivery_terms || "",
-            vendor2Approved: q2?.is_selected ? "Yes" : "No",
-            vendor2Remarks: q2?.remarks || "",
-            vendor2Gst: q2?.gst_percent != null ? String(q2.gst_percent) : "",
-            vendor2TransportType: q2?.transport_type || "",
-            vendor2PdfUrl: q2?.quotation_pdf_url || q2?.quotation_file_url || "",
-            vendor3Name: q3?.vendor_name || "",
-            vendor3Rate: q3 ? String(q3.quoted_rate || "") : "",
-            vendor3Terms: q3?.payment_terms || "",
-            vendor3Delivery: q3?.delivery_terms || "",
-            vendor3Approved: q3?.is_selected ? "Yes" : "No",
-            vendor3Remarks: q3?.remarks || "",
-            vendor3Gst: q3?.gst_percent != null ? String(q3.gst_percent) : "",
-            vendor3TransportType: q3?.transport_type || "",
-            vendor3PdfUrl: q3?.quotation_pdf_url || q3?.quotation_file_url || "",
-            plan3: vendorQuots.length > 0 ? formatDate(vendorQuots[0].created_at) : "",
-            actual3: submittedQuots.length > 0 ? formatDate(submittedQuots[submittedQuots.length - 1].created_at) : "",
-            selectedVendor: av ? `vendor${vendorQuots.findIndex((q) => q.id === av.selected_quotation_id) + 1}` : "",
-            selectedVendorName: po?.vendor_name || av?.vendor_name || "",
-            finalApprovedBy: av?.approved_by || "",
+            const indentDelegations = delMap.get(indent.id) || [];
+            const delegatedApprover = indentDelegations.length > 0 ? indentDelegations.join(", ") : "";
+            const effectiveApprover = delegatedApprover || (av?.approved_by && av.approved_by !== "admin" ? av.approved_by : "") || (lastApproval?.approver_name && lastApproval.approver_name !== "admin" ? lastApproval.approver_name : "") || delegatedApprover || "";
+
+            return {
+              id: indent.id,
+              originalIndex: idx + 7,
+              status,
+              data: {
+                createdAt: formatDate(indent.created_at),
+                indentNumber: indent.indent_number || "",
+                createdBy: indent.created_by || "",
+                category: indent.category || "",
+                itemName: indent.item_name || "",
+                quantity: String(effectiveQty),
+                indentQty: String(totalIndentQty),
+                totalApprovedQty: String(totalApprovedQty),
+                rejectedQty: String(rejectedQty),
+                pendingApprovalQty: status === "completed" ? "0" : String(Math.max(0, totalIndentQty - totalApprovedQty)),
+                indentApprovalsCount: String(indentApprovals.length),
+                warehouseLocation: indent.warehouse_location || "",
+                itemCode: indent.item_code || "",
+                leadTime: indent.required_date || "",
+                deliveryLocation: indent.delivery_location || "",
+                // Stage 2
+                plan1: "",
+                actual1: lastApproval ? formatDate(lastApproval.approved_at) : "",
+                delay: "",
+                approvedQty: String(effectiveQty),
+                vendorType: lastApproval?.vendor_type || "",
+                remarks: lastApproval?.rejection_reason || lastApproval?.remarks || "",
+                attachment: indent.attachment_url || "",
+                // Stage 3
+                vendor1Name: q1?.vendor_name || "",
+                vendor1Rate: q1 ? String(q1.quoted_rate || "") : "",
+                vendor1Terms: q1?.payment_terms || "",
+                vendor1Delivery: q1?.delivery_terms || "",
+                vendor1Approved: q1?.is_selected ? "Yes" : "No",
+                vendor1Remarks: q1?.remarks || "",
+                vendor1Gst: q1?.gst_percent != null ? String(q1.gst_percent) : "",
+                vendor1TransportType: q1?.transport_type || "",
+                vendor1PdfUrl: q1?.quotation_pdf_url || q1?.quotation_file_url || "",
+                vendor2Name: q2?.vendor_name || "",
+                vendor2Rate: q2 ? String(q2.quoted_rate || "") : "",
+                vendor2Terms: q2?.payment_terms || "",
+                vendor2Delivery: q2?.delivery_terms || "",
+                vendor2Approved: q2?.is_selected ? "Yes" : "No",
+                vendor2Remarks: q2?.remarks || "",
+                vendor2Gst: q2?.gst_percent != null ? String(q2.gst_percent) : "",
+                vendor2TransportType: q2?.transport_type || "",
+                vendor2PdfUrl: q2?.quotation_pdf_url || q2?.quotation_file_url || "",
+                vendor3Name: q3?.vendor_name || "",
+                vendor3Rate: q3 ? String(q3.quoted_rate || "") : "",
+                vendor3Terms: q3?.payment_terms || "",
+                vendor3Delivery: q3?.delivery_terms || "",
+                vendor3Approved: q3?.is_selected ? "Yes" : "No",
+                vendor3Remarks: q3?.remarks || "",
+                vendor3Gst: q3?.gst_percent != null ? String(q3.gst_percent) : "",
+                vendor3TransportType: q3?.transport_type || "",
+                vendor3PdfUrl: q3?.quotation_pdf_url || q3?.quotation_file_url || "",
+                plan3: vendorQuots.length > 0 ? formatDate(vendorQuots[0].created_at) : "",
+                actual3: submittedQuots.length > 0 ? formatDate(submittedQuots[submittedQuots.length - 1].created_at) : "",
+                selectedVendor: av ? `vendor${vendorQuots.findIndex((q) => q.id === av.selected_quotation_id) + 1}` : "",
+                selectedVendorName: po?.vendor_name || av?.vendor_name || "",
+                finalApprovedBy: effectiveApprover,
+                approvedBy: effectiveApprover,
+                delegatedTo: indentDelegations,
             negotiationRemarks: av?.approval_remarks || "",
             plan4: av ? formatDate(av.approved_at) : "",
             // Extra

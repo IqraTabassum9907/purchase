@@ -63,12 +63,29 @@ import { PaginationBar } from "@/components/ui/pagination-bar";
 
 const formatDateDash = (date: any) => {
   if (!date || date === "-" || date === "—") return "-";
+  if (typeof date === "string") {
+    const str = date.trim();
+    if (/^\d{2}-\d{2}-\d{4}$/.test(str)) return str;
+    const ymd = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (ymd) return `${ymd[3]}-${ymd[2]}-${ymd[1]}`;
+    const dmy = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})/);
+    if (dmy) return `${dmy[1].padStart(2, "0")}-${dmy[2].padStart(2, "0")}-${dmy[3]}`;
+  }
   const d = date instanceof Date ? date : parseSheetDate(date);
   if (!d || isNaN(d.getTime())) return typeof date === 'string' ? date : "-";
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${dd}-${mm}-${yyyy}`;
+};
+
+const formatLeadTimeValue = (val: any) => {
+  if (!val || val === "-" || val === "—") return "-";
+  const str = String(val).trim();
+  if (!isNaN(Number(str))) {
+    return `${str} days`;
+  }
+  return formatDateDash(str);
 };
 
 export default function Stage2() {
@@ -635,7 +652,7 @@ export default function Stage2() {
                                    : (col.key as string) === "indentDate"
                                    ? formatDateDash((record.data as any)[col.key])
                                    : (col.key as string) === "leadTime"
-                                   ? `${(record.data as any)[col.key] || 0} days`
+                                   ? formatLeadTimeValue((record.data as any)[col.key])
                                    : (col.key as string) === "delegatedTo"
                                    ? ((record.data as any)[col.key]?.length ? (record.data as any)[col.key].join(", ") : "-")
                                    : (record.data as any)[col.key] || "-"}
@@ -704,7 +721,7 @@ export default function Stage2() {
                                 : (col.key as string) === "plannedDate"
                                 ? getPlannedDateForRecord(record.data, "Indent Approval", tatRules, record.createdAt)
                                 : col.key === "leadTime"
-                                ? `${record.data[col.key] || 0} days`
+                                ? formatLeadTimeValue(record.data[col.key])
                                 : col.key === "actualDate"
                                   ? formatDateDash(record.data[col.key])
                                   : (col.key as string) === "delegatedTo"
@@ -731,7 +748,7 @@ export default function Stage2() {
 
       {/* ------------------- APPROVAL MODAL ------------------- */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="max-w-[90vw] w-full p-0 overflow-hidden border-none shadow-2xl border-2 border-green-500">
+        <DialogContent showCloseButton={false} className="max-w-[90vw] w-full p-0 overflow-hidden border-none shadow-2xl border-2 border-green-500">
           <div className="bg-blue-700 px-6 py-4 flex items-center justify-between ">
             <div className="flex items-center gap-3 ">
               <div className="p-2 bg-white/10 rounded-lg">
@@ -746,9 +763,19 @@ export default function Stage2() {
                 </p>
               </div>
             </div>
-            <Badge variant="secondary" className="bg-white/10 text-white border-white/20 px-3 py-1">
-              Final Review
-            </Badge>
+            <div className="flex items-center gap-3">
+              <Badge variant="secondary" className="bg-white/10 text-white border-white/20 px-3 py-1">
+                Final Review
+              </Badge>
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           <div className="p-6 space-y-8 bg-slate-50/30">

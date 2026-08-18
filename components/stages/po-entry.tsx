@@ -459,6 +459,13 @@ export default function Stage5() {
     { key: "itemName", label: "Item", icon: null },
     { key: "quantity", label: "Qty", icon: null },
     { key: "planned4", label: "Planned", icon: null },
+    { key: "approvedBy", label: "Approver Name", icon: null },
+    { key: "vendor", label: "Vendor", icon: null },
+    { key: "rate", label: "Rate", icon: null },
+    { key: "totalAmount", label: "Total Amount", icon: null },
+    { key: "freightType", label: "Freight Type", icon: null },
+    { key: "terms", label: "Payment Terms", icon: null },
+    { key: "delivery", label: "Exp. Delivery", icon: null },
   ];
 
   const [selectedColumns, setSelectedColumns] = useState<string[]>(
@@ -1456,16 +1463,12 @@ export default function Stage5() {
                       .map((col) => (
                         <TableHead key={col.key} className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">{col.label}</TableHead>
                       ))}
-                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Vendor</TableHead>
-                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase">Rate</TableHead>
-                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Payment Terms</TableHead>
-                    <TableHead className="sticky top-0 z-20 bg-slate-200 border-none px-4 py-3 text-[13px] font-bold text-slate-700 uppercase whitespace-nowrap">Exp. Delivery</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={selectedColumns.length + 5} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={selectedColumns.length + 1} className="h-32 text-center text-gray-500 font-medium">
                         No pending PO entries found. All purchase orders are created!
                       </TableCell>
                     </TableRow>
@@ -1488,23 +1491,45 @@ export default function Stage5() {
                           </TableCell>
                           {baseColumns
                             .filter((c) => selectedColumns.includes(c.key))
-                            .map((col) => (
-                              <TableCell key={col.key} className="px-4 whitespace-nowrap font-mono text-xs">
-                                {col.key === "planned4"
-                                  ? getPlannedDateForRecord(record.data, "Make PO", tatRules, record.createdAt)
-                                  : col.key === "createdAt"
-                                  ? formatDateTimeFull(record.data.planned4 || record.createdAt)
-                                  : (record.data[col.key] || "-")}
-                              </TableCell>
-                            ))}
-                          <TableCell className="font-medium">{v.name}</TableCell>
-                          <TableCell>₹{v.rate || "-"}</TableCell>
-                          <TableCell>
-                            {paymentTermsList.find((t) => t.value === v.terms)?.label || v.terms || "-"}
-                          </TableCell>
-                          <TableCell>
-                            {v.delivery ? new Date(v.delivery).toLocaleDateString("en-IN") : "-"}
-                          </TableCell>
+                            .map((col) => {
+                              let content: React.ReactNode = "-";
+                              if (col.key === "quantity") {
+                                const q = record.data.quantity || record.data.approvedQty;
+                                const uom = record.data.uom || "";
+                                content = q ? `${q} ${uom}`.trim() : "-";
+                              } else if (col.key === "planned4") {
+                                content = getPlannedDateForRecord(record.data, "Make PO", tatRules, record.createdAt);
+                              } else if (col.key === "createdAt") {
+                                content = formatDateTimeFull(record.data.planned4 || record.createdAt);
+                              } else if (col.key === "approvedBy") {
+                                const delNames = Array.isArray(record.data.delegatedTo) && record.data.delegatedTo.length > 0 ? record.data.delegatedTo.join(", ") : "";
+                                const cand = delNames || record.data.finalApprovedBy || record.data.approvedBy;
+                                content = cand && cand !== "Auto-Approved" && cand !== "admin" ? cand : (delNames || "-");
+                              } else if (col.key === "vendor") {
+                                content = v.name || "-";
+                              } else if (col.key === "rate") {
+                                content = v.rate ? `₹${v.rate}` : "-";
+                              } else if (col.key === "totalAmount") {
+                                const q = parseFloat(String(record.data.quantity || record.data.approvedQty || 0).replace(/,/g, "")) || 0;
+                                const r = parseFloat(String(v.rate || 0).replace(/,/g, "")) || 0;
+                                const tot = q * r;
+                                content = tot > 0 ? `₹${tot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-";
+                              } else if (col.key === "freightType") {
+                                content = v.transportType || record.data.transportType || "-";
+                              } else if (col.key === "terms") {
+                                content = paymentTermsList.find((t) => t.value === v.terms)?.label || v.terms || "-";
+                              } else if (col.key === "delivery") {
+                                content = v.delivery ? formatDateDash(v.delivery) : "-";
+                              } else {
+                                content = record.data[col.key] || "-";
+                              }
+
+                              return (
+                                <TableCell key={col.key} className="px-4 whitespace-nowrap font-mono text-xs text-slate-700">
+                                  {content}
+                                </TableCell>
+                              );
+                            })}
                         </TableRow>
                       );
                     })
@@ -1596,7 +1621,7 @@ export default function Stage5() {
                           <div className="space-y-1">
                             <div className="font-semibold text-blue-900">{record.data.indentNumber || "-"}</div>
                             <div className="text-sm font-medium truncate" title={record.data.itemName}>{record.data.itemName}</div>
-                            <div className="text-xs text-gray-500">Qty: {record.data.quantity}</div>
+                            <div className="text-xs text-gray-500">Qty: {record.data.quantity} {record.data.uom || ''}</div>
                           </div>
                         </TableCell>
                         <TableCell className="px-4 text-slate-700 whitespace-nowrap font-mono text-xs">

@@ -71,9 +71,9 @@ export default function DelegateApproval() {
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
   const [selectedApprover, setSelectedApprover] = useState<string>("");
 
-  // Per-row "Action" form — delegate a single indent via its own dialog.
+  // Per-row / bulk "Action" form — delegate indents via dialog.
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogRecord, setDialogRecord] = useState<any>(null);
+  const [dialogRecords, setDialogRecords] = useState<any[]>([]);
   const [dialogApprover, setDialogApprover] = useState<string>("");
   const [isDialogSubmitting, setIsDialogSubmitting] = useState(false);
 
@@ -93,10 +93,7 @@ export default function DelegateApproval() {
       });
       setDelegationsByIndent(delegationMap);
 
-      // Only indents still awaiting Stage 2 approval need to be delegated.
-      const pendingRows = rows.filter((r: any) => !r.data.actual1);
-
-      const mapped = pendingRows.map((r: any) => ({
+      const mapped = rows.map((r: any) => ({
         id: r.id, // raw indents.id — this is the FK indent_delegations.indent_id points at
         indentNumber: r.data.indentNumber,
         createdAt: parseSheetDate(r.data.createdAt),
@@ -225,14 +222,25 @@ export default function DelegateApproval() {
   };
 
   const openDelegateDialog = (record: any) => {
-    setDialogRecord(record);
+    setDialogRecords([record]);
     const existing = delegationsByIndent[record.id] || [];
-    setDialogApprover(existing[0]?.username || "");
+    setDialogApprover(existing[0]?.username || selectedApprover || "");
+    setDialogOpen(true);
+  };
+
+  const openBulkDelegateDialog = () => {
+    if (selectedRecords.length === 0) {
+      toast.error("Please select at least one indent.");
+      return;
+    }
+    const selected = sheetRecords.filter((r) => selectedRecords.includes(r.id));
+    setDialogRecords(selected);
+    setDialogApprover(selectedApprover || "");
     setDialogOpen(true);
   };
 
   const handleDialogSave = async () => {
-    if (!dialogRecord || !dialogApprover) {
+    if (dialogRecords.length === 0 || !dialogApprover) {
       toast.error("Please select an approver.");
       return;
     }
@@ -242,11 +250,18 @@ export default function DelegateApproval() {
       const targetApprover = approverOptions.find((a) => a.username === dialogApprover);
       if (!targetApprover) return;
       const delegatedBy = localStorage.getItem("user") || "unknown";
-      await delegateIndents([dialogRecord.id], [targetApprover], delegatedBy);
-      toast.success(`Delegated ${dialogRecord.indentNumber} to ${targetApprover.fullName}.`);
+      const ids = dialogRecords.map((r) => r.id);
+      await delegateIndents(ids, [targetApprover], delegatedBy);
+
+      if (ids.length === 1) {
+        toast.success(`Delegated ${dialogRecords[0].indentNumber} to ${targetApprover.fullName}.`);
+      } else {
+        toast.success(`Successfully delegated ${ids.length} indents to ${targetApprover.fullName}.`);
+      }
       setDialogOpen(false);
-      setDialogRecord(null);
+      setDialogRecords([]);
       setDialogApprover("");
+      setSelectedRecords([]);
       fetchData();
     } catch (e) {
       console.error("Delegation failed:", e);
@@ -355,8 +370,9 @@ export default function DelegateApproval() {
             </Select>
 
             <Button
-              onClick={handleDelegate}
-              disabled={selectedRecords.length === 0 || !selectedApprover || isSubmitting}
+              type="button"
+              onClick={openBulkDelegateDialog}
+              disabled={selectedRecords.length === 0 || isSubmitting}
               className="bg-blue-700 hover:bg-blue-800 text-white flex items-center gap-2"
             >
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
@@ -487,7 +503,6 @@ export default function DelegateApproval() {
               <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
                 <TableHeader className="sticky top-0 z-30 bg-slate-200 shadow-sm">
                   <TableRow className="bg-slate-200 hover:bg-slate-200">
-                    <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Action</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Indent</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Created By</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Category</TableHead>
@@ -501,7 +516,7 @@ export default function DelegateApproval() {
                 <TableBody>
                   {historyList.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={8} className="h-32 text-center text-gray-500 font-medium">
                         No indents have been delegated yet.
                       </TableCell>
                     </TableRow>
@@ -510,18 +525,6 @@ export default function DelegateApproval() {
                       const delegations = delegationsByIndent[record.id] || [];
                       return (
                         <TableRow key={record.id} className="hover:bg-slate-50/50 transition-colors">
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="h-8 gap-1.5 text-xs font-semibold"
-                              onClick={() => openDelegateDialog(record)}
-                            >
-                              <UserPlus className="w-3.5 h-3.5" />
-                              Edit
-                            </Button>
-                          </TableCell>
                           <TableCell className="font-mono text-xs font-bold">{record.indentNumber}</TableCell>
                           <TableCell className="font-mono text-xs">{record.createdBy || "-"}</TableCell>
                           <TableCell className="font-mono text-xs">{record.category || "-"}</TableCell>
@@ -535,17 +538,9 @@ export default function DelegateApproval() {
                                 <Badge
                                   key={d.id}
                                   variant="secondary"
-                                  className="bg-emerald-100 text-emerald-800 border-emerald-200 flex items-center gap-1 pr-1"
+                                  className="bg-emerald-100 text-emerald-800 border-emerald-200 px-2 py-0.5 font-medium"
                                 >
                                   {d.name}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveDelegation(d.id)}
-                                    className="hover:text-red-600"
-                                    title="Remove"
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
                                 </Badge>
                               ))}
                             </div>
@@ -568,13 +563,17 @@ export default function DelegateApproval() {
         </TabsContent>
       </Tabs>
 
-      {/* ------------------- PER-ROW DELEGATE FORM ------------------- */}
+      {/* ------------------- DELEGATE FORM DIALOG ------------------- */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Delegate for Approval</DialogTitle>
-            <p className="text-sm text-slate-500">
-              {dialogRecord ? `${dialogRecord.indentNumber} — ${dialogRecord.itemName}` : ""}
+            <p className="text-sm text-slate-500 font-medium">
+              {dialogRecords.length === 1
+                ? `${dialogRecords[0].indentNumber} — ${dialogRecords[0].itemName}`
+                : dialogRecords.length > 1
+                ? `${dialogRecords.length} Indents Selected (${dialogRecords.map((r) => r.indentNumber).join(", ")})`
+                : ""}
             </p>
           </DialogHeader>
 

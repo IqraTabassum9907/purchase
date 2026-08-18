@@ -48,14 +48,21 @@ export function getErrorMessage(e: unknown): string {
 export function parseSheetDate(dateStr: string | Date | null | undefined): Date | null {
   if (!dateStr || dateStr === "-" || dateStr === "—" || dateStr === "Invalid Date") return null;
   if (dateStr instanceof Date) return isNaN(dateStr.getTime()) ? null : dateStr;
-  
-  // Try standard parsing
-  const d = new Date(dateStr);
-  if (!isNaN(d.getTime())) return d;
 
-  // Try parsing DD/MM/YYYY
-  const dateTimeParts = dateStr.includes(", ") ? dateStr.split(", ") : dateStr.split(" ");
-  const dateParts = dateTimeParts[0].split("/");
+  const str = String(dateStr).trim();
+
+  // Try YYYY-MM-DD format (from input type="date")
+  const ymdMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10) - 1;
+    const day = parseInt(ymdMatch[3], 10);
+    return new Date(year, month, day);
+  }
+
+  // Try DD/MM/YYYY or DD-MM-YYYY format
+  const dateTimeParts = str.includes(", ") ? str.split(", ") : str.split(" ");
+  const dateParts = dateTimeParts[0].split(/[\/-]/);
   if (dateParts.length === 3) {
     const day = parseInt(dateParts[0], 10);
     const month = parseInt(dateParts[1], 10) - 1;
@@ -77,6 +84,9 @@ export function parseSheetDate(dateStr: string | Date | null | undefined): Date 
     const parsed = new Date(year, month, day, hours, mins, secs);
     return isNaN(parsed.getTime()) ? null : parsed;
   }
+
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) return d;
   return null;
 }
 
@@ -85,6 +95,14 @@ export function parseSheetDate(dateStr: string | Date | null | undefined): Date 
  */
 export function formatDate(date?: Date | string | null): string {
   if (!date || date === "-" || date === "—") return "";
+  if (typeof date === "string") {
+    const str = date.trim();
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) return str;
+    const ymd = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
+    const dmy = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})/);
+    if (dmy) return `${dmy[1].padStart(2, "0")}/${dmy[2].padStart(2, "0")}/${dmy[3]}`;
+  }
   const d = date instanceof Date ? date : parseSheetDate(date);
   if (!d || isNaN(d.getTime())) return typeof date === 'string' ? date : "";
   const yyyy = d.getFullYear();
