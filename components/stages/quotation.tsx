@@ -183,8 +183,8 @@ export default function Quotation() {
 
   // Terms and Conditions list
   const [terms, setTerms] = useState<string[]>([
-    "Payment within 30 days of Invoice date.",
-    "Delivery within 2 weeks of purchase order."
+    "1. Payment within 30 days of Invoice date.",
+    "2. Delivery within 2 weeks of purchase order."
   ]);
   const [newTerm, setNewTerm] = useState("");
 
@@ -739,8 +739,8 @@ export default function Quotation() {
     setDescriptionNote("");
     setItemSelected(true);
     setTerms([
-      "Payment within 30 days of Invoice date.",
-      "Delivery within 2 weeks of purchase order."
+      "1. Payment within 30 days of Invoice date.",
+      "2. Delivery within 2 weeks of purchase order."
     ]);
     setNewTerm("");
     setEmailSent(false);

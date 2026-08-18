@@ -190,10 +190,17 @@ const TransporterCombobox = ({
   );
 };
 
-const isExFactoryType = (type: string | undefined | null) => {
+const isFORType = (type: string | undefined | null) => {
   if (!type) return false;
   const t = String(type).trim().toLowerCase();
-  return t === "ex-factory only" || t === "ex-factory" || t === "ex factory" || t === "ex factory only";
+  return (
+    t === "f.o.r." ||
+    t === "f.o.r" ||
+    t === "for" ||
+    t === "f.o.r. (free on road)" ||
+    t === "f.o.r (free on road)" ||
+    t === "free on road"
+  );
 };
 
 const defaultLiftingData = (existLift: any = {}, recordQty: string = "0", defaultTransportType: string = ""): LiftingEntry => ({
@@ -1785,7 +1792,7 @@ export default function FollowUpLifting() {
 
             {/* Mode Switch Header inside Modal */}
             {!vendorPOMismatchError && (() => {
-              // Determine if ALL selected records are pure Ex-Factory
+              // Determine if ALL selected records are pure F.O.R.
               const selectedTransportTypes = bulkFormData.map((item) => {
                 const rec = sheetRecords.find((r) => r.id === item.recordId);
                 return (
@@ -1796,9 +1803,9 @@ export default function FollowUpLifting() {
                   ""
                 );
               });
-              const isExFactory =
+              const isFOR =
                 selectedTransportTypes.length > 0 &&
-                selectedTransportTypes.every((t) => isExFactoryType(t));
+                selectedTransportTypes.every((t) => isFORType(t));
 
               return (
                 <div className="flex bg-slate-200/60 p-1 rounded-lg w-fit mx-auto mt-4 shrink-0 border border-slate-300/30">
@@ -1814,7 +1821,7 @@ export default function FollowUpLifting() {
                   >
                     Follow-UP
                   </button>
-                  {!isExFactory && (
+                  {!isFOR && (
                     <button
                       type="button"
                       onClick={() => toggleDialogMode("arrange-logistics")}
@@ -2313,7 +2320,7 @@ export default function FollowUpLifting() {
                             </SelectContent>
                           </Select>
                         </div>
-                        {!isExFactoryType(unifiedFormData.liftingData.transportType) && (
+                        {!isFORType(unifiedFormData.liftingData.transportType) && (
                           <>
                             <div className="space-y-1.5">
                               <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">TRANSPORTING RATE (₹)</Label>
@@ -2362,7 +2369,7 @@ export default function FollowUpLifting() {
                             </div>
                           </>
                         )}
-                        {!isExFactoryType(unifiedFormData.liftingData.transportType) && (
+                        {!isFORType(unifiedFormData.liftingData.transportType) && (
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">BILTY *</Label>
                             <Select

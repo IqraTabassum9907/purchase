@@ -486,10 +486,10 @@ export default function Stage5() {
   ];
 
   const defaultTerms = [
-    "Payment within 30 days of invoice date.",
-    "Delivery within 2 weeks of purchase order.",
-    "Goods once sold will not be taken back.",
-    "All disputes subject to Mumbai jurisdiction.",
+    "1.Payment within 30 days of invoice date.",
+    "2.Delivery within 2 weeks of purchase order.",
+    "3.Goods once sold will not be taken back.",
+    "4.All disputes subject to Mumbai jurisdiction.",
   ];
 
   const fallbackSuppliers = [
