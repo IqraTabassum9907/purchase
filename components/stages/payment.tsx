@@ -87,10 +87,12 @@ const VENDOR_HISTORY_COLUMNS = [
 
 // Column definitions for Freight Payments
 const FREIGHT_COLUMNS = [
+  { key: "unitTrackingNo", label: "Unit Tracking No." },
   { key: "lrNo", label: "LR No." },
   { key: "biltyImage", label: "Bilty" },
   { key: "freightAmount", label: "Freight Amt" },
   { key: "transporter", label: "Transporter" },
+  { key: "quantity", label: "Qty" },
   { key: "vehicleNo", label: "Vehicle No." },
   { key: "contact", label: "Contact" },
   { key: "totalPaid", label: "Paid" },
@@ -102,8 +104,10 @@ const ALL_FREIGHT_COLUMN_KEYS = FREIGHT_COLUMNS.map(c => c.key);
 
 const FREIGHT_HISTORY_COLUMNS = [
   { key: "date", label: "Payment Date" },
+  { key: "unitTrackingNo", label: "Unit Tracking No." },
   { key: "lrNo", label: "LR No." },
   { key: "transporter", label: "Transporter" },
+  { key: "quantity", label: "Qty" },
   { key: "planned", label: "Planned" },
   { key: "actual", label: "Actual" },
   { key: "amountPaid", label: "Amount Paid" },
@@ -563,23 +567,57 @@ export default function UnifiedPaymentHub() {
           };
         });
 
+      const getRealTransporterName = (poId: string, tf: any, lifting: any, indent: any) => {
+        if (tf?.transporter_name && tf.transporter_name !== "Follow-up" && tf.transporter_name !== "-") {
+          return tf.transporter_name;
+        }
+        const poTfs = (tfData || []).filter((t: any) => t.po_id === poId && t.transporter_name && t.transporter_name !== "Follow-up" && t.transporter_name !== "-");
+        if (poTfs.length > 0) {
+          const validTf = [...poTfs].sort((a: any, b: any) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())[0];
+          return validTf.transporter_name;
+        }
+        return lifting?.transporter_name || lifting?.contact_person || indent?.data?.logisticsTransporterName || "-";
+      };
+
       const fHist = allPayments
         .filter((p: any) => p.payment_type === "Freight Payment")
         .map((p: any) => {
-          const tf = tfData?.find((t: any) => t.po_id === p.po_id);
           const po = p.po_id ? poById.get(p.po_id) : null;
           const indent = po?.indent_id ? indentMapById.get(po.indent_id) : null;
+
+          const allPoLiftings = (liftingData || []).filter((l: any) => l.po_id === p.po_id);
+          const dispatchedLiftings = allPoLiftings.filter((l: any) => !!l.actual_lifting_date && String(l.actual_lifting_date).trim() !== "" && String(l.actual_lifting_date).trim() !== "-");
+          
+          const lifting = (p.lifting_id && (liftingData || []).find((l: any) => l.id === p.lifting_id))
+            || (p.remarks && (liftingData || []).find((l: any) => String(l.id).substring(0, 8) === p.remarks))
+            || (dispatchedLiftings.length > 0 ? dispatchedLiftings[0] : (allPoLiftings.length > 0 ? allPoLiftings[0] : null));
+
+          const allPoTfs = (tfData || []).filter((t: any) => t.po_id === p.po_id);
+          const tf = (lifting && allPoTfs.find((t: any) => t.lifting_id === lifting.id))
+            || (p.remarks && allPoTfs.find((t: any) => String(t.lifting_id || t.id).substring(0, 8) === p.remarks))
+            || allPoTfs.find((t: any) => t.transporter_name && t.transporter_name !== "Follow-up")
+            || (allPoTfs.length > 0 ? allPoTfs[0] : null);
+
           const receipts = p.po_id ? (receiptsByPo.get(p.po_id) || []) : [];
           const totalRcvd = receipts.reduce((sum: number, r: any) => sum + (r.received_quantity || 0), 0);
           const payments = p.po_id ? (paymentsByPo.get(p.po_id) || []).filter((pp: any) => pp.payment_type === "Freight Payment") : [];
           const plan1 = payments.length > 0 ? payments[0].created_at : null;
           const actual1 = payments.length > 0 ? payments[payments.length - 1].payment_date : null;
 
+          const transporterName = getRealTransporterName(p.po_id, tf, lifting, indent);
+          const dispatchQty = lifting?.lifting_qty || lifting?.quantity || tf?.lifting_qty || tf?.quantity || (totalRcvd > 0 ? totalRcvd : (po?.quantity || indent?.data?.quantity || "-"));
+
+          const unitTrackingNo = (lifting?.id ? String(lifting.id).substring(0, 8) : null)
+            || (tf?.lifting_id ? String(tf.lifting_id).substring(0, 8) : null)
+            || (p.remarks && p.remarks !== "-" ? p.remarks : null)
+            || (po?.po_number || "-");
+
           return {
             id: `FHIST_${p.id}`,
+            unitTrackingNo,
             lrNo: tf?.bilty_number || "",
-            transporter: tf?.transporter_name || "",
-            quantity: totalRcvd > 0 ? totalRcvd : (po?.quantity || indent?.data?.quantity || "-"),
+            transporter: transporterName,
+            quantity: dispatchQty,
             totalRcvd,
             uom: indent?.data?.uom || "",
             amountPaid: p.amount,
@@ -635,17 +673,23 @@ export default function UnifiedPaymentHub() {
           const isMaterialApproved = receipts.length > 0 || tf.status === "Received" || tf.status === "Approved" || tf.status === "Completed";
           const isPendingPayment = isMaterialApproved && freightAmt > 0 && currentPending > 0.01;
 
+          const transporterName = getRealTransporterName(tf.po_id, tf, lifting, indent);
+          const dispatchQty = lifting?.lifting_qty || lifting?.quantity || tf?.lifting_qty || tf?.quantity || (totalRcvd > 0 ? totalRcvd : (receipt?.received_quantity || po?.quantity || indent?.data?.quantity || "-"));
+
+          const unitTrackingNo = tf?.lifting_id ? String(tf.lifting_id).substring(0, 8) : (lifting?.id ? String(lifting.id).substring(0, 8) : (po?.po_number || "-"));
+
           return {
             id: `${tf.bilty_number || ""}_${tf.id}`,
             rowIndex: tf.id,
             poId: tf.po_id,
             status: isPendingPayment ? "pending" : "not_ready",
             data: {
+              unitTrackingNo,
               lrNo: tf.bilty_number || "",
               biltyImage: tf.bilty_copy_url || "",
               freightAmount: freightAmt,
-              transporter: tf.transporter_name || "",
-              quantity: totalRcvd > 0 ? totalRcvd : (receipt?.received_quantity || po?.quantity || "-"),
+              transporter: transporterName,
+              quantity: dispatchQty,
               totalRcvd,
               uom: indent?.data?.uom || "",
               vehicleNo: tf.vehicle_number || lifting?.vehicle_number || "",
@@ -687,17 +731,20 @@ export default function UnifiedPaymentHub() {
           const advancePayments = payments.filter((p: any) => p.paid_by === "Advance");
           const advanceAmount = advancePayments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
 
+          const unitTrackingNo = tf?.lifting_id ? String(tf.lifting_id).substring(0, 8) : (lifting?.id ? String(lifting.id).substring(0, 8) : (po?.po_number || "-"));
+
           freightRows.push({
             id: `RCPT_${rcpt.grn_number || rcpt.id}`,
             rowIndex: rcpt.id,
             poId: rcpt.po_id,
             status: freightAmt > 0 && currentPending > 0.01 ? "pending" : "completed",
             data: {
+              unitTrackingNo,
               lrNo: rcpt.grn_number || "",
               biltyImage: rcpt.bilty_invoice_image_url || "",
               freightAmount: freightAmt,
-              transporter: tf?.transporter_name || po?.vendor_name || "-",
-              quantity: rcpt.received_quantity || po?.quantity || "-",
+              transporter: getRealTransporterName(rcpt.po_id, tf, lifting, indent),
+              quantity: lifting?.lifting_qty || lifting?.quantity || tf?.lifting_qty || tf?.quantity || rcpt.received_quantity || po?.quantity || indent?.data?.quantity || "-",
               totalRcvd: rcpt.received_quantity || po?.quantity || "-",
               uom: indent?.data?.uom || "",
               vehicleNo: tf?.vehicle_number || lifting?.vehicle_number || "-",
@@ -1153,6 +1200,7 @@ export default function UnifiedPaymentHub() {
           payment_date: dateStr,
           proof_url: proofUrl,
           status: paymentStatus,
+          remarks: rec.data.unitTrackingNo || "",
         });
 
         if (!error) successCount++;
@@ -1647,6 +1695,7 @@ export default function UnifiedPaymentHub() {
               <table className="w-full caption-bottom text-xs min-w-[1250px]">
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
+                    <TableHead className="font-bold p-3">Unit Tracking No.</TableHead>
                     <TableHead className="font-bold p-3">LR No.</TableHead>
                     <TableHead className="font-bold p-3">Transporter</TableHead>
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
@@ -1661,13 +1710,14 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredFreightPending.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
                         No pending freight payments found.
                       </TableCell>
                     </TableRow>
                   ) : (
                     freightPendingPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
+                        <TableCell className="p-3 font-semibold text-slate-800">{r.data.unitTrackingNo || "-"}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.data.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.data.transporter}</TableCell>
                         <TableCell className="p-3 text-right font-medium text-slate-700">
@@ -1701,6 +1751,7 @@ export default function UnifiedPaymentHub() {
                 <TableHeader className="bg-slate-50 sticky top-0 z-20">
                   <TableRow>
                     <TableHead className="font-bold p-3">Payment Date</TableHead>
+                    <TableHead className="font-bold p-3">Unit Tracking No.</TableHead>
                     <TableHead className="font-bold p-3">LR No.</TableHead>
                     <TableHead className="font-bold p-3">Transporter</TableHead>
                     <TableHead className="font-bold p-3 text-right">Qty</TableHead>
@@ -1715,7 +1766,7 @@ export default function UnifiedPaymentHub() {
                 <TableBody>
                   {filteredFreightHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
                         No freight payment history found.
                       </TableCell>
                     </TableRow>
@@ -1723,6 +1774,7 @@ export default function UnifiedPaymentHub() {
                     freightHistoryPagination.pageData.map((r) => (
                       <TableRow key={r.id} className="hover:bg-slate-50/50">
                         <TableCell className="p-3 font-medium text-slate-700">{r.date}</TableCell>
+                        <TableCell className="p-3 font-semibold text-slate-800">{r.unitTrackingNo || "-"}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-800">{r.lrNo}</TableCell>
                         <TableCell className="p-3 font-semibold text-slate-900">{r.transporter}</TableCell>
                         <TableCell className="p-3 text-right font-medium text-slate-700">
@@ -2106,6 +2158,7 @@ export default function UnifiedPaymentHub() {
                   <TableHeader className="bg-slate-50 sticky top-0">
                     <TableRow>
                       <TableHead className="w-12 text-center p-3">Select</TableHead>
+                      <TableHead className="p-3">Unit Tracking No</TableHead>
                       <TableHead className="p-3">LR No</TableHead>
                       <TableHead className="p-3">PO Number</TableHead>
                       <TableHead className="p-3 text-right">Freight Amt</TableHead>
@@ -2131,6 +2184,7 @@ export default function UnifiedPaymentHub() {
                                 }}
                               />
                             </TableCell>
+                            <TableCell className="p-3 font-mono text-xs">{r.data.unitTrackingNo}</TableCell>
                             <TableCell className="p-3 font-semibold text-slate-700">{r.data.lrNo}</TableCell>
                             <TableCell className="p-3 font-mono text-xs">{r.data.invoiceNo}</TableCell>
                             <TableCell className="p-3 text-right font-semibold text-slate-800">{formatAmount(r.data.freightAmount)}</TableCell>

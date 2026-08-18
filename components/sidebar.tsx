@@ -101,33 +101,63 @@ export default function Sidebar() {
       if (g.indents) {
         const rows = g.indents;
         const delegatedIds = new Set((g.delegations || []).map((d: any) => d.indent_id));
-        // Delegate for Approval's own Pending tab = not yet delegated to anyone.
-        newCounts["Delegate for Approval"] = rows.filter((r: any) => !r.data.actual1 && !delegatedIds.has(r.id)).length;
+        const poIndentIds = new Set((g.pos || []).map((p: any) => p.indent_id).filter(Boolean));
+
+        // Delegate for Approval's own Pending tab = not yet delegated to anyone and not rejected.
+        newCounts["Delegate for Approval"] = rows.filter((r: any) =>
+          !r.data.actual1 &&
+          !delegatedIds.has(r.id) &&
+          (r.data.status || "").toLowerCase() !== "rejected"
+        ).length;
+
         // Only counts as awaiting Indent Approval once it's been delegated —
         // matches the Pending-tab filter on that page.
-        newCounts["Indent Approval"] = rows.filter((r: any) => !r.data.actual1 && delegatedIds.has(r.id)).length;
-        newCounts["Quotation"] = rows.filter((r: any) =>
-          r.data.actual1 &&
-          r.data.vendorType?.toLowerCase() !== "regular" &&
-          !r.data.actual3 &&
-          !r.data.plan4 &&
-          !r.data.selectedVendor
-        ).length;
+        newCounts["Indent Approval"] = rows.filter((r: any) => {
+          const isRejected = (r.data.status || "").toLowerCase() === "rejected";
+          const pendingQty = parseFloat(r.data.pendingApprovalQty || "0");
+          return !r.data.actual1 && delegatedIds.has(r.id) && !isRejected && pendingQty > 0;
+        }).length;
+
+        // Quotation: pending if approved (actual1 & totalApprovedQty > 0), not regular vendor, not rejected, and no actual3 / plan4 / selectedVendor
+        newCounts["Quotation"] = rows.filter((r: any) => {
+          const isRejected = (r.data.status || "").toLowerCase() === "rejected";
+          const totalApprovedQty = parseFloat(String(r.data.totalApprovedQty || r.data.approvedQty || "0").replace(/,/g, "")) || 0;
+          if (isRejected || totalApprovedQty === 0) return false;
+          const isApproved = totalApprovedQty > 0 || (!!r.data.actual1 && r.data.actual1.trim() !== "" && r.data.actual1.trim() !== "-");
+          const isRegularVendor = r.data.vendorType?.toLowerCase() === "regular";
+          const hasActual3 = !!r.data.actual3 && r.data.actual3.trim() !== "" && r.data.actual3.trim() !== "-";
+          const hasPlan4 = !!r.data.plan4 && r.data.plan4.trim() !== "" && r.data.plan4.trim() !== "-";
+          const hasSelectedVendor = !!r.data.selectedVendorName && r.data.selectedVendorName.trim() !== "";
+          return isApproved && !isRegularVendor && !hasActual3 && !hasPlan4 && !hasSelectedVendor;
+        }).length;
+
         // Approved Vendor's own Pending tab groups rows that share the same
         // actual3 (quotation-approval) timestamp into a single row — count
         // distinct actual3 values here too, not raw indent rows, or the
         // badge over-counts vs. what the page actually shows.
-        const approvedVendorPendingRows = rows.filter((r: any) =>
-          r.data.actual3 &&
-          r.data.vendorType?.toLowerCase() !== "regular" &&
-          !r.data.plan4 &&
-          !r.data.selectedVendor
-        );
+        const approvedVendorPendingRows = rows.filter((r: any) => {
+          const isRejected = (r.data.status || "").toLowerCase() === "rejected";
+          const totalApprovedQty = parseFloat(String(r.data.totalApprovedQty || r.data.approvedQty || "0").replace(/,/g, "")) || 0;
+          if (isRejected || totalApprovedQty === 0) return false;
+          const isRegularVendor = r.data.vendorType?.toLowerCase() === "regular";
+          const hasActual3 = !!r.data.actual3 && r.data.actual3.trim() !== "" && r.data.actual3.trim() !== "-";
+          const hasPlan4 = !!r.data.plan4 && r.data.plan4.trim() !== "" && r.data.plan4.trim() !== "-";
+          const hasSelectedVendor = !!r.data.selectedVendorName && r.data.selectedVendorName.trim() !== "";
+          return hasActual3 && !isRegularVendor && !hasPlan4 && !hasSelectedVendor;
+        });
         newCounts["Approved Vendor"] = new Set(approvedVendorPendingRows.map((r: any) => r.data.actual3)).size;
-        newCounts["Make PO"] = rows.filter((r: any) =>
-          ((r.data.vendorType?.toLowerCase() === "regular" && r.data.actual1) || r.data.plan4 || r.data.selectedVendor) &&
-          !r.data.poNumber
-        ).length;
+
+        // Make PO: pending if approved, not rejected, has plan4 or is regular vendor, and NOT yet in purchase_orders table
+        newCounts["Make PO"] = rows.filter((r: any) => {
+          const isRejected = (r.data.status || "").toLowerCase() === "rejected";
+          const totalApprovedQty = parseFloat(String(r.data.totalApprovedQty || r.data.approvedQty || "0").replace(/,/g, "")) || 0;
+          if (isRejected || totalApprovedQty === 0) return false;
+          const isApprovedStage2 = totalApprovedQty > 0 || (!!r.data.actual1 && r.data.actual1.trim() !== "" && r.data.actual1.trim() !== "-");
+          const isRegularVendor = r.data.vendorType?.toLowerCase() === "regular";
+          const hasPlan4 = !!r.data.plan4 && r.data.plan4.trim() !== "" && r.data.plan4.trim() !== "-";
+          const hasPo = poIndentIds.has(r.id);
+          return !hasPo && (hasPlan4 || (isRegularVendor && isApprovedStage2));
+        }).length;
       }
 
       if (g.pos && g.vl) {

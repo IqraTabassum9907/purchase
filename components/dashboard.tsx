@@ -341,7 +341,7 @@ export default function PurchaseDashboard() {
           const receivedQty = receivedQtyMap.get(po.id) || 0;
           const canceledQty = canceledQtyMap.get(po.id) || 0;
           const pendingQty = Math.max(0, poQty - receivedQty - canceledQty);
-          const isComplete = (receivedQty >= poQty && poQty > 0) || po.status === "completed" || po.status === "delivered" || receiptsByPo.has(po.id);
+          const isComplete = (poQty > 0 && pendingQty <= 0) || po.status === "completed" || po.status === "delivered";
 
           let stageStatus = "Completed";
           if (!isComplete) {
@@ -1216,78 +1216,6 @@ export default function PurchaseDashboard() {
             </Card>
           </div>
 
-
-
-                    
-          {/* BEST PRICE PER MATERIAL – NEW MODERN SECTION */}
-          {/* TOP RECEIVED ORDERS - REPLACED BEST PRICE SECTION */}
-          <Card className="border-0 shadow-sm bg-white">
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-emerald-600" />
-                    Top Received Orders
-                  </CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Vendors with highest order volume (Prioritized by Count)
-                  </p>
-                </div>
-                <Badge
-                  variant="secondary"
-                  className="bg-emerald-50 text-emerald-700"
-                >
-                  Live Data
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-center">Count</TableHead>
-                      <TableHead className="text-right">Value</TableHead>
-                      <TableHead className="text-right">Vendor Name</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {topReceivedOrders.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                          No received orders data available
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      topReceivedOrders.map((item: any, idx: number) => (
-                        <TableRow key={idx} className="hover:bg-muted/50">
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
-                              <Package className="w-4 h-4 text-muted-foreground" />
-                              {item.product}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                              {item.count}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right font-medium text-emerald-600">
-                            ₹{item.value.toLocaleString('en-IN')}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground text-sm">
-                            {item.vendor}
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* TOP 10 VENDORS + TOP 10 PRODUCTS */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Top 10 Vendors */}
@@ -2018,14 +1946,13 @@ export default function PurchaseDashboard() {
                     <TableHead className="font-bold text-slate-700 text-right">Pending Qty</TableHead>
                     <TableHead className="font-bold text-slate-700">Warehouse</TableHead>
                     <TableHead className="font-bold text-slate-700">Exp. Delivery</TableHead>
-                    <TableHead className="font-bold text-slate-700">Status</TableHead>
                     <TableHead className="font-bold text-slate-700 text-center">PO Copy</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {displayedPoItems.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-32 text-center text-slate-400 font-medium">
+                      <TableCell colSpan={11} className="h-32 text-center text-slate-400 font-medium">
                         No {poSubTab} purchase orders found.
                       </TableCell>
                     </TableRow>
@@ -2042,19 +1969,6 @@ export default function PurchaseDashboard() {
                         <TableCell className="text-right text-amber-600 font-bold">{item.pendingQty ? `${item.pendingQty} ${item.uom || ''}`.trim() : `0 ${item.uom || ''}`.trim()}</TableCell>
                         <TableCell className="text-slate-600">{item.warehouse}</TableCell>
                         <TableCell className="text-slate-600">{item.expDelivery}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={cn(
-                            "text-[10px] font-semibold whitespace-nowrap px-2 py-0.5",
-                            item.status === "Completed" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                            item.status === "Follow UP / Lifting" ? "bg-blue-50 text-blue-700 border-blue-200" :
-                            item.status === "Transporter Follow-Up" ? "bg-purple-50 text-purple-700 border-purple-200" :
-                            item.status === "Material Received" ? "bg-amber-50 text-amber-700 border-amber-200" :
-                            item.status === "Billing" ? "bg-teal-50 text-teal-700 border-teal-200" :
-                            "bg-orange-50 text-orange-700 border-orange-200"
-                          )}>
-                            {item.status}
-                          </Badge>
-                        </TableCell>
                         <TableCell className="text-center">
                           {item.poPdfUrl ? (
                             <Button

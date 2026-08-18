@@ -290,12 +290,46 @@ export default function Stage7() {
                 // (e.g. a PO with no Follow-Up/Lifting stage at all — see poLiftings.length === 0 below).
                 const transporterFallback = transporterByPo.get(po.id);
                 const poPayments = paymentsByPo.get(po.id) || [];
-                const freightPayment = poPayments.find((p: any) => p.payment_type === "freight");
-                const advancePayment = poPayments.find((p: any) => p.payment_type === "advance");
+                const freightPayment = poPayments.find((p: any) =>
+                    String(p.payment_type || "").toLowerCase().includes("freight") || p.paid_by === "Freight"
+                );
+                const advancePayment = poPayments.find((p: any) =>
+                    String(p.payment_type || "").toLowerCase().includes("advance") || p.paid_by === "Advance"
+                );
 
                 const totalPOQty = parseFloat(String(po.quantity || indentRow.data.quantity || "0").replace(/,/g, "")) || 0;
                 const totalReceivedSoFar = poReceipts.reduce((sum, r) => sum + (parseFloat(String(r.received_quantity || "0").replace(/,/g, "")) || 0), 0);
                 const remainingPOBalance = Math.max(0, totalPOQty - totalReceivedSoFar);
+
+                const getFormattedFreightAmt = (t: any, l: any) => {
+                    const raw = freightPayment?.amount || t?.freight_amount || t?.freight_amt || l?.freight_amount || "";
+                    if (!raw || raw === "0" || raw === 0) return "-";
+                    const num = parseFloat(String(raw).replace(/,/g, ""));
+                    return isNaN(num) ? String(raw) : `₹ ${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                };
+
+                const getFormattedAdvAmt = () => {
+                    const raw = advancePayment?.amount || po.advance_amount || (indentRow.data as any).advanceAmount || "";
+                    if (!raw || raw === "0" || raw === 0) return "-";
+                    const num = parseFloat(String(raw).replace(/,/g, ""));
+                    return isNaN(num) ? String(raw) : `₹ ${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                };
+
+                const getFormattedPayDate = () => {
+                    const pDate = poPayments[0]?.payment_date || poPayments[0]?.created_at;
+                    return pDate ? formatDateDash(pDate) : "-";
+                };
+
+                const getPayStatus = () => {
+                    if (poPayments.length > 0) return poPayments[0]?.status || "Paid";
+                    if (advancePayment) return advancePayment.status || "Paid";
+                    if (freightPayment) return freightPayment.status || "Paid";
+                    return "-";
+                };
+
+                const getPoCopyUrl = () => {
+                    return po.po_copy_url || po.po_pdf_url || po.po_file_url || (indentRow.data as any).poCopy || "";
+                };
 
                 if (poLiftings.length === 0) {
                     const compositeId = `${indentRow.data.indentNumber}_${po.po_number}`;
@@ -330,13 +364,13 @@ export default function Stage7() {
                             vehicleNo: transporter?.vehicle_number || "",
                             contactNo: "",
                             lrNo: transporter?.bilty_number || "",
-                            dispatchDate: transporter?.dispatch_date || "",
-                            freightAmount: freightPayment ? String(freightPayment.amount || "") : "",
-                            advanceAmount: advancePayment ? String(advancePayment.amount || "") : "",
-                            paymentDate: poPayments[0]?.payment_date || "",
-                            paymentStatus: poPayments[0]?.status || "",
-                            biltyCopy: transporter?.bilty_copy_url || "",
-                            poCopy: po.po_copy_url || "",
+                            dispatchDate: transporter?.dispatch_date ? formatDateDash(transporter.dispatch_date) : "",
+                            freightAmount: getFormattedFreightAmt(transporter, null),
+                            advanceAmount: getFormattedAdvAmt(),
+                            paymentDate: getFormattedPayDate(),
+                            paymentStatus: getPayStatus(),
+                            biltyCopy: transporter?.bilty_copy_url || receipt?.bilty_invoice_image_url || "",
+                            poCopy: getPoCopyUrl(),
                             planned6: "",
                             actual6: receipt ? String(receipt.received_date || "") : "",
                             receivedAt: receipt ? (receipt.created_at || "") : "",
@@ -413,13 +447,13 @@ export default function Stage7() {
                                 vehicleNo: lifting.vehicle_number || transporter?.vehicle_number || "",
                                 contactNo: lifting.driver_contact || "",
                                 lrNo: transporter?.bilty_number || "",
-                                dispatchDate: transporter?.dispatch_date || "",
-                                freightAmount: freightPayment ? String(freightPayment.amount || "") : "",
-                                advanceAmount: advancePayment ? String(advancePayment.amount || "") : "",
-                                paymentDate: poPayments[0]?.payment_date || "",
-                                paymentStatus: poPayments[0]?.status || "",
-                                biltyCopy: transporter?.bilty_copy_url || "",
-                                poCopy: po.po_copy_url || "",
+                                dispatchDate: transporter?.dispatch_date ? formatDateDash(transporter.dispatch_date) : "",
+                                freightAmount: getFormattedFreightAmt(transporter, lifting),
+                                advanceAmount: getFormattedAdvAmt(),
+                                paymentDate: getFormattedPayDate(),
+                                paymentStatus: getPayStatus(),
+                                biltyCopy: transporter?.bilty_copy_url || receipt?.bilty_invoice_image_url || "",
+                                poCopy: getPoCopyUrl(),
                                 planned6: lifting.expected_lifting_date || "",
                                 actual6: receipt ? String(receipt.received_date || "") : "",
                                 receivedAt: receipt ? (receipt.created_at || "") : "",

@@ -74,6 +74,7 @@ export interface FlatIndentRow {
     // Stage 5+
     poNumber: string;
     status2: string;
+    status?: string;
   };
   // Quotation IDs for updating
   _quotationIds?: Record<string, string>;
@@ -221,6 +222,7 @@ export async function fetchIndentWorkflow(forceRefresh = false): Promise<FlatInd
               originalIndex: idx + 7,
               status,
               data: {
+                status: indent.status || "",
                 createdAt: formatDate(indent.created_at),
                 indentNumber: indent.indent_number || "",
                 createdBy: indent.created_by || "",

@@ -282,10 +282,14 @@ export default function Stage5() {
         const hasPo = indentPos.length > 0;
         const isRegularVendor = row.data.vendorType?.toLowerCase() === "regular";
         const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "" && row.data.plan4.trim() !== "-";
-        const isApprovedStage2 = parseFloat(String((row.data as any).totalApprovedQty || row.data.approvedQty || "0")) > 0 || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-");
+        const totalApprovedQty = parseFloat(String((row.data as any).totalApprovedQty || row.data.approvedQty || "0").replace(/,/g, "")) || 0;
+        const isRejected = (row.data.status || "").toLowerCase() === "rejected" || totalApprovedQty === 0;
+        const isApprovedStage2 = !isRejected && (totalApprovedQty > 0 || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-"));
 
         let status = "not_ready";
-        if (hasPo) {
+        if (isRejected) {
+          status = "not_ready";
+        } else if (hasPo) {
           status = "completed";
         } else if (hasPlan4 || (isRegularVendor && isApprovedStage2)) {
           status = "pending";
@@ -646,7 +650,7 @@ export default function Stage5() {
       quotationDate: new Date().toISOString().split("T")[0],
       enquiryNumber: "",
       enquiryDate: "",
-      remarks: "",
+      remarks: firstRec.data.poRemarks || "",
       companyGstin: "27ABCDE1234A1Z5",
       companyPan: "ABCDE1234A",
       billingName: "M/S Nutech Pvt. Ltd.",
@@ -971,6 +975,7 @@ export default function Stage5() {
               po_copy_url: finalFileUrl || record.data.poCopy || "",
               gst_percent: data.gst || "",
               hsn: data.hsn || "",
+              remarks: poForm.remarks || "",
               created_by: "System",
               status: "PO Issued",
             };
@@ -1512,7 +1517,9 @@ export default function Stage5() {
                               } else if (col.key === "totalAmount") {
                                 const q = parseFloat(String(record.data.quantity || record.data.approvedQty || 0).replace(/,/g, "")) || 0;
                                 const r = parseFloat(String(v.rate || 0).replace(/,/g, "")) || 0;
-                                const tot = q * r;
+                                const gstPct = v.gst !== undefined && v.gst !== null && v.gst !== "" ? (parseFloat(String(v.gst).replace("%", "").trim()) || 0) : 18;
+                                const base = q * r;
+                                const tot = base + base * (gstPct / 100);
                                 content = tot > 0 ? `₹${tot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-";
                               } else if (col.key === "freightType") {
                                 content = v.transportType || record.data.transportType || "-";
@@ -1714,7 +1721,7 @@ export default function Stage5() {
                         </TableCell>
                         <TableCell className="bg-white/50 border-l min-w-[150px] max-w-[280px]">
                           <div className="text-xs text-slate-700 italic font-normal whitespace-pre-wrap break-words">
-                            {record.data.poRemarks || record.data.negotiationRemarks || "-"}
+                            {record.data.poRemarks || "-"}
                           </div>
                         </TableCell>
                         <TableCell className="bg-white/50 border-l">

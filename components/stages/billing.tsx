@@ -173,16 +173,27 @@ export default function Stage9() {
     setIsLoading(true);
     try {
       const { fetchIndentWorkflow } = await import("@/lib/supabase/queries");
-      const [indentRows, poRows, receiptRows, billingRows] = await Promise.all([
+      const [indentRows, poRows, receiptRows, billingRows, liftingRows] = await Promise.all([
         fetchIndentWorkflow(),
         supabase.from("purchase_orders").select("*"),
         supabase.from("material_receipts").select("*"),
         supabase.from("tally_billing").select("*"),
+        supabase.from("vendor_liftings").select("*"),
       ]);
 
       const pos = poRows.data || [];
       const receipts = receiptRows.data || [];
       const billings = billingRows.data || [];
+      const liftings = liftingRows?.data || [];
+
+      const liftingByPo = new Map<string, any[]>();
+      liftings.forEach((l: any) => {
+        if (l.po_id) {
+          const list = liftingByPo.get(l.po_id) || [];
+          list.push(l);
+          liftingByPo.set(l.po_id, list);
+        }
+      });
 
       // Build PO map by indent_id
       const poMap = new Map<string, any[]>();
@@ -223,6 +234,16 @@ export default function Stage9() {
             const hasDoneBy = billing?.accountant_name && billing.accountant_name !== "-";
             const status = isChecked ? "completed" : "pending";
 
+            const poLiftings = liftingByPo.get(po.id) || [];
+            const matchedLifting = poLiftings.find((l: any) =>
+              String(receipt.grn_number || "").includes(String(l.id).substring(0, 8))
+            ) || (poLiftings.length > 0 ? poLiftings[0] : null);
+
+            const unitTrackingNo = (matchedLifting?.id ? String(matchedLifting.id).substring(0, 8) : null)
+              || (receipt.grn_number && receipt.grn_number !== "-" ? receipt.grn_number : (po.po_number || "-"));
+
+            const poCopyUrl = po.po_copy_url || po.po_pdf_url || po.po_file_url || (indentRow.data as any)?.poCopy || "";
+
             rows.push({
               id: `${indentRow.data.indentNumber}-${receipt.id}`,
               rowIndex: rows.length + 7,
@@ -231,7 +252,9 @@ export default function Stage9() {
               createdAt: indentRow.data.createdAt,
               data: {
                 indentNumber: indentRow.data.indentNumber || "",
-                liftNumber: receipt.grn_number || "",
+                liftNumber: unitTrackingNo,
+                receiptLiftNumber: unitTrackingNo,
+                unitTrackingNo: unitTrackingNo,
                 vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
                 poNumber: po.po_number || "-",
                 poId: po.id,
@@ -274,7 +297,7 @@ export default function Stage9() {
                 warehouse: indentRow.data.warehouseLocation || "-",
                 basicValue: String(po.total_amount || "-"),
                 totalWithTax: String(po.total_amount || "-"),
-                poCopy: po.po_copy_url || "",
+                poCopy: poCopyUrl,
                 deliveryDate: "-",
                 vendorNameFallback: po.vendor_name || "-",
                 rate: String(po.unit_rate || "-"),
@@ -473,8 +496,10 @@ export default function Stage9() {
       if (key === "ratePerQty") return vendor.rate ? `₹${vendor.rate}` : "-";
       if (key === "paymentTerms") return vendor.terms;
 
-      // Handle lifting data
-      if (key === "receiptLiftNumber") return data.liftNumber || "-";
+      // Handle unit tracking number
+      if (key === "receiptLiftNumber" || key === "liftNumber" || key === "unitTrackingNo") {
+        return data.receiptLiftNumber || data.liftNumber || data.unitTrackingNo || "-";
+      }
 
       // Handle payment amounts
       if (key === "paymentAmountHydra" || key === "paymentAmountLabour" || key === "paymentAmountHamali") {
@@ -923,7 +948,7 @@ export default function Stage9() {
                           }
                           return (
                             <td key={col.key} className="border-b px-4 py-2 text-center text-slate-700">
-                              {record.data[col.key] || "-"}
+                              {safeValue(record, col.key)}
                             </td>
                           );
                         })}

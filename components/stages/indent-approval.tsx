@@ -150,16 +150,16 @@ export default function Stage2() {
 
       const stage2Rows = rows
         .map((r: any) => {
-          const pendingQty = parseFloat(r.data.pendingApprovalQty || "0");
           const isRejected = (r.data.status || "").toLowerCase() === "rejected";
+          const pendingQty = parseFloat(r.data.pendingApprovalQty || "0");
           let status = "pending";
           if (pendingQty <= 0 || isRejected) {
             status = "completed";
           }
 
           const indentQtyNum = parseFloat(String(r.data.indentQty || r.data.quantity || "0").replace(/,/g, "")) || 0;
-          const approvedQtyNum = parseFloat(String(r.data.totalApprovedQty || r.data.approvedQty || "0").replace(/,/g, "")) || 0;
-          const computedRejected = approvedQtyNum > 0 ? Math.max(0, indentQtyNum - approvedQtyNum) : (r.data.status?.toLowerCase() === "rejected" ? indentQtyNum : 0);
+          const approvedQtyNum = isRejected ? 0 : (parseFloat(String(r.data.totalApprovedQty || r.data.approvedQty || "0").replace(/,/g, "")) || 0);
+          const computedRejected = isRejected ? indentQtyNum : (approvedQtyNum > 0 ? Math.max(0, indentQtyNum - approvedQtyNum) : 0);
 
           return {
             id: r.data.indentNumber || r.id,
@@ -184,8 +184,8 @@ export default function Stage2() {
               plannedDate: r.data.plan1,
               actualDate: r.data.actual1,
               delay: r.data.delay,
-              status: r.data.status,
-              approvedQty: r.data.approvedQty,
+              status: isRejected ? "Rejected" : (approvedQtyNum >= indentQtyNum && indentQtyNum > 0 ? "Approved" : (approvedQtyNum > 0 ? "Partial Approved" : "Pending")),
+              approvedQty: String(approvedQtyNum),
               vendorType: r.data.vendorType,
               remarks: r.data.remarks,
               delegatedTo: delegationMap[r.id] || [],
@@ -342,7 +342,7 @@ export default function Stage2() {
           await approveIndent(matchingRow.id, {
             approverUsername: localStorage.getItem("user") || "unknown",
             approvalStatus: finalStatus,
-            approvedQty: parseInt(finalQty) || 0,
+            approvedQty: finalStatus === "rejected" ? 0 : (parseInt(finalQty) || 0),
             vendorType: finalVendorType,
             remarks: approvalData.remarks || "",
           });

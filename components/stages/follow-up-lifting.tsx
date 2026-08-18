@@ -1113,16 +1113,8 @@ export default function FollowUpLifting() {
         }
 
         if (isFollowUpMode) {
-          // Log the vendor follow-up so downstream stages (Transporter
-          // Follow-Up) see it — always "Intransit"; a follow-up alone is
-          // never a completion event.
-          await supabase.from("transporter_followups").insert({
-            po_id: sheetRecord._poId,
-            transporter_name: lift.transporterName?.trim() || "Follow-up",
-            lifting_id: insertedLifting?.id || null,
-            status: "Intransit",
-            dispatch_date: toYMD(new Date().toISOString()),
-          });
+          // Vendor Follow-Up mode only logs vendor_liftings (follow-up date & remarks)
+          // without creating a transport dispatch entry.
         } else if (sheetRecord._poId && (lift.transporterName || lift.vehicleNumber || lift.freightAmount || lift.biltyNumber)) {
           // Carry forward whatever rate/type was arranged (or edited here)
           // so the final dispatch record reflects it, not just the earlier

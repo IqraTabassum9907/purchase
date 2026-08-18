@@ -60,6 +60,7 @@ export default function PublicQuotationForm() {
     indentNumber: string;
     itemName: string;
     quantity: string;
+    uom: string;
     category: string;
     vendorName: string;
     _quotationIds?: Record<string, string>;
@@ -116,6 +117,7 @@ export default function PublicQuotationForm() {
               indentNumber: row.data.indentNumber,
               itemName: row.data.itemName,
               quantity: row.data.quantity,
+              uom: row.data.uom || "",
               category: row.data.category,
               vendorName: (row.data as any)[vendorNameKey] || `Vendor #${vendorSlot}`,
               _quotationIds: row._quotationIds,
@@ -241,7 +243,7 @@ export default function PublicQuotationForm() {
             srNo: index + 1,
             itemName: item.itemName,
             indentNumber: item.indentNumber,
-            quantity: item.quantity,
+            quantity: item.quantity && item.quantity !== "-" ? `${item.quantity} ${item.uom || ''}`.trim() : item.quantity,
             rate: rate.toFixed(2),
             gstPercent: formGst[index] || "0",
             amount: itemTotals[index].total.toFixed(2),
@@ -350,7 +352,7 @@ export default function PublicQuotationForm() {
                       <td className="p-3 font-mono font-semibold">{item.indentNumber}</td>
                       <td className="p-3">{item.itemName}</td>
                       <td className="p-3">{item.category}</td>
-                      <td className="p-3 text-right">{item.quantity}</td>
+                      <td className="p-3 text-right">{item.quantity && item.quantity !== "-" ? `${item.quantity} ${item.uom || ''}`.trim() : "-"}</td>
                       <td className="p-3 text-right">₹{formRates[index]}</td>
                       <td className="p-3 text-right">{itemTotals[index]?.gstValStr || formGst[index] || "18"}%</td>
                       <td className="p-3 text-right font-bold text-slate-900">₹{itemTotals[index]?.total.toFixed(2)}</td>
@@ -438,7 +440,7 @@ export default function PublicQuotationForm() {
 
                   <div className="flex items-end gap-3 shrink-0 flex-wrap">
                     <Badge className="bg-slate-200 text-slate-800 text-xs font-bold px-2.5 py-1 rounded-full shrink-0 mb-1.5">
-                      Qty: {item.quantity}
+                      Qty: {item.quantity && item.quantity !== "-" ? `${item.quantity} ${item.uom || ''}`.trim() : "-"}
                     </Badge>
 
                     <div className="space-y-1">

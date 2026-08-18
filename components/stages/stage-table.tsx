@@ -27,6 +27,29 @@ interface StageTableProps {
   hideTableTitle?: boolean;
 }
 
+const renderCellContent = (colKey: string, val: any) => {
+  if (!val || val === "-" || val === "—") return "-";
+  if (colKey === "leadTime") {
+    return isNaN(Number(val)) ? String(val) : `${val} days`;
+  }
+  const isUrl = typeof val === "string" && (val.startsWith("http") || val.startsWith("/") || val.startsWith("blob:"));
+  const isCopyOrFileField = colKey.toLowerCase().includes("copy") ||
+                            colKey.toLowerCase().includes("image") ||
+                            colKey.toLowerCase().includes("attachment") ||
+                            colKey.toLowerCase().includes("bilty") ||
+                            colKey.toLowerCase().includes("proof");
+  if (isCopyOrFileField || isUrl) {
+    if (typeof val === "string" && (val.startsWith("http") || val.startsWith("/") || val.startsWith("blob:"))) {
+      return (
+        <a href={val} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-semibold underline-offset-4 hover:underline">
+          View
+        </a>
+      );
+    }
+  }
+  return String(val);
+};
+
 export function StageTable({
   title,
   stage,
@@ -118,11 +141,7 @@ export function StageTable({
                 {col.label}:
               </span>
               <span className="text-right break-words ml-2">
-                {col.key === "leadTime"
-                  ? (record.data[col.key] && isNaN(Number(record.data[col.key]))
-                      ? String(record.data[col.key])
-                      : `${record.data[col.key] || "-"} days`)
-                  : String(record.data[col.key] || "-")}
+                {renderCellContent(col.key, record.data[col.key])}
               </span>
             </div>
           ))}
@@ -226,13 +245,7 @@ export function StageTable({
                             </TableCell>
                             {columns.slice(1).map((col) => (
                               <TableCell key={col.key} className="text-sm text-slate-600 border-b border-slate-100 px-4">
-                                {col.key === "leadTime"
-                                  ? (record.data[col.key] && isNaN(Number(record.data[col.key]))
-                                      ? String(record.data[col.key])
-                                      : `${record.data[col.key] || "-"} days`)
-                                  : col.key === "attachment" && record.data[col.key]
-                                    ? <a href={record.data[col.key]} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium underline-offset-4 hover:underline">View</a>
-                                    : String(record.data[col.key] || "-")}
+                                {renderCellContent(col.key, record.data[col.key])}
                               </TableCell>
                             ))}
                           </TableRow>
@@ -306,13 +319,7 @@ export function StageTable({
                             </TableCell>
                             {columns.map((col) => (
                               <TableCell key={col.key} className="text-sm text-slate-600 border-b border-slate-100 px-4">
-                                {col.key === "leadTime"
-                                  ? (record.data[col.key] && isNaN(Number(record.data[col.key]))
-                                      ? String(record.data[col.key])
-                                      : `${record.data[col.key] || "-"} days`)
-                                  : col.key === "attachment" && record.data[col.key]
-                                    ? <a href={record.data[col.key]} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium underline-offset-4 hover:underline">View</a>
-                                    : String(record.data[col.key] || "-")}
+                                {renderCellContent(col.key, record.data[col.key])}
                               </TableCell>
                             ))}
                             <TableCell className="font-medium text-green-600 border-b border-slate-100 px-4">

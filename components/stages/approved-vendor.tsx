@@ -100,6 +100,8 @@ export default function ApprovedVendor() {
       const rows = workflow
         .filter((row) => row.data.indentNumber && row.data.indentNumber.trim() !== "")
         .map((row) => {
+          const totalApprovedQty = parseFloat(String((row.data as any).totalApprovedQty || row.data.approvedQty || "0").replace(/,/g, "")) || 0;
+          const isRejected = (row.data.status || "").toLowerCase() === "rejected" || (row.data as any).status2?.toLowerCase() === "rejected" || totalApprovedQty === 0;
           const hasActual3 = !!row.data.actual3 && row.data.actual3.trim() !== "" && row.data.actual3.trim() !== "-";
           const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "" && row.data.plan4.trim() !== "-";
 
@@ -107,7 +109,7 @@ export default function ApprovedVendor() {
             id: row.id,
             rowIndex: row.originalIndex,
             stage: 4,
-            status: (hasActual3 && hasPlan4) ? "completed" : (hasActual3 && !hasPlan4 ? "pending" : "not_ready"),
+            status: isRejected ? "not_ready" : ((hasActual3 && hasPlan4) ? "completed" : (hasActual3 && !hasPlan4 ? "pending" : "not_ready")),
             createdAt: row.data.createdAt,
             data: row.data,
             _quotationIds: row._quotationIds,
@@ -162,6 +164,7 @@ export default function ApprovedVendor() {
         records: recs,
         indentNumbers: recs.map((r) => r.data.indentNumber).join(", "),
         itemNames: recs.map((r) => r.data.itemName).join(", "),
+        quantitiesWithUnits: recs.map((r) => `${r.data.quantity || '-'}${r.data.uom ? ` ${r.data.uom}` : ''}`).join(", "),
       };
     });
 
@@ -697,7 +700,7 @@ export default function ApprovedVendor() {
                         )}
                         {selectedColumns.includes("quantity") && (
                           <TableCell className="text-sm text-slate-750 px-4 font-semibold">
-                            {group.records.map((r: any) => r.data.quantity).join(", ")}
+                            {group.quantitiesWithUnits}
                           </TableCell>
                         )}
                         {selectedColumns.includes("actual3") && (
@@ -789,12 +792,18 @@ export default function ApprovedVendor() {
                     <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
                       Rate Per Qty
                     </TableHead>
+                    <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
+                      Total Amount
+                    </TableHead>
+                    <TableHead className="sticky top-0 z-30 bg-slate-200 border-none px-4 py-3 text-slate-700 font-bold uppercase text-[13px] tracking-wider">
+                      Remarks
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {completed.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={selectedColumns.length + 4} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={baseColumns.filter((col) => selectedColumns.includes(col.key)).length + 6} className="h-32 text-center text-gray-500 font-medium">
                         No completed approved vendors found.
                       </TableCell>
                     </TableRow>
@@ -804,10 +813,20 @@ export default function ApprovedVendor() {
                     const idx = parseInt(selId.replace("vendor", ""), 10) || 1;
 
                     const vendorName = record.data[`vendor${idx}Name`] || record.data.selectedVendorName;
-                    const vendorRate = record.data[`vendor${idx}Rate`];
-                    const vendorTerms = record.data[`vendor${idx}Terms`];
-                    const vendorDelivery = record.data[`vendor${idx}Delivery`];
-                    const vendorTransportType = record.data[`vendor${idx}TransportType`];
+                    const vendorRate = record.data[`vendor${idx}Rate` ];
+                    const vendorGst = record.data[`vendor${idx}Gst` ];
+                    const vendorTerms = record.data[`vendor${idx}Terms` ];
+                    const vendorDelivery = record.data[`vendor${idx}Delivery` ];
+                    const vendorTransportType = record.data[`vendor${idx}TransportType` ];
+
+                    const qty = parseFloat(record.data.quantity) || 0;
+                    const rate = parseFloat(vendorRate) || 0;
+                    const gstPct = parseFloat(vendorGst || "18") || 0;
+                    const base = rate * qty;
+                    const gstAmt = base * (gstPct / 100);
+                    const grandTotal = base + gstAmt;
+
+                    const approvalRemarks = record.data.negotiationRemarks || record.data.remarks || "-";
 
                     return (
                       <TableRow key={record.id} className="hover:bg-muted/50 odd:bg-white even:bg-slate-50/80 group">
@@ -840,6 +859,8 @@ export default function ApprovedVendor() {
                                 })()
                               : col.key === "actual3"
                               ? getPlannedDateForRecord(record.data, "Approved Vendor", tatRules, record.createdAt)
+                              : col.key === "quantity"
+                              ? `${record.data.quantity || '-'}${record.data.uom ? ` ${record.data.uom}` : ''}`
                               : String(record.data[col.key] ?? "-")}
                           </TableCell>
                         ))}
@@ -862,7 +883,13 @@ export default function ApprovedVendor() {
                           </div>
                         </TableCell>
                         <TableCell className="text-sm text-slate-700 px-4 font-semibold">
-                          {vendorRate && vendorRate !== "-" ? `₹${vendorRate}` : "-"}
+                          {vendorRate && vendorRate !== "-" ? `₹${rate.toLocaleString('en-IN')}` : "-"}
+                        </TableCell>
+                        <TableCell className="text-sm text-emerald-800 px-4 font-extrabold whitespace-nowrap">
+                          {rate > 0 ? `₹${grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-600 px-4 max-w-xs truncate" title={approvalRemarks}>
+                          {approvalRemarks || "-"}
                         </TableCell>
                       </TableRow>
                     );
@@ -894,7 +921,7 @@ export default function ApprovedVendor() {
               <span className="font-bold text-xs text-slate-500 uppercase tracking-wider block border-b pb-2">
                 Enquiry Details
               </span>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <span className="text-slate-400 font-medium text-xs">Indent IDs:</span>
                   <p className="font-bold text-slate-800 font-mono mt-0.5">{currentGroup?.indentNumbers}</p>
@@ -902,6 +929,12 @@ export default function ApprovedVendor() {
                 <div>
                   <span className="text-slate-400 font-medium text-xs">Items:</span>
                   <p className="font-semibold text-slate-850 mt-0.5">{currentGroup?.itemNames}</p>
+                </div>
+                <div>
+                  <span className="text-slate-400 font-medium text-xs">Quantity / Units:</span>
+                  <p className="font-bold text-slate-800 mt-0.5">
+                    {currentGroup?.quantitiesWithUnits || currentGroup?.records?.map((r: any) => `${r.data.quantity || '-'}${r.data.uom ? ` ${r.data.uom}` : ''}`).join(", ")}
+                  </p>
                 </div>
               </div>
             </div>
@@ -967,7 +1000,7 @@ export default function ApprovedVendor() {
                         <th key={rec.id} className="p-3 font-semibold text-slate-700 text-center min-w-52 whitespace-normal">
                           <div className="font-mono text-[10px] text-slate-500">Indent: {rec.data.indentNumber}</div>
                           <div className="font-bold text-slate-800 text-xs break-words">{rec.data.itemName}</div>
-                          <div className="text-[10px] text-slate-500 font-normal">Qty: {rec.data.quantity}</div>
+                          <div className="text-[10px] text-slate-500 font-normal">Qty: {rec.data.quantity}{rec.data.uom ? ` ${rec.data.uom}` : ''}</div>
                         </th>
                       ))}
                       <th className="p-3 font-bold text-emerald-800 text-center bg-emerald-50 whitespace-nowrap min-w-44">Total Estimate (w/ Tax)</th>

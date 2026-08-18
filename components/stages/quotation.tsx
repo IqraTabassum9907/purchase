@@ -193,15 +193,16 @@ export default function Quotation() {
     try {
       const workflowData = await fetchIndentWorkflow();
       const rows = workflowData.map((row) => {
-        const hasApprovedQty = parseFloat((row.data as any).totalApprovedQty || row.data.approvedQty || "0") > 0;
-        const isApproved = hasApprovedQty || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-");
+        const totalApprovedQty = parseFloat(String((row.data as any).totalApprovedQty || row.data.approvedQty || "0").replace(/,/g, "")) || 0;
+        const isRejected = (row.data.status || "").toLowerCase() === "rejected" || (row.data as any).status2?.toLowerCase() === "rejected" || totalApprovedQty === 0;
+        const isApproved = !isRejected && (totalApprovedQty > 0 || (!!row.data.actual1 && row.data.actual1.trim() !== "" && row.data.actual1.trim() !== "-"));
         const hasActual3 = !!row.data.actual3 && row.data.actual3.trim() !== "";
         const isRegularVendor = (row.data.vendorType || "").toLowerCase().includes("regular");
         const hasPlan4 = !!row.data.plan4 && row.data.plan4.trim() !== "";
         const hasSelectedVendor = !!row.data.selectedVendorName && row.data.selectedVendorName.trim() !== "";
 
         let status: string;
-        if (!isApproved || isRegularVendor) {
+        if (isRejected || !isApproved || isRegularVendor) {
           status = "not_ready";
         } else if (hasActual3 || hasPlan4 || hasSelectedVendor) {
           status = "completed";
@@ -882,6 +883,8 @@ export default function Quotation() {
                                 ? formatDateTimeFull(record.data.approvedAt || record.createdAt)
                                 : col.key === "planned3"
                                 ? getPlannedDateForRecord(record.data, "Quotation", tatRules, record.createdAt)
+                                : col.key === "quantity"
+                                ? (record.data.quantity && record.data.quantity !== "-" ? `${record.data.quantity} ${record.data.uom || ''}`.trim() : "-")
                                 : String(record.data[col.key] ?? "-")}
                             </TableCell>
                           ))}
@@ -965,6 +968,8 @@ export default function Quotation() {
                               ? formatDateTimeFull(record.data.actual3 || record.createdAt)
                               : col.key === "planned3"
                               ? getPlannedDateForRecord(record.data, "Quotation", tatRules, record.createdAt)
+                              : col.key === "quantity"
+                              ? (record.data.quantity && record.data.quantity !== "-" ? `${record.data.quantity} ${record.data.uom || ''}`.trim() : "-")
                               : String(record.data[col.key] ?? "-")}
                           </TableCell>
                         ))}
@@ -1243,7 +1248,7 @@ export default function Quotation() {
                               {record?.data?.itemName || "—"}
                             </TableCell>
                             <TableCell className="p-3 text-right font-bold text-slate-900">
-                              {record?.data?.quantity || "—"}
+                              {record?.data?.quantity && record?.data?.quantity !== "-" ? `${record?.data?.quantity} ${record?.data?.uom || ''}`.trim() : "—"}
                             </TableCell>
                             <TableCell className="p-3 text-slate-600">
                               {record?.data?.uom || "PCS"}
@@ -1401,7 +1406,7 @@ export default function Quotation() {
                   {currentRecords.map((record) => (
                     <div key={record.id} className="space-y-2 border-b pb-4 last:border-0 last:pb-0">
                       <div className="font-bold text-xs text-slate-750 bg-slate-100 p-2 rounded flex justify-between items-center">
-                        <span>Indent: {record.data.indentNumber} - {record.data.itemName} (Qty: {record.data.quantity})</span>
+                        <span>Indent: {record.data.indentNumber} - {record.data.itemName} (Qty: {record.data.quantity && record.data.quantity !== "-" ? `${record.data.quantity} ${record.data.uom || ''}`.trim() : "-"})</span>
                       </div>
                       <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
                         <table className="w-full text-xs text-left">

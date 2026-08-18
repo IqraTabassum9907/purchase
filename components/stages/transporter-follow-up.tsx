@@ -159,58 +159,13 @@ export default function TransporterFollowUp() {
                 );
 
                 if (actualDispatchedLiftings.length === 0) {
-                    // Follow Up / Lifting hasn't logged anything for this PO yet
-                    // (no vendor_liftings row and no transporter_followups row) —
-                    // don't surface it here until Follow Up actually processes it.
-                    if (poLiftings.length === 0 && poTransporters.length === 0) {
-                        continue;
-                    }
-
-                    const isDeliveredOrReceived = (latestTransporter && ["received", "delivered", "completed", "complete"].includes(String(latestTransporter.status || "").toLowerCase()));
-                    const status = isDeliveredOrReceived ? "history" : "pending";
-
-                    const latestIntransit = poTransporters.filter((t: any) => t.status === "Intransit")
-                        .sort((a: any, b: any) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())[0];
-                    const lastTimestamp = totalIntransit > 0
-                        ? (latestIntransit?.updated_at || latestTransporter?.updated_at || "")
-                        : (latestTransporter?.updated_at || "");
-
-                    rows.push({
-                        id: `${indentRow.data.indentNumber}_${po.po_number}`,
-                        _poId: po.id,
-                        _liftingId: null,
-                        createdAt: indentRow.data.createdAt,
-                        status,
-                        data: {
-                            indentNumber: indentRow.data.indentNumber,
-                            liftNo: po.po_number,
-                            vendorName: po.vendor_name || indentRow.data.selectedVendorName || indentRow.data.vendor1Name || "-",
-                            poNumber: po.po_number,
-                            invoiceNumber: "",
-                            itemName: indentRow.data.itemName,
-                            liftingQty: String(po.quantity || indentRow.data.quantity || ""),
-                            uom: indentRow.data.uom || "",
-                            transportType: latestTransporter?.transport_type || "",
-                            transporterName: latestTransporter?.transporter_name || "",
-                            vehicleNo: latestTransporter?.vehicle_number || "",
-                            contactNo: "",
-                            freightAmt: "",
-                            plannedDate: po.delivery_date || "",
-                            actualDate: latestTransporter?.status === "Received" ? latestTransporter.dispatch_date || "" : "",
-                            lastFollowUpDate: lastTimestamp || "",
-                            nextFollowUpDate: latestTransporter?.expected_arrival_date || "",
-                            expectedDate: latestTransporter?.expected_arrival_date || "",
-                            remarks: "",
-                            totalFollowUps: totalIntransit,
-                            lrNo: latestTransporter?.bilty_number || "",
-                            lrCopy: latestTransporter?.bilty_copy_url || "",
-                        }
-                    });
+                    // No actual material lifting/dispatch has occurred for this PO yet.
+                    // Vendor follow-up alone does not dispatch goods and must not surface in Transporter Follow-Up.
+                    continue;
                 } else {
-                    // Legacy transporter_followups rows predate the lifting_id column and only
-                    // carry po_id — keep them as a shared fallback for POs whose dispatches
-                    // haven't been touched since the migration.
-                    const legacyPoTransporters = poTransporters.filter((t: any) => !t.lifting_id);
+                    // Filter out legacy dummy "Follow-up" entries that are not real transporter dispatches
+                    const validPoTransporters = poTransporters.filter((t: any) => t.transporter_name !== "Follow-up");
+                    const legacyPoTransporters = validPoTransporters.filter((t: any) => !t.lifting_id);
 
                     for (const lifting of actualDispatchedLiftings) {
                         const liftTrackingNo = String(lifting.id).substring(0, 8);
@@ -256,7 +211,11 @@ export default function TransporterFollowUp() {
                                 transporterName: latestLiftingTransporter?.transporter_name || lifting.contact_person || "",
                                 vehicleNo: lifting.vehicle_number || latestLiftingTransporter?.vehicle_number || "",
                                 contactNo: lifting.driver_contact || "",
-                                freightAmt: "",
+                                freightAmt: (lifting.freight_amount !== null && lifting.freight_amount !== undefined && String(lifting.freight_amount).trim() !== "")
+                                    ? String(lifting.freight_amount)
+                                    : (latestLiftingTransporter?.freight_amount !== null && latestLiftingTransporter?.freight_amount !== undefined && String(latestLiftingTransporter.freight_amount).trim() !== ""
+                                        ? String(latestLiftingTransporter.freight_amount)
+                                        : (poTransporters.find((t: any) => t.freight_amount !== null && t.freight_amount !== undefined && String(t.freight_amount).trim() !== "")?.freight_amount ? String(poTransporters.find((t: any) => t.freight_amount)?.freight_amount) : "")),
                                 plannedDate: lifting.expected_lifting_date || po.delivery_date || "",
                                 actualDate: lifting.actual_lifting_date || "",
                                 lastFollowUpDate: lastFollowUpTimestamp || "",
@@ -797,6 +756,14 @@ export default function TransporterFollowUp() {
                                                         );
                                                     }
 
+                                                    if (c.key === "freightAmt") {
+                                                        return (
+                                                            <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 font-medium whitespace-nowrap">
+                                                                {val && val !== "-" && !isNaN(Number(val)) ? `₹${parseFloat(String(val)).toLocaleString("en-IN")}` : (val || "-")}
+                                                            </TableCell>
+                                                        );
+                                                    }
+
                                                     if (c.key === "liftingQty") {
                                                         const uom = rec.data.uom;
                                                         return (
@@ -887,7 +854,7 @@ export default function TransporterFollowUp() {
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-2xl sm:max-w-2xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>{isBulkMode ? `Bulk Follow-Up (${selectedRows.size} items)` : "Transport Follow-Up"}</DialogTitle>
+                        <DialogTitle>Transport Follow-Up</DialogTitle>
                     </DialogHeader>
 
                     {bulkError && (
@@ -898,93 +865,75 @@ export default function TransporterFollowUp() {
 
                     <form onSubmit={handleSubmit} className="space-y-4 py-2">
 
-                        {isBulkMode ? (
-                            <div className="space-y-4">
-                                {/* Selected Items List */}
-                                <div className="border rounded-md overflow-hidden">
-                                    <div className="bg-gray-50 px-4 py-2 border-b text-sm font-medium flex justify-between">
-                                        <span>Selected Items ({selectedRows.size})</span>
-                                        <span className="text-gray-500 font-normal">
-                                            Vendor: {selectedRecord?.data.vendorName} | PO: {selectedRecord?.data.poNumber}
-                                        </span>
-                                    </div>
-                                    <div className="max-h-40 overflow-y-auto p-2 bg-slate-50">
-                                        <table className="w-full text-sm">
-                                            <thead>
-                                                <tr className="text-left text-gray-500 border-b">
-                                                    <th className="pb-1 font-medium">Indent No</th>
-                                                    <th className="pb-1 font-medium">Unit Tracking No.</th>
-                                                    <th className="pb-1 font-medium">Transport Type</th>
-                                                    <th className="pb-1 font-medium">Transporter</th>
-                                                    <th className="pb-1 font-medium">Vehicle</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {records
-                                                    .filter(r => selectedRows.has(r.id))
-                                                    .map(r => (
-                                                        <tr key={r.id} className="border-b last:border-0 border-gray-100">
-                                                            <td className="py-1">{r.data.indentNumber}</td>
-                                                            <td className="py-1">{r.data.liftNo}</td>
-                                                            <td className="py-1 truncate max-w-[100px]">{r.data.transportType || "-"}</td>
-                                                            <td className="py-1 truncate max-w-[100px]" title={r.data.transporterName}>{r.data.transporterName}</td>
-                                                            <td className="py-1">{r.data.vehicleNo}</td>
-                                                        </tr>
-                                                    ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            /* Single Item View - Read Only Fields */
-                            <>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <Label className="text-xs text-gray-500">Transport Type</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
-                                            {selectedRecord?.data.transportType || "-"}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <Label className="text-xs text-gray-500">Transporter Name</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium truncate">
-                                            {selectedRecord?.data.transporterName || "-"}
-                                        </div>
-                                    </div>
-                                </div>
+                        {(() => {
+                            const selectedItems = isBulkMode
+                                ? records.filter((r) => selectedRows.has(r.id))
+                                : selectedRecord ? [selectedRecord] : [];
 
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <Label className="text-xs text-gray-500">Vehicle Number</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
-                                            {selectedRecord?.data.vehicleNo || "-"}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <Label className="text-xs text-gray-500">Contact Number</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
-                                            {selectedRecord?.data.contactNo || "-"}
-                                        </div>
-                                    </div>
-                                </div>
+                            const getUnique = (key: string) => {
+                                const vals = selectedItems
+                                    .map((r) => r.data[key])
+                                    .filter((v) => v !== undefined && v !== null && String(v).trim() !== "" && String(v).trim() !== "-");
+                                const unique = Array.from(new Set(vals));
+                                return unique.length > 0 ? unique.join(", ") : "-";
+                            };
 
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <Label className="text-xs text-gray-500">Unit Tracking No.</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
-                                            {selectedRecord?.data.liftNo || "-"}
+                            const transportType = getUnique("transportType");
+                            const transporterName = getUnique("transporterName");
+                            const vehicleNo = getUnique("vehicleNo");
+                            const contactNo = getUnique("contactNo");
+                            const unitTrackingNo = getUnique("liftNo");
+                            const indentNumber = getUnique("indentNumber");
+
+                            return (
+                                <div className="space-y-3">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <Label className="text-xs text-gray-500">Transport Type</Label>
+                                            <div className="p-2 bg-gray-50 rounded text-sm font-medium">
+                                                {transportType}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs text-gray-500">Transporter Name</Label>
+                                            <div className="p-2 bg-gray-50 rounded text-sm font-medium truncate" title={transporterName}>
+                                                {transporterName}
+                                            </div>
                                         </div>
                                     </div>
-                                    <div>
-                                        <Label className="text-xs text-gray-500">Indent Number</Label>
-                                        <div className="p-2 bg-gray-50 rounded text-sm font-medium">
-                                            {selectedRecord?.data.indentNumber || "-"}
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <Label className="text-xs text-gray-500">Vehicle Number</Label>
+                                            <div className="p-2 bg-gray-50 rounded text-sm font-medium">
+                                                {vehicleNo}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs text-gray-500">Contact Number</Label>
+                                            <div className="p-2 bg-gray-50 rounded text-sm font-medium">
+                                                {contactNo}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <Label className="text-xs text-gray-500">Unit Tracking No.</Label>
+                                            <div className="p-2 bg-gray-50 rounded text-sm font-medium truncate" title={unitTrackingNo}>
+                                                {unitTrackingNo}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs text-gray-500">Indent Number</Label>
+                                            <div className="p-2 bg-gray-50 rounded text-sm font-medium truncate" title={indentNumber}>
+                                                {indentNumber}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </>
-                        )}
+                            );
+                        })()}
 
                         {/* Editable Fields - Compact Layout */}
                         <div className="p-4 bg-white border rounded-md shadow-sm space-y-3">
