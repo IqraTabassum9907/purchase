@@ -412,6 +412,7 @@ export default function FollowUpLifting() {
           contactNo: lift.driver_contact || tf?.driver_contact || "-",
           lrNo: lift.lr_number || tf?.bilty_number || "-",
           dispatchDate: lift.actual_lifting_date || tf?.dispatch_date || "",
+          expectedDeliveryDate: lift.expected_lifting_date || tf?.expected_arrival_date || "",
           freightAmount: lift.freight_amount || tf?.freight_amount || "",
           advanceAmount: "",
           paymentDate: "",
@@ -443,6 +444,7 @@ export default function FollowUpLifting() {
           vehicleNo: "-",
           lrNo: cancel.cancellation_reason ? `Reason: ${cancel.cancellation_reason}` : "-",
           dispatchDate: cancel.cancellation_date || "",
+          expectedDeliveryDate: "-",
           freightAmount: "-",
           advanceAmount: "",
           paymentDate: "",
@@ -605,6 +607,7 @@ export default function FollowUpLifting() {
                           vehicleNumber: latestLifting.vehicle_number || "",
                           contactNumber: latestLifting.driver_contact || "",
                           dispatchDate: latestLifting.actual_lifting_date || "",
+                          expectedDeliveryDate: latestLifting.expected_lifting_date || "",
                           transportType: resolvedTransportType,
                         }
                       : {
@@ -1017,6 +1020,14 @@ export default function FollowUpLifting() {
           return;
         }
 
+        if (record.status === "lift-material" && !lift.expectedDeliveryDate?.trim()) {
+          toast.error(`Expected Delivery Date is required for Material Lifting (Indent ${sheetRecord.data.indentNumber}).`, {
+            style: { background: "red", color: "white", border: "none" }
+          });
+          setIsSubmitting(false);
+          return;
+        }
+
         const uniqueLiftNo = getUniqueLiftNumber(sheetRecord.data.indentNumber);
         lift.liftNumber = uniqueLiftNo;
 
@@ -1211,6 +1222,7 @@ export default function FollowUpLifting() {
 
         return !!(
           (e.transporterName || e.vehicleNumber) &&
+          e.expectedDeliveryDate && e.expectedDeliveryDate.trim() !== "" &&
           allQtysValid
         );
       }
@@ -1225,6 +1237,7 @@ export default function FollowUpLifting() {
           const qty = parseFloat(e.liftingQty || "0") || 0;
           return !!(
             (e.transporterName || e.vehicleNumber) &&
+            e.expectedDeliveryDate && e.expectedDeliveryDate.trim() !== "" &&
             qty > 0
           );
         }
@@ -1673,7 +1686,7 @@ export default function FollowUpLifting() {
                     <TableHead>Transporter</TableHead>
                     <TableHead>Vehicle No</TableHead>
                     <TableHead>LR / Bilty</TableHead>
-                    <TableHead>Dispatch Date</TableHead>
+                    <TableHead>Expected Delivery Date</TableHead>
                     <TableHead className="text-right">Freight Amount</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1726,7 +1739,7 @@ export default function FollowUpLifting() {
                             </span>
                           ) : "-"}
                         </TableCell>
-                        <TableCell>{formatDateDash(h.dispatchDate)}</TableCell>
+                        <TableCell>{formatDateDash(h.expectedDeliveryDate)}</TableCell>
                         <TableCell className="text-right font-medium">
                           {h.freightAmount && h.freightAmount !== "-" ? `₹ ${parseFloat(String(h.freightAmount).replace(/,/g, '')).toLocaleString()}` : "-"}
                         </TableCell>
@@ -2260,7 +2273,7 @@ export default function FollowUpLifting() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">EXPECTED DELIVERY DATE</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-650">EXPECTED DELIVERY DATE <span className="text-red-500">*</span></Label>
                           <Input
                             type="date"
                             className="bg-white border-green-200 h-10 shadow-sm w-full"
@@ -2271,6 +2284,7 @@ export default function FollowUpLifting() {
                                 liftingData: { ...prev.liftingData, expectedDeliveryDate: e.target.value }
                               } : null)
                             }
+                            required
                           />
                         </div>
                         <div className="space-y-1.5">

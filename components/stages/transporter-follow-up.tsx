@@ -216,7 +216,7 @@ export default function TransporterFollowUp() {
                                     : (latestLiftingTransporter?.freight_amount !== null && latestLiftingTransporter?.freight_amount !== undefined && String(latestLiftingTransporter.freight_amount).trim() !== ""
                                         ? String(latestLiftingTransporter.freight_amount)
                                         : (poTransporters.find((t: any) => t.freight_amount !== null && t.freight_amount !== undefined && String(t.freight_amount).trim() !== "")?.freight_amount ? String(poTransporters.find((t: any) => t.freight_amount)?.freight_amount) : "")),
-                                plannedDate: lifting.expected_lifting_date || po.delivery_date || "",
+                                expectedDeliveryDate: lifting.expected_lifting_date || "",
                                 actualDate: lifting.actual_lifting_date || "",
                                 lastFollowUpDate: lastFollowUpTimestamp || "",
                                 nextFollowUpDate: lifting.followup_date || latestLiftingTransporter?.expected_arrival_date || "",
@@ -278,7 +278,7 @@ export default function TransporterFollowUp() {
             const bValue = b.data[sortConfig.key] || "";
 
             // Date sorting for date columns
-            if (sortConfig.key === "expectedDate" || sortConfig.key === "lastFollowUpDate" || sortConfig.key === "nextFollowUpDate" || sortConfig.key === "plannedDate" || sortConfig.key === "actualDate") {
+            if (sortConfig.key === "expectedDeliveryDate" || sortConfig.key === "expectedDate" || sortConfig.key === "lastFollowUpDate" || sortConfig.key === "nextFollowUpDate" || sortConfig.key === "plannedDate" || sortConfig.key === "actualDate") {
                 const dateA = new Date(aValue).getTime() || 0;
                 const dateB = new Date(bValue).getTime() || 0;
                 if (dateA < dateB) return sortConfig.direction === "asc" ? -1 : 1;
@@ -318,7 +318,7 @@ export default function TransporterFollowUp() {
     const pendingColumns = [
         { key: "indentNumber", label: "Indent No" },
         { key: "itemName", label: "Item Name" },
-        { key: "plannedDate", label: "Expected Date" },
+        { key: "expectedDeliveryDate", label: "Expected Delivery Date" },
         { key: "totalFollowUps", label: "Total Follow-Ups" },
         { key: "lastFollowUpDate", label: "Last Follow-Up Date" },
         { key: "nextFollowUpDate", label: "Next Followup Date" },
@@ -337,7 +337,7 @@ export default function TransporterFollowUp() {
     const historyColumns = [
         { key: "indentNumber", label: "Indent No" },
         { key: "itemName", label: "Item Name" },
-        { key: "plannedDate", label: "Expected Date" },
+        { key: "expectedDeliveryDate", label: "Expected Delivery Date" },
         { key: "actualDate", label: "Actual" },
         { key: "totalFollowUps", label: "Total Follow-Ups" },
         { key: "lastFollowUpDate", label: "Last Follow-Up Date" },
@@ -542,7 +542,7 @@ export default function TransporterFollowUp() {
                 const rowData = pending.map((record) => {
                     return pendingColumns.map((col) => {
                         const val = record.data[col.key];
-                        if (col.key === "plannedDate" || col.key === "expectedDate" || col.key === "lastFollowUpDate" || col.key === "nextFollowUpDate" || col.key === "actualDate") {
+                        if (col.key === "expectedDeliveryDate" || col.key === "plannedDate" || col.key === "expectedDate" || col.key === "lastFollowUpDate" || col.key === "nextFollowUpDate" || col.key === "actualDate") {
                             return formatDateDash(val);
                         }
                         return val === undefined || val === null || String(val).trim() === "" ? "-" : String(val);
@@ -740,15 +740,7 @@ export default function TransporterFollowUp() {
                                                         );
                                                     }
 
-                                                    if (c.key === "plannedDate") {
-                                                        return (
-                                                            <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 font-mono text-xs">
-                                                                {getPlannedDateForRecord(rec.data, "Transporter Follow-Up", tatRules, rec.createdAt)}
-                                                            </TableCell>
-                                                        );
-                                                    }
-
-                                                    if (c.key === "lastFollowUpDate" || c.key === "nextFollowUpDate" || c.key === "expectedDate") {
+                                                    if (c.key === "lastFollowUpDate" || c.key === "nextFollowUpDate" || c.key === "expectedDate" || c.key === "expectedDeliveryDate") {
                                                         return (
                                                             <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 whitespace-nowrap">
                                                                 {val ? formatDateDash(val) : "-"}
@@ -814,12 +806,8 @@ export default function TransporterFollowUp() {
                                             {historyColumns.map((c) => {
                                                 const val = rec.data[c.key];
 
-                                                if (c.key === "plannedDate") {
-                                                    return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 font-mono text-xs">{getPlannedDateForRecord(rec.data, "Transporter Follow-Up", tatRules, rec.createdAt)}</TableCell>;
-                                                }
-
                                                 // Actual & Expected Date Logic
-                                                if (c.key === "actualDate" || c.key === "expectedDate" || c.key === "lastFollowUpDate" || c.key === "nextFollowUpDate") {
+                                                if (c.key === "actualDate" || c.key === "expectedDate" || c.key === "expectedDeliveryDate" || c.key === "lastFollowUpDate" || c.key === "nextFollowUpDate") {
                                                     return <TableCell key={c.key} className="text-center border-b px-4 py-2 text-slate-700 whitespace-nowrap">{val ? formatDateDash(val) : "-"}</TableCell>;
                                                 }
 
