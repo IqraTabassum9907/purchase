@@ -485,12 +485,7 @@ export default function Stage5() {
     { value: "PI", label: "PI (Proforma Invoice)" },
   ];
 
-  const defaultTerms = [
-    "Payment within 30 days of invoice date.",
-    "Delivery within 2 weeks of purchase order.",
-    "Goods once sold will not be taken back.",
-    "All disputes subject to Mumbai jurisdiction.",
-  ];
+  const defaultTerms: string[] = [];
 
   const fallbackSuppliers = [
     "INFOSYS TECH",
