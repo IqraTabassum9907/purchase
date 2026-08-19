@@ -85,7 +85,8 @@ export default function ApprovedVendor() {
   // vendor who didn't submit via their public link.
   const [manualEditOpen, setManualEditOpen] = useState(false);
   const [manualEditSlot, setManualEditSlot] = useState<number | null>(null);
-  const [manualPaymentTerms, setManualPaymentTerms] = useState("30");
+  const [manualPaymentTerms, setManualPaymentTerms] = useState("30 days");
+  const [manualCustomTerms, setManualCustomTerms] = useState("");
   const [manualDeliveryDate, setManualDeliveryDate] = useState("");
   const [manualTransportType, setManualTransportType] = useState("");
   const [manualRemarks, setManualRemarks] = useState("");
@@ -250,9 +251,10 @@ export default function ApprovedVendor() {
 
   const paymentTermsOptions = [
     { value: "Advance", label: "Advance" },
-    { value: "30", label: "30 days" },
-    { value: "60", label: "60 days" },
-    { value: "90", label: "90 days" }
+    { value: "30 days", label: "30 days" },
+    { value: "60 days", label: "60 days" },
+    { value: "90 days", label: "90 days" },
+    { value: "Custom", label: "Custom / Type Manually..." },
   ];
 
   const transportTypeOptions = [
@@ -430,7 +432,28 @@ export default function ApprovedVendor() {
     const remarks = firstRec.data[`vendor${slotNum}Remarks`];
 
     setManualEditSlot(slotNum);
-    setManualPaymentTerms(terms && terms !== "-" ? terms : "30");
+    if (terms && terms !== "-" && terms.trim() !== "") {
+      const cleanTerms = terms.trim();
+      if (cleanTerms === "Advance" || cleanTerms === "advance") {
+        setManualPaymentTerms("Advance");
+        setManualCustomTerms("");
+      } else if (cleanTerms === "30" || cleanTerms === "30 days") {
+        setManualPaymentTerms("30 days");
+        setManualCustomTerms("");
+      } else if (cleanTerms === "60" || cleanTerms === "60 days") {
+        setManualPaymentTerms("60 days");
+        setManualCustomTerms("");
+      } else if (cleanTerms === "90" || cleanTerms === "90 days") {
+        setManualPaymentTerms("90 days");
+        setManualCustomTerms("");
+      } else {
+        setManualPaymentTerms("Custom");
+        setManualCustomTerms(cleanTerms);
+      }
+    } else {
+      setManualPaymentTerms("30 days");
+      setManualCustomTerms("");
+    }
     setManualDeliveryDate(delivery && delivery !== "-" ? delivery : "");
     setManualTransportType(transport && transport !== "-" ? transport : "");
     setManualRemarks(remarks && remarks !== "-" ? remarks : "");
@@ -461,6 +484,11 @@ export default function ApprovedVendor() {
         return;
       }
     }
+    const finalPaymentTerms = manualPaymentTerms === "Custom" ? manualCustomTerms.trim() : manualPaymentTerms;
+    if (!finalPaymentTerms) {
+      toast.error("Please specify or select Payment Terms.");
+      return;
+    }
     if (!manualDeliveryDate) {
       toast.error("Please select Expected Delivery Date.");
       return;
@@ -484,7 +512,7 @@ export default function ApprovedVendor() {
 
           const baseUpdate = {
             quoted_rate: parseFloat(manualRates[rec.id]) || 0,
-            payment_terms: manualPaymentTerms,
+            payment_terms: finalPaymentTerms,
             delivery_terms: manualDeliveryDate,
           };
           const { error } = await supabase
@@ -877,7 +905,7 @@ export default function ApprovedVendor() {
                         </TableCell>
                         <TableCell className="text-xs text-slate-600 px-4">
                           <div className="space-y-0.5">
-                            <div><span className="text-slate-400">Terms:</span> {paymentTermsOptions.find((t) => t.value === vendorTerms)?.label || vendorTerms || "-"}</div>
+                            <div><span className="text-slate-400">Terms:</span> {paymentTermsOptions.find((t) => t.value === vendorTerms || t.label === vendorTerms || (t.value === "30 days" && vendorTerms === "30") || (t.value === "60 days" && vendorTerms === "60") || (t.value === "90 days" && vendorTerms === "90"))?.label || vendorTerms || "-"}</div>
                             <div><span className="text-slate-400">Delivery:</span> {vendorDelivery ? formatDateDash(vendorDelivery) : "-"}</div>
                             <div><span className="text-slate-400">Transport:</span> {vendorTransportType || "-"}</div>
                           </div>
@@ -1032,7 +1060,7 @@ export default function ApprovedVendor() {
 
                         {/* Payment Terms */}
                         <td className="p-3 text-slate-800 text-center font-medium whitespace-nowrap">
-                          {v.terms && v.terms !== "-" ? (paymentTermsOptions.find(opt => opt.value === v.terms)?.label || v.terms) : "—"}
+                          {v.terms && v.terms !== "-" ? (paymentTermsOptions.find(opt => opt.value === v.terms || opt.label === v.terms || (opt.value === "30 days" && v.terms === "30") || (opt.value === "60 days" && v.terms === "60") || (opt.value === "90 days" && v.terms === "90"))?.label || v.terms) : "—"}
                         </td>
 
                         {/* Expected Delivery */}
@@ -1214,7 +1242,13 @@ export default function ApprovedVendor() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Payment Terms *</Label>
-                <Select value={manualPaymentTerms} onValueChange={setManualPaymentTerms}>
+                <Select
+                  value={manualPaymentTerms}
+                  onValueChange={(val) => {
+                    setManualPaymentTerms(val);
+                    if (val !== "Custom") setManualCustomTerms("");
+                  }}
+                >
                   <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select terms" />
                   </SelectTrigger>
@@ -1224,6 +1258,16 @@ export default function ApprovedVendor() {
                     ))}
                   </SelectContent>
                 </Select>
+                {manualPaymentTerms === "Custom" && (
+                  <Input
+                    type="text"
+                    placeholder="Type custom payment terms (e.g. 50% Advance & 50% on Delivery)"
+                    value={manualCustomTerms}
+                    onChange={(e) => setManualCustomTerms(e.target.value)}
+                    required
+                    className="bg-white text-xs h-9 mt-2 border-slate-300 focus:border-slate-500"
+                  />
+                )}
               </div>
 
               <div className="space-y-1.5">
