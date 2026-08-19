@@ -180,10 +180,7 @@ const defaultFreightForm = () => ({
   paymentProof: null as File | null,
 });
 
-const defaultTerms = [
-  "1. Payment within 30 days of Invoice date.",
-  "2. Subject to receipt of all relevant document copies.",
-];
+const defaultTerms: string[] = [];
 
 export default function UnifiedPaymentHub() {
   const params = useParams();

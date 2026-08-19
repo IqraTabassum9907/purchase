@@ -182,10 +182,7 @@ export default function Quotation() {
   const [itemSelected, setItemSelected] = useState(true);
 
   // Terms and Conditions list
-  const [terms, setTerms] = useState<string[]>([
-    "1. Payment within 30 days of Invoice date.",
-    "2. Delivery within 2 weeks of purchase order."
-  ]);
+  const [terms, setTerms] = useState<string[]>([]);
   const [newTerm, setNewTerm] = useState("");
 
   const fetchData = async () => {
@@ -738,10 +735,7 @@ export default function Quotation() {
     setDestAddress(NUTECH_ADDRESS);
     setDescriptionNote("");
     setItemSelected(true);
-    setTerms([
-      "1. Payment within 30 days of Invoice date.",
-      "2. Delivery within 2 weeks of purchase order."
-    ]);
+    setTerms([]);
     setNewTerm("");
     setEmailSent(false);
     setGeneratedLinks([]);
