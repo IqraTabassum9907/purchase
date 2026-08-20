@@ -42,6 +42,8 @@ import {
   ClipboardList,
   History,
   Search,
+  FileText,
+  Paperclip,
 } from "lucide-react";
 import {
   Tabs,
@@ -60,6 +62,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useMemo } from "react";
 import { usePagination } from "@/lib/use-pagination";
 import { PaginationBar } from "@/components/ui/pagination-bar";
+import { AttachmentCell } from "@/components/ui/attachment-cell";
 
 const formatDateDash = (date: any) => {
   if (!date || date === "-" || date === "—") return "-";
@@ -188,6 +191,7 @@ export default function Stage2() {
               approvedQty: String(approvedQtyNum),
               vendorType: r.data.vendorType,
               remarks: r.data.remarks,
+              attachment: r.data.attachment || "",
               delegatedTo: delegationMap[r.id] || [],
             },
           };
@@ -282,6 +286,7 @@ export default function Stage2() {
     { key: "totalApprovedQty", label: "Total Approved" },
     { key: "warehouseLocation", label: "Warehouse" },
     { key: "itemCode", label: "Item Code" },
+    { key: "attachment", label: "Attachment" },
     { key: "leadTime", label: "Expected Date of Raw Material Delivery" },
     { key: "delegatedTo", label: "Delegated To" },
     { key: "plannedDate", label: "Planned Date" },
@@ -645,17 +650,19 @@ export default function Stage2() {
                               !["actualDate", "delay", "status", "remarks", "approvedQty"].includes(c.key))
                             .map((col) => (
                               <TableCell key={String(col.key)} className="font-mono text-xs">
-                                {(col.key as string) === "createdAtCol"
-                                   ? formatDateTimeFull(record.createdAt)
-                                   : (col.key as string) === "plannedDate"
-                                   ? getPlannedDateForRecord(record.data, "Indent Approval", tatRules, record.createdAt)
-                                   : (col.key as string) === "indentDate"
-                                   ? formatDateDash((record.data as any)[col.key])
-                                   : (col.key as string) === "leadTime"
-                                   ? formatLeadTimeValue((record.data as any)[col.key])
-                                   : (col.key as string) === "delegatedTo"
-                                   ? ((record.data as any)[col.key]?.length ? (record.data as any)[col.key].join(", ") : "-")
-                                   : (record.data as any)[col.key] || "-"}
+                                {(col.key as string) === "attachment"
+                                  ? <AttachmentCell url={(record.data as any)[col.key]} />
+                                  : (col.key as string) === "createdAtCol"
+                                  ? formatDateTimeFull(record.createdAt)
+                                  : (col.key as string) === "plannedDate"
+                                  ? getPlannedDateForRecord(record.data, "Indent Approval", tatRules, record.createdAt)
+                                  : (col.key as string) === "indentDate"
+                                  ? formatDateDash((record.data as any)[col.key])
+                                  : (col.key as string) === "leadTime"
+                                  ? formatLeadTimeValue((record.data as any)[col.key])
+                                  : (col.key as string) === "delegatedTo"
+                                  ? ((record.data as any)[col.key]?.length ? (record.data as any)[col.key].join(", ") : "-")
+                                  : (record.data as any)[col.key] || "-"}
                               </TableCell>
                             ))}
                         </TableRow>
@@ -716,7 +723,9 @@ export default function Stage2() {
                           .filter((c) => selectedColumns.includes(c.key) && c.key !== "delay")
                           .map((col) => (
                             <TableCell key={col.key} className="text-sm text-slate-700">
-                              {(col.key as string) === "createdAtCol"
+                              {(col.key as string) === "attachment"
+                                ? <AttachmentCell url={record.data[col.key]} />
+                                : (col.key as string) === "createdAtCol"
                                 ? formatDateTimeFull(record.data.actualDate || record.createdAt)
                                 : (col.key as string) === "plannedDate"
                                 ? getPlannedDateForRecord(record.data, "Indent Approval", tatRules, record.createdAt)

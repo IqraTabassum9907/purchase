@@ -40,6 +40,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { supabase } from "@/lib/supabase/client";
+import { AttachmentCell } from "@/components/ui/attachment-cell";
 
 export default function Stage1() {
   const {
@@ -288,6 +289,7 @@ export default function Stage1() {
       uom: string;
       itemCode: string;
       itemPriority: string;
+      attachment?: File | null;
     }>,
   });
 
@@ -298,6 +300,7 @@ export default function Stage1() {
     uom: "",
     itemCode: "",
     itemPriority: "",
+    attachment: null as File | null,
   });
 
   // Prefill "Created By" with the logged-in user's name (once auth resolves)
@@ -465,12 +468,48 @@ export default function Stage1() {
   };
 
 
+  const uploadOrConvertFile = async (file: File): Promise<string> => {
+    try {
+      const ext = file.name.split('.').pop() || 'bin';
+      const path = `indent-${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('indent-attachments').upload(path, file);
+      if (!upErr) {
+        const { data: publicUrlData } = supabase.storage.from('indent-attachments').getPublicUrl(path);
+        if (publicUrlData?.publicUrl) return publicUrlData.publicUrl;
+      }
+    } catch (err) {
+      console.warn("Storage upload failed, falling back to data URL:", err);
+    }
+
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === "string") {
+          resolve(reader.result);
+        } else {
+          resolve(`pending-upload:${file.name}`);
+        }
+      };
+      reader.onerror = () => {
+        resolve(`pending-upload:${file.name}`);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   // submitToSheet: Creates indent rows in Supabase
-  const submitToSheet = async (data: any, attachmentUrl: string): Promise<string[]> => {
+  const submitToSheet = async (data: any, globalAttachmentUrl: string): Promise<string[]> => {
     const { createIndentRow } = await import("@/lib/supabase/queries");
 
     const generatedIds: string[] = [];
     for (const item of data.items) {
+      let itemAttachmentUrl = "";
+      if (item.attachment) {
+        itemAttachmentUrl = await uploadOrConvertFile(item.attachment);
+      } else if (globalAttachmentUrl) {
+        itemAttachmentUrl = globalAttachmentUrl;
+      }
+
       const indentNumber = await createIndentRow({
         createdBy: data.createdBy,
         category: item.category,
@@ -481,7 +520,7 @@ export default function Stage1() {
         leadTime: data.leadTime,
         deliveryLocation: data.deliveryLocation || "",
         priority: item.itemPriority || "",
-        attachmentUrl: attachmentUrl || "",
+        attachmentUrl: itemAttachmentUrl || "",
         uom: item.uom || "",
       });
       generatedIds.push(indentNumber);
@@ -501,10 +540,10 @@ export default function Stage1() {
       setIsSubmitting(true);
 
       const submitPromise = (async () => {
-        // 1. Handle file upload if needed (placeholder for Phase 9 Supabase Storage)
+        // 1. Handle global file upload if needed
         let attachmentUrl = "";
         if (formData.attachment) {
-          attachmentUrl = `pending-upload:${formData.attachment.name}`;
+          attachmentUrl = await uploadOrConvertFile(formData.attachment);
         }
 
         // 2. Submit to Supabase
@@ -594,6 +633,7 @@ export default function Stage1() {
       uom: "",
       itemCode: "",
       itemPriority: "",
+      attachment: null,
     });
 
     toast.success("Item added to the indent list!");
@@ -897,6 +937,41 @@ export default function Stage1() {
                   }
                 />
               </div>
+
+              <div className="space-y-1.5">
+                <Label>Item Attachment (Optional)</Label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="item-detail-attachment"
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setItemInput((prev) => ({ ...prev, attachment: file }));
+                    }}
+                    className="hidden"
+                  />
+                  <label
+                    htmlFor="item-detail-attachment"
+                    className="flex-1 flex items-center justify-between px-3 h-10 border border-slate-200 rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 text-xs transition-colors"
+                  >
+                    <span className="text-slate-500 truncate max-w-[160px]">
+                      {itemInput.attachment ? itemInput.attachment.name : "Choose file..."}
+                    </span>
+                    <Upload className="w-4 h-4 text-slate-500 shrink-0" />
+                  </label>
+                  {itemInput.attachment && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-10 w-10 text-slate-400 hover:text-red-600 hover:bg-red-50 shrink-0"
+                      onClick={() => setItemInput((prev) => ({ ...prev, attachment: null }))}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="pt-2 flex justify-end">
@@ -935,6 +1010,7 @@ export default function Stage1() {
                       <th className="p-3 font-semibold text-slate-700">Quantity</th>
                       <th className="p-3 font-semibold text-slate-700">UOM</th>
                       <th className="p-3 font-semibold text-slate-700">Item Code</th>
+                      <th className="p-3 font-semibold text-slate-700">Attachment</th>
                       <th className="p-3 font-semibold text-slate-700 text-right">Action</th>
                     </tr>
                   </thead>
@@ -955,6 +1031,9 @@ export default function Stage1() {
                         <td className="p-3">{item.quantity}</td>
                         <td className="p-3">{item.uom}</td>
                         <td className="p-3 font-mono text-xs">{item.itemCode}</td>
+                        <td className="p-3 font-mono text-xs">
+                          <AttachmentCell url={item.attachment} />
+                        </td>
                         <td className="p-3 text-right">
                           <Button
                             type="button"

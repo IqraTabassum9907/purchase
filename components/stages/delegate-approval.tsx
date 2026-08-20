@@ -38,12 +38,13 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { UserCog, Loader2, Search, Send, X, UserPlus, ClipboardList, History } from "lucide-react";
+import { UserCog, Loader2, Search, Send, X, UserPlus, ClipboardList, History, FileText, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
 import { cn, parseSheetDate, getErrorMessage, reportPendingCount } from "@/lib/utils";
 import { usePagination } from "@/lib/use-pagination";
 import { PaginationBar } from "@/components/ui/pagination-bar";
+import { AttachmentCell } from "@/components/ui/attachment-cell";
 
 interface ApproverOption {
   username: string;
@@ -104,6 +105,7 @@ export default function DelegateApproval() {
         uom: r.data.uom,
         warehouseLocation: r.data.warehouseLocation,
         itemCode: r.data.itemCode,
+        attachment: r.data.attachment || "",
       }));
 
       setSheetRecords(mapped);
@@ -404,13 +406,14 @@ export default function DelegateApproval() {
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Qty</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">UOM</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Division</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Attachment</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Delegated To</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pendingList.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={11} className="h-32 text-center text-gray-500 font-medium">
                         No pending indents to delegate.
                       </TableCell>
                     </TableRow>
@@ -449,6 +452,9 @@ export default function DelegateApproval() {
                           <TableCell className="font-mono text-xs">{record.quantity || "-"}</TableCell>
                           <TableCell className="font-mono text-xs">{record.uom || "-"}</TableCell>
                           <TableCell className="font-mono text-xs">{record.warehouseLocation || "-"}</TableCell>
+                          <TableCell className="font-mono text-xs" onClick={(e) => e.stopPropagation()}>
+                            <AttachmentCell url={record.attachment} />
+                          </TableCell>
                           <TableCell className="text-xs" onClick={(e) => e.stopPropagation()}>
                             {delegations.length === 0 ? (
                               <span className="text-slate-400">Not delegated</span>
@@ -510,13 +516,14 @@ export default function DelegateApproval() {
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Qty</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">UOM</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Division</TableHead>
+                    <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Attachment</TableHead>
                     <TableHead className="sticky top-0 z-20 bg-slate-200 shadow-sm border-none">Delegated To</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {historyList.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-32 text-center text-gray-500 font-medium">
+                      <TableCell colSpan={9} className="h-32 text-center text-gray-500 font-medium">
                         No indents have been delegated yet.
                       </TableCell>
                     </TableRow>
@@ -532,6 +539,9 @@ export default function DelegateApproval() {
                           <TableCell className="font-mono text-xs">{record.quantity || "-"}</TableCell>
                           <TableCell className="font-mono text-xs">{record.uom || "-"}</TableCell>
                           <TableCell className="font-mono text-xs">{record.warehouseLocation || "-"}</TableCell>
+                          <TableCell className="font-mono text-xs">
+                            <AttachmentCell url={record.attachment} />
+                          </TableCell>
                           <TableCell className="text-xs">
                             <div className="flex flex-wrap gap-1">
                               {delegations.map((d) => (
