@@ -263,6 +263,7 @@ export default function Stage9() {
                 itemName: po.item_name || indentRow.data.itemName || "-",
                 quantity: String(po.quantity || ""),
                 indentQty: indentRow.data.quantity || "",
+                uom: (po as any).uom || indentRow.data.uom || "",
                 transporterName: "",
                 vehicleNo: "",
                 contactNo: "",
@@ -495,6 +496,19 @@ export default function Stage9() {
       if (key === "vendorName") return vendor.name;
       if (key === "ratePerQty") return vendor.rate ? `₹${vendor.rate}` : "-";
       if (key === "paymentTerms") return vendor.terms;
+
+      // Handle quantity fields with UOM
+      if (key === "indentQty" || key === "quantity") {
+        const val = data.indentQty || data.quantity;
+        if (!val || val === "-" || String(val).trim() === "") return "-";
+        return data.uom ? `${val} ${data.uom}` : String(val);
+      }
+
+      if (key === "receivedQty") {
+        const val = data.receivedQty;
+        if (!val || val === "-" || String(val).trim() === "") return "-";
+        return data.uom ? `${val} ${data.uom}` : String(val);
+      }
 
       // Handle unit tracking number
       if (key === "receiptLiftNumber" || key === "liftNumber" || key === "unitTrackingNo") {
