@@ -45,6 +45,8 @@ import {
   Building2,
   Navigation,
   Hash,
+  Percent,
+  CreditCard,
 } from "lucide-react";
 import { STAGES } from "@/lib/constants";
 import { supabase } from "@/lib/supabase/client";
@@ -251,6 +253,9 @@ export default function MasterPage() {
   const [tatUnits, setTatUnits] = useState<string[]>([]);
   const [deliveryLocations, setDeliveryLocations] = useState<string[]>([]);
   const [hsnCodes, setHsnCodes] = useState<string[]>([]);
+  const [transportTypes, setTransportTypes] = useState<string[]>([]);
+  const [gstRates, setGstRates] = useState<string[]>([]);
+  const [paymentTerms, setPaymentTerms] = useState<string[]>([]);
   
   // Complex items catalog
   const [items, setItems] = useState<ItemOption[]>([]);
@@ -284,7 +289,7 @@ export default function MasterPage() {
     try {
       const [
         cbRes, whRes, apRes, qcRes, acRes, uomRes, catRes, chRes, rjRes,
-        csRes, tsRes, tuRes, transRes, venRes, itemRes, addrRes, dlRes, hsnRes
+        csRes, tsRes, tuRes, transRes, venRes, itemRes, addrRes, dlRes, hsnRes, ttRes, gstRes, ptRes
       ] = await Promise.all([
         supabase.from("master_created_by").select("name").eq("is_active", true),
         supabase.from("master_warehouses").select("name").eq("is_active", true),
@@ -304,6 +309,9 @@ export default function MasterPage() {
         supabase.from("master_addresses").select("*").eq("is_active", true),
         supabase.from("master_delivery_locations").select("name").eq("is_active", true),
         supabase.from("master_hsn_codes").select("name").eq("is_active", true),
+        supabase.from("master_transport_types").select("name").eq("is_active", true),
+        supabase.from("master_gst_rates").select("name").eq("is_active", true),
+        supabase.from("master_payment_terms").select("name").eq("is_active", true),
       ]);
 
       const mapNames = (res: any, defaults: string[]) => {
@@ -328,6 +336,9 @@ export default function MasterPage() {
       let tuList = mapNames(tuRes, ["minute", "hour", "day"]);
       let dlList = mapNames(dlRes, ["Raipur Warehouse", "Bhilai Factory Gate", "Durg Site Office", "Naya Raipur HQ"]);
       let hsnList = mapNames(hsnRes, ["7308", "7326", "8481", "3926"]);
+      let ttList = mapNames(ttRes, ["Ex-Factory Only", "Ex-Factory in Transport Office", "F.O.R. (Free on Road)"]);
+      let gstList = mapNames(gstRes, ["0%", "5%", "12%", "18%", "28%"]);
+      let ptList = mapNames(ptRes, ["Advance", "15 days", "30 days", "60 days", "90 days"]);
 
       setCreatedBy(cbList);
       setWarehouse(whList);
@@ -342,6 +353,9 @@ export default function MasterPage() {
       setTatSystems(tsList);
       setDeliveryLocations(dlList);
       setHsnCodes(hsnList);
+      setTransportTypes(ttList);
+      setGstRates(gstList);
+      setPaymentTerms(ptList);
       setTatUnits(tuList);
 
       const parsedTransporters: TransporterInfo[] = (transRes.data && transRes.data.length > 0)
@@ -623,6 +637,9 @@ export default function MasterPage() {
     tatUnit: "master_tat_units",
     deliveryLocation: "master_delivery_locations",
     hsnCode: "master_hsn_codes",
+    transportType: "master_transport_types",
+    gstRate: "master_gst_rates",
+    paymentTerms: "master_payment_terms",
   };
 
   // Add simple value
@@ -654,6 +671,9 @@ export default function MasterPage() {
       case "tatUnit": setTatUnits(prev => Array.from(new Set([...prev, val]))); break;
       case "deliveryLocation": setDeliveryLocations(prev => Array.from(new Set([...prev, val]))); break;
       case "hsnCode": setHsnCodes(prev => Array.from(new Set([...prev, val]))); break;
+      case "transportType": setTransportTypes(prev => Array.from(new Set([...prev, val]))); break;
+      case "gstRate": setGstRates(prev => Array.from(new Set([...prev, val]))); break;
+      case "paymentTerms": setPaymentTerms(prev => Array.from(new Set([...prev, val]))); break;
     }
 
     toast.success(`Added '${val}' successfully!`);
@@ -685,6 +705,9 @@ export default function MasterPage() {
       case "tatUnit": setTatUnits(prev => prev.filter(item => item !== valToRemove)); break;
       case "deliveryLocation": setDeliveryLocations(prev => prev.filter(item => item !== valToRemove)); break;
       case "hsnCode": setHsnCodes(prev => prev.filter(item => item !== valToRemove)); break;
+      case "transportType": setTransportTypes(prev => prev.filter(item => item !== valToRemove)); break;
+      case "gstRate": setGstRates(prev => prev.filter(item => item !== valToRemove)); break;
+      case "paymentTerms": setPaymentTerms(prev => prev.filter(item => item !== valToRemove)); break;
     }
 
     toast.success(`Removed '${valToRemove}' successfully!`);
@@ -987,6 +1010,9 @@ export default function MasterPage() {
     { id: "tatUnit", label: "TAT Time Units", icon: Clock, desc: "Time duration units for Turn Around Time limits." },
     { id: "deliveryLocation", label: "Delivery Locations", icon: Navigation, desc: "Where an indent's items should be delivered — used in Create Indent and Create PO." },
     { id: "hsnCode", label: "HSN Codes", icon: Hash, desc: "HSN codes used per line item when creating a Purchase Order." },
+    { id: "transportType", label: "Transport Types", icon: Truck, desc: "Transport and logistics terms available in Quotations, Approved Vendor, and Purchase Orders." },
+    { id: "gstRate", label: "GST Rates", icon: Percent, desc: "GST percentage options available across Quotations, Vendor Approvals, and Purchase Orders." },
+    { id: "paymentTerms", label: "Payment Terms", icon: CreditCard, desc: "Commercial payment terms available across Quotations, Vendor Approvals, and Purchase Orders." },
   ];
 
   const activeTabConfig = tabsConfig.find(t => t.id === activeTab);
@@ -1009,9 +1035,12 @@ export default function MasterPage() {
       case "tatUnit": return tatUnits;
       case "deliveryLocation": return deliveryLocations;
       case "hsnCode": return hsnCodes;
+      case "transportType": return transportTypes;
+      case "gstRate": return gstRates;
+      case "paymentTerms": return paymentTerms;
       default: return [];
     }
-  }, [activeTab, createdBy, warehouse, approver, qcEngineer, accountant, uom, categoryList, checklist, rejectReason, cancelStages, tatSystems, tatUnits, deliveryLocations, hsnCodes]);
+  }, [activeTab, createdBy, warehouse, approver, qcEngineer, accountant, uom, categoryList, checklist, rejectReason, cancelStages, tatSystems, tatUnits, deliveryLocations, hsnCodes, transportTypes, gstRates, paymentTerms]);
 
   // Preserve each TAT rule's true index (in the full `tatRules` array) through pagination,
   // since handleStartEditTatRule/handleDeleteTatRule operate on that original index.

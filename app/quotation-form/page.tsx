@@ -74,6 +74,26 @@ export default function PublicQuotationForm() {
   const [commonTransportType, setCommonTransportType] = useState("");
   const [commonRemarks, setCommonRemarks] = useState("");
 
+  const [masterTransportTypes, setMasterTransportTypes] = useState<string[]>([
+    "Ex-Factory Only",
+    "Ex-Factory in Transport Office",
+    "F.O.R. (Free on Road)"
+  ]);
+  const [masterGstRates, setMasterGstRates] = useState<string[]>([
+    "0%",
+    "5%",
+    "12%",
+    "18%",
+    "28%"
+  ]);
+  const [masterPaymentTerms, setMasterPaymentTerms] = useState<string[]>([
+    "Advance",
+    "15 days",
+    "30 days",
+    "60 days",
+    "90 days"
+  ]);
+
   const vendorSlot = parseInt(vParam || "1", 10);
 
   // Per-item total = rate * qty, plus that item's own GST% — shown right next
@@ -131,6 +151,21 @@ export default function PublicQuotationForm() {
           setFormGst(fetchedItems.map(() => "18"));
         } else {
           setErrorMsg("Indent details not found.");
+        }
+
+        const { data: ttData } = await supabase.from("master_transport_types").select("name").eq("is_active", true);
+        if (ttData && ttData.length > 0) {
+          setMasterTransportTypes(ttData.map((d: any) => d.name).filter(Boolean));
+        }
+
+        const { data: gstData } = await supabase.from("master_gst_rates").select("name").eq("is_active", true);
+        if (gstData && gstData.length > 0) {
+          setMasterGstRates(gstData.map((d: any) => d.name).filter(Boolean));
+        }
+
+        const { data: ptData } = await supabase.from("master_payment_terms").select("name").eq("is_active", true);
+        if (ptData && ptData.length > 0) {
+          setMasterPaymentTerms(ptData.map((d: any) => d.name).filter(Boolean));
         }
       } catch (err: any) {
         console.error("Fetch error on public quotation form:", err);
@@ -474,11 +509,15 @@ export default function PublicQuotationForm() {
                           <SelectValue placeholder="Select GST" />
                         </SelectTrigger>
                         <SelectContent>
-                          {gstOptions.map((g) => (
-                            <SelectItem key={g.value} value={g.value} className="text-xs">
-                              {g.label}
-                            </SelectItem>
-                          ))}
+                          {masterGstRates.map((g) => {
+                            const valStr = g.replace(/%/g, "").trim();
+                            const labelStr = g.endsWith("%") ? g : `${g}%`;
+                            return (
+                              <SelectItem key={valStr} value={valStr} className="text-xs">
+                                {labelStr}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
@@ -525,8 +564,12 @@ export default function PublicQuotationForm() {
                       <SelectValue placeholder="Select terms" />
                     </SelectTrigger>
                     <SelectContent>
-                      {paymentTermsOptions.map(t => (
-                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      {Array.from(new Set([
+                        ...(commonTerms ? [commonTerms] : []),
+                        ...masterPaymentTerms,
+                        "Custom"
+                      ])).map(t => (
+                        <SelectItem key={t} value={t}>{t}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -566,8 +609,11 @@ export default function PublicQuotationForm() {
                       <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {transportTypeOptions.map(t => (
-                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      {Array.from(new Set([
+                        ...(commonTransportType ? [commonTransportType] : []),
+                        ...masterTransportTypes
+                      ])).map(t => (
+                        <SelectItem key={t} value={t}>{t}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

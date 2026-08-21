@@ -40,6 +40,8 @@ export interface IndentApproval {
   indent_id: string;
   approver_username: string;
   approval_status: string;
+  approved_qty?: number | null;
+  vendor_type?: string | null;
   rejection_reason: string | null;
   remarks: string | null;
   approved_at: string;

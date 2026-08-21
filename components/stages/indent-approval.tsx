@@ -6,6 +6,7 @@ import { StageTable } from "./stage-table";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -358,9 +359,9 @@ export default function Stage2() {
       if (successCount > 0) {
         fetchData();
       }
-    } catch (e) {
-      console.error("Error submitting Stage 2 data:", e);
-      alert("Submission failed. Check console.");
+    } catch (e: any) {
+      console.error("Error submitting Stage 2 data:", e?.message || e?.details || e);
+      alert(`Submission failed: ${e?.message || e?.details || "Check console."}`);
     }
   };
 
@@ -767,9 +768,9 @@ export default function Stage2() {
                 <DialogTitle className="text-white text-lg font-bold leading-none">
                   Bulk Approval
                 </DialogTitle>
-                <p className="text-slate-400 text-xs mt-1">
+                <DialogDescription className="text-slate-200 text-xs mt-1">
                   Processing {selectedRecords.length} selected indent{selectedRecords.length > 1 ? "s" : ""}
-                </p>
+                </DialogDescription>
               </div>
             </div>
             <div className="flex items-center gap-3">

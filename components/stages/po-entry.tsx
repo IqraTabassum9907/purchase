@@ -246,6 +246,7 @@ export default function Stage5() {
       // item's PO (Revise), else fall back to what was chosen back in
       // Create Indent.
       deliveryLocation: po?.delivery_location || row.data.deliveryLocation || "",
+      vendorType: row.data.vendorType || "",
       pkgAmount: "",
       pkgGst: "",
     };
@@ -345,16 +346,25 @@ export default function Stage5() {
   const [addressOptions, setAddressOptions] = useState<Array<{ name: string; address: string }>>([]);
   // HSN codes (Master → HSN Codes) — feeds the per-item HSN dropdown below.
   const [hsnOptions, setHsnOptions] = useState<string[]>([]);
+  // Transport types (Master → Transport Types) — feeds the Transport Type dropdown below.
+  const [masterTransportTypes, setMasterTransportTypes] = useState<string[]>(["Ex-Factory Only", "Ex-Factory in Transport Office", "F.O.R. (Free on Road)"]);
+  // GST rates (Master → GST Rates) — feeds the GST% dropdown below.
+  const [masterGstRates, setMasterGstRates] = useState<string[]>(["0%", "5%", "12%", "18%", "28%"]);
+  // Payment terms (Master → Payment Terms) — feeds the Payment Terms dropdown below.
+  const [masterPaymentTerms, setMasterPaymentTerms] = useState<string[]>(["Advance", "15 days", "30 days", "60 days", "90 days"]);
 
   React.useEffect(() => {
     fetchData();
     async function loadMasterData() {
       try {
-        const [vendorsRes, addressesRes, hsnRes, warehousesRes] = await Promise.all([
+        const [vendorsRes, addressesRes, hsnRes, warehousesRes, ttRes, gstRes, ptRes] = await Promise.all([
           supabase.from("master_vendors").select("*").eq("is_active", true),
           supabase.from("master_addresses").select("*").eq("is_active", true),
           supabase.from("master_hsn_codes").select("name").eq("is_active", true),
           supabase.from("master_warehouses").select("name").eq("is_active", true),
+          supabase.from("master_transport_types").select("name").eq("is_active", true),
+          supabase.from("master_gst_rates").select("name").eq("is_active", true),
+          supabase.from("master_payment_terms").select("name").eq("is_active", true),
         ]);
         if (vendorsRes.data && vendorsRes.data.length > 0) setDbVendors(vendorsRes.data);
         if (addressesRes.data && addressesRes.data.length > 0) {
@@ -362,6 +372,9 @@ export default function Stage5() {
         }
         if (hsnRes.data && hsnRes.data.length > 0) setHsnOptions(hsnRes.data.map((h: any) => h.name).filter(Boolean));
         if (warehousesRes.data && warehousesRes.data.length > 0) setFirmWarehouseOptions(warehousesRes.data.map((w: any) => w.name).filter(Boolean));
+        if (ttRes.data && ttRes.data.length > 0) setMasterTransportTypes(ttRes.data.map((t: any) => t.name).filter(Boolean));
+        if (gstRes.data && gstRes.data.length > 0) setMasterGstRates(gstRes.data.map((g: any) => g.name).filter(Boolean));
+        if (ptRes.data && ptRes.data.length > 0) setMasterPaymentTerms(ptRes.data.map((p: any) => p.name).filter(Boolean));
       } catch (err) {
         console.error("Error loading master options in PO entry:", err);
       }
@@ -482,7 +495,6 @@ export default function Stage5() {
     { value: "60", label: "60 days" },
     { value: "90", label: "90 days" },
     { value: "advance", label: "Advance" },
-    { value: "PI", label: "PI (Proforma Invoice)" },
   ];
 
   const defaultTerms: string[] = [];
@@ -546,9 +558,11 @@ export default function Stage5() {
   const NUTECH_ADDRESS = "Swarnabhoomi, C-131, R-5, Vidhan Sabha Road, Naya Raipur, Chattisgarh, India, Raipur, Chattisgarh 493111, IN";
 
   const transportTypeOptions = [
+    { value: "Ex-Factory + Transport", label: "Ex-Factory + Transport" },
     { value: "Ex-Factory Only", label: "Ex-Factory Only" },
     { value: "Ex-Factory in Transport Office", label: "Ex-Factory in Transport Office" },
     { value: "F.O.R.", label: "F.O.R. (Free On Road)" },
+    { value: "Door to Door", label: "Door to Door" },
   ];
 
   const defaultPOForm = {
@@ -557,7 +571,8 @@ export default function Stage5() {
     poDate: new Date().toISOString().split("T")[0],
     deliveryLocation: "",
     transportType: "",
-    paymentTerms: "advance",
+    paymentTerms: "30 days",
+    customPaymentTerms: "",
     advancePayment: "no",
     advanceAmount: "0",
     supplierEmail: "",
@@ -638,6 +653,7 @@ export default function Stage5() {
       deliveryLocation: (firstRec.data.deliveryLocation && firstRec.data.deliveryLocation !== "-") ? firstRec.data.deliveryLocation : (firstRec.data.warehouseLocation || "Raipur Warehouse"),
       transportType: (firstRec.data.transportType && firstRec.data.transportType !== "-") ? firstRec.data.transportType : (v.transportType && v.transportType !== "-" ? v.transportType : "Door to Door"),
       paymentTerms: normalizePaymentTerms(firstRec.data.paymentType || v.terms),
+      customPaymentTerms: "",
       advancePayment: (firstRec.data.paymentType || "").toLowerCase().includes("no advance") ? "no" : "yes",
       advanceAmount: firstRec.data.advanceAmount && firstRec.data.advanceAmount !== "0" ? firstRec.data.advanceAmount : "",
       gstin: revisedVendorDetails?.gstin || "",
@@ -788,10 +804,12 @@ export default function Stage5() {
     setCommonPkgGST("");
     setTerms(defaultTerms);
     const firstRecord = sheetRecords.find((r) => r.id === selectedRecordIds[0]);
+    const isFirstRegular = firstRecord?.data?.vendorType?.toLowerCase() === "regular";
     const firstVendor = firstRecord ? getVendorData(firstRecord) : null;
-    const initialSupplier = (firstVendor?.name && firstVendor.name !== "-" && firstVendor.name.trim() !== "")
+    const validFirstVendorName = (firstVendor?.name && firstVendor.name !== "-" && firstVendor.name.trim() !== "" && firstVendor.name !== "Regular Vendor")
       ? firstVendor.name
-      : (defaultSuppliers[0] || "Vendor Alpha Corp");
+      : "";
+    const initialSupplier = validFirstVendorName || (dbVendors.length > 0 ? dbVendors[0].vendor_name : (defaultSuppliers[0] || "Vendor Alpha Corp"));
 
     const supplierVendorData = firstRecord ? getVendorData(firstRecord, initialSupplier) : firstVendor;
 
@@ -811,7 +829,7 @@ export default function Stage5() {
 
     const defaultTransport = (supplierVendorData?.transportType && supplierVendorData.transportType !== "-" && supplierVendorData.transportType.trim() !== "")
       ? supplierVendorData.transportType
-      : (firstVendor?.transportType && firstVendor.transportType !== "-" && firstVendor.transportType.trim() !== "" ? firstVendor.transportType : "Door to Door");
+      : (firstVendor?.transportType && firstVendor.transportType !== "-" && firstVendor.transportType.trim() !== "" ? firstVendor.transportType : (isFirstRegular ? "" : "Door to Door"));
 
     setPoForm({
       ...defaultPOForm,
@@ -946,9 +964,12 @@ export default function Stage5() {
               : (vendorData.name !== "-" ? vendorData.name : "");
 
             const isAdv = (poForm.advancePayment || "no") === "yes";
-            const pTerm = poForm.paymentTerms || vendorData.terms || "advance";
-            const advAmtStr = isAdv && poForm.advanceAmount ? ` (₹${poForm.advanceAmount})` : "";
-            const finalPaymentType = isAdv ? `Advance Payment${advAmtStr}` : `No Advance - ${pTerm}`;
+            const effectiveTerms = poForm.paymentTerms === "Custom"
+              ? (poForm.customPaymentTerms || "Custom Terms")
+              : poForm.paymentTerms;
+            const pTerm = effectiveTerms || vendorData.terms || "30 days";
+            const advAmtStr = isAdv && poForm.advanceAmount && parseFloat(poForm.advanceAmount) > 0 ? ` (₹${poForm.advanceAmount})` : "";
+            const finalPaymentType = isAdv ? `Advance Payment${advAmtStr}` : pTerm;
 
             const poPayload: Record<string, any> = {
               po_number: finalPONumber,
@@ -1070,7 +1091,7 @@ export default function Stage5() {
               transportType={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || ""}
               quotationNumber={poForm.quotationNumber}
               quotationDate={formatDateDash(poForm.quotationDate)}
-              paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
+              paymentTerms={poForm.paymentTerms === "Custom" ? (poForm.customPaymentTerms || "Custom Terms") : (paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || "")}
               advanceAmount={(poForm.advancePayment || "no") === "yes" ? (poForm.advanceAmount || "") : ""}
               billingName={poForm.billingName}
               billingAddress={poForm.billingAddress}
@@ -1197,7 +1218,7 @@ export default function Stage5() {
           transportType={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || ""}
           quotationNumber={poForm.quotationNumber}
           quotationDate={formatDateDash(poForm.quotationDate)}
-          paymentTerms={paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || ""}
+          paymentTerms={poForm.paymentTerms === "Custom" ? (poForm.customPaymentTerms || "Custom Terms") : (paymentTermsList.find((t) => t.value === poForm.paymentTerms)?.label || poForm.paymentTerms || "")}
           advanceAmount={(poForm.advancePayment || "no") === "yes" ? (poForm.advanceAmount || "") : ""}
           billingName={poForm.billingName}
           billingAddress={poForm.billingAddress}
@@ -1845,57 +1866,56 @@ export default function Stage5() {
                         </Badge>
                       )}
                     </div>
-                    <Select
-                      value={poForm.supplierName || undefined}
-                      disabled={poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.name && getVendorData(selectedPORecords[0]).name !== "-")}
-                      onValueChange={(value) => {
-                        const details = vendorDetailsMap[value];
-                        const firstRecord = selectedPORecords[0];
-                        const vData = firstRecord ? getVendorData(firstRecord, value) : null;
-                        const vendorTransport = (vData?.transportType && vData.transportType !== "-" && vData.transportType.trim() !== "")
-                          ? vData.transportType
-                          : "Door to Door";
+                    {(() => {
+                      const isSelectedRegularVendor = selectedPORecords.some((r: any) => r?.data?.vendorType?.toLowerCase() === "regular");
+                      const isSupplierDisabled = poMode === "create" && !isSelectedRegularVendor && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.name && getVendorData(selectedPORecords[0]).name !== "-" && getVendorData(selectedPORecords[0]).name !== "Regular Vendor");
+                      return (
+                        <Select
+                          value={poForm.supplierName || undefined}
+                          disabled={isSupplierDisabled}
+                          onValueChange={(value) => {
+                            const details = vendorDetailsMap[value];
+                            const firstRecord = selectedPORecords[0];
+                            const vData = firstRecord ? getVendorData(firstRecord, value) : null;
+                            const vendorTransport = (vData?.transportType && vData.transportType !== "-" && vData.transportType.trim() !== "")
+                              ? vData.transportType
+                              : (isSelectedRegularVendor ? (poForm.transportType || "") : "Door to Door");
 
-                        setPoForm((prev) => ({
-                          ...prev,
-                          supplierName: value,
-                          supplierEmail: vendorEmailMap[value] || `${value.toLowerCase().replace(/\s+/g, "")}@example.com`,
-                          supplierAddress: vendorAddressMap[value] || `${value} Business Park, Mumbai`,
-                          supplierContactPerson: details?.contactPerson || "",
-                          supplierPhone: details?.phone || "",
-                          supplierBillingAddress: details?.billingAddress || "",
-                          gstin: details?.gstin || "",
-                          supplierPan: details?.pan || "",
-                          transportType: vendorTransport,
-                        }));
-                      }}
-                    >
-                      <SelectTrigger className={`w-full ${poMode === "create" && !!(selectedPORecords.length > 0 && getVendorData(selectedPORecords[0])?.name && getVendorData(selectedPORecords[0]).name !== "-") ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : ""}`}><SelectValue placeholder="Select Supplier" /></SelectTrigger>
-                      <SelectContent>
-                        {Array.from(new Set([
-                          ...selectedPORecords.map((record: any) => getVendorData(record).name).filter(Boolean),
-                          ...defaultSuppliers
-                        ])).map((name) => (
-                          <SelectItem key={name} value={name}>{name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                            setPoForm((prev) => ({
+                              ...prev,
+                              supplierName: value,
+                              supplierEmail: vendorEmailMap[value] || `${value.toLowerCase().replace(/\s+/g, "")}@example.com`,
+                              supplierAddress: vendorAddressMap[value] || `${value} Business Park, Mumbai`,
+                              supplierContactPerson: details?.contactPerson || "",
+                              supplierPhone: details?.phone || "",
+                              supplierBillingAddress: details?.billingAddress || "",
+                              gstin: details?.gstin || "",
+                              supplierPan: details?.pan || "",
+                              transportType: vendorTransport,
+                            }));
+                          }}
+                        >
+                          <SelectTrigger className={`w-full ${isSupplierDisabled ? "bg-slate-100 text-slate-700 font-semibold cursor-not-allowed opacity-100" : ""}`}><SelectValue placeholder="Select Supplier" /></SelectTrigger>
+                          <SelectContent>
+                            {Array.from(new Set([
+                              ...selectedPORecords.map((record: any) => getVendorData(record).name).filter((n) => Boolean(n) && n !== "Regular Vendor" && n !== "-"),
+                              ...defaultSuppliers
+                            ])).map((name) => (
+                              <SelectItem key={name} value={name}>{name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      );
+                    })()}
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">PO Number</Label>
-                    {poMode === "revise" ? (
-                      // Locked once a revision is in progress — which PO you're
-                      // revising is decided by clicking "Revise" on that specific
-                      // History row, not by picking/typing a different number here.
-                      <Input value={commonPONumber} readOnly disabled className="bg-slate-100 text-slate-600 cursor-not-allowed" />
-                    ) : (
-                      <Input
-                        value={commonPONumber}
-                        onChange={(e) => setCommonPONumber(e.target.value)}
-                        placeholder="Nutech/Store/26-27/21"
-                        required
-                      />
-                    )}
+                    <Input
+                      value={commonPONumber}
+                      onChange={(e) => setCommonPONumber(e.target.value)}
+                      placeholder="Nutech/Store/26-27/21"
+                      required
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">PO Date</Label>
@@ -1911,14 +1931,90 @@ export default function Stage5() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Transport Type</Label>
-                    {/* Prefilled from the vendor's accepted quotation — not editable
-                        here, so it can't drift from what the vendor actually quoted. */}
-                    <Input
-                      value={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType || "-"}
-                      readOnly
-                      disabled
-                      className="bg-slate-100 text-slate-600 cursor-not-allowed"
-                    />
+                    {(() => {
+                      const isSelectedRegularVendor = selectedPORecords.some((r: any) => r?.data?.vendorType?.toLowerCase() === "regular");
+                      if (poMode === "create" && !isSelectedRegularVendor && !!(poForm.transportType && poForm.transportType !== "-")) {
+                        return (
+                          <Input
+                            value={transportTypeOptions.find((t) => t.value === poForm.transportType)?.label || poForm.transportType}
+                            readOnly
+                            disabled
+                            className="bg-slate-100 text-slate-600 cursor-not-allowed"
+                          />
+                        );
+                      }
+                      const optionsToRender = Array.from(new Set([
+                        ...(poForm.transportType && poForm.transportType !== "-" ? [poForm.transportType] : []),
+                        ...masterTransportTypes
+                      ]));
+                      return (
+                        <Select
+                          value={poForm.transportType || undefined}
+                          onValueChange={(val) => setPoForm((prev) => ({ ...prev, transportType: val }))}
+                        >
+                          <SelectTrigger className="w-full bg-white border-slate-300 font-semibold text-xs h-10">
+                            <SelectValue placeholder="Select Transport Type" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-white border text-xs shadow-md z-50">
+                            {optionsToRender.map((optVal) => (
+                              <SelectItem key={optVal} value={optVal}>
+                                {optVal}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      );
+                    })()}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Payment Terms</Label>
+                    {(() => {
+                      const isSelectedRegularVendor = selectedPORecords.some((r: any) => r?.data?.vendorType?.toLowerCase() === "regular");
+                      const isPaymentTermsDisabled = poMode === "create" && !isSelectedRegularVendor && !!(poForm.paymentTerms && poForm.paymentTerms !== "-");
+
+                      if (isPaymentTermsDisabled) {
+                        return (
+                          <Input
+                            value={poForm.paymentTerms}
+                            readOnly
+                            disabled
+                            className="bg-slate-100 text-slate-600 cursor-not-allowed font-semibold text-xs h-10"
+                          />
+                        );
+                      }
+                      const termsOptionsToRender = Array.from(new Set([
+                        ...(poForm.paymentTerms && poForm.paymentTerms !== "-" ? [poForm.paymentTerms] : []),
+                        ...masterPaymentTerms,
+                        "Custom"
+                      ]));
+                      return (
+                        <Select
+                          value={poForm.paymentTerms || undefined}
+                          onValueChange={(val) => setPoForm((prev) => ({ ...prev, paymentTerms: val }))}
+                        >
+                          <SelectTrigger className="w-full bg-white border-slate-300 font-semibold text-xs h-10">
+                            <SelectValue placeholder="Select Payment Terms" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-white border text-xs shadow-md z-50">
+                            {termsOptionsToRender.map((optVal) => (
+                              <SelectItem key={optVal} value={optVal}>
+                                {optVal === "Custom" ? "Custom / Type Manually..." : optVal}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      );
+                    })()}
+                    {poForm.paymentTerms === "Custom" && (
+                      <Input
+                        type="text"
+                        placeholder="Type custom payment terms (e.g. 50% Advance & 50% on Delivery)"
+                        value={poForm.customPaymentTerms || ""}
+                        onChange={(e) => setPoForm((prev) => ({ ...prev, customPaymentTerms: e.target.value }))}
+                        required
+                        className="bg-white text-xs h-9 mt-2 border-slate-300 focus:border-slate-500 font-semibold"
+                      />
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Supplier Contact Person</Label>
@@ -2099,9 +2195,10 @@ export default function Stage5() {
                         const selectedIdx = parseInt(String(record.data.selectedVendor || "vendor1").replace("vendor", ""), 10) || 1;
                         const rawSlotGst = v.gst || record.data[`vendor${selectedIdx}Gst`] || record.data.vendor1Gst || data.gst;
 
-                        const isRateLocked = poMode === "create" && !!(v.rate && String(v.rate) !== "-" && String(v.rate).trim() !== "");
-                        const isGstLocked = poMode === "create" && !!(rawSlotGst && String(rawSlotGst) !== "-" && String(rawSlotGst).trim() !== "");
-                        const isDeliveryLocked = poMode === "create" && !!(v.delivery && String(v.delivery) !== "-" && String(v.delivery).trim() !== "");
+                        const isRecordRegular = record?.data?.vendorType?.toLowerCase() === "regular";
+                        const isRateLocked = poMode === "create" && !isRecordRegular && !!(v.rate && String(v.rate) !== "-" && String(v.rate).trim() !== "");
+                        const isGstLocked = poMode === "create" && !isRecordRegular && !!(rawSlotGst && String(rawSlotGst) !== "-" && String(rawSlotGst).trim() !== "");
+                        const isDeliveryLocked = poMode === "create" && !isRecordRegular && !!(v.delivery && String(v.delivery) !== "-" && String(v.delivery).trim() !== "");
 
                         return (
                           <tr key={record.id} className="border-t">
@@ -2161,27 +2258,40 @@ export default function Stage5() {
                               </Select>
                             </td>
                             <td className="px-4 py-3">
-                              <Input
-                                list={`gst-options-${record.id}`}
-                                value={data.gst || ""}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const basic = parseFloat(data.basicValue) || 0;
-                                  const total = (basic + basic * gstRateFor(val)).toFixed(2);
-                                  setBulkFormData((prev) => ({
-                                    ...prev,
-                                    [record.id]: { ...prev[record.id], gst: val, totalWithTax: total },
-                                  }));
-                                }}
-                                placeholder="GST %"
-                                className="h-8 min-w-24"
-                              />
-                              <datalist id={`gst-options-${record.id}`}>
-                                <option value="5%" />
-                                <option value="12%" />
-                                <option value="18%" />
-                                <option value="28%" />
-                              </datalist>
+                              {(() => {
+                                const rawCurrentGst = data.gst !== undefined ? data.gst : (rawSlotGst || "");
+                                const normalizedCurrentGst = rawCurrentGst ? (rawCurrentGst.endsWith("%") ? rawCurrentGst : `${rawCurrentGst}%`) : "";
+                                const gstDropdownOptions = Array.from(new Set([
+                                  ...(normalizedCurrentGst ? [normalizedCurrentGst] : []),
+                                  ...masterGstRates.map((g) => (g.endsWith("%") ? g : `${g}%`))
+                                ]));
+
+                                return (
+                                  <Select
+                                    disabled={isGstLocked}
+                                    value={normalizedCurrentGst || undefined}
+                                    onValueChange={(val) => {
+                                      const basic = parseFloat(data.basicValue) || 0;
+                                      const total = (basic + basic * gstRateFor(val)).toFixed(2);
+                                      setBulkFormData((prev) => ({
+                                        ...prev,
+                                        [record.id]: { ...prev[record.id], gst: val, totalWithTax: total },
+                                      }));
+                                    }}
+                                  >
+                                    <SelectTrigger className={`h-8 min-w-24 bg-white border-slate-300 font-semibold text-xs ${isGstLocked ? "bg-slate-100 text-slate-700 cursor-not-allowed opacity-100" : ""}`}>
+                                      <SelectValue placeholder="GST %" />
+                                    </SelectTrigger>
+                                    <SelectContent className="bg-white border text-xs shadow-md z-50">
+                                      {gstDropdownOptions.map((rateStr) => (
+                                        <SelectItem key={rateStr} value={rateStr}>
+                                          {rateStr}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-3">
                               <Input

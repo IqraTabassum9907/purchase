@@ -300,6 +300,7 @@ export default function FollowUpLifting() {
   const [searchTerm, setSearchTerm] = useState("");
   const [divisionFilter, setDivisionFilter] = useState<string>("all");
   const [tatRules, setTatRules] = useState<any[]>([]);
+  const [masterTransportTypes, setMasterTransportTypes] = useState<string[]>(["Ex-Factory Only", "Ex-Factory in Transport Office", "F.O.R. (Free on Road)"]);
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -317,6 +318,9 @@ export default function FollowUpLifting() {
       ]);
 
       if (tatResult.data) setTatRules(tatResult.data);
+
+      const { data: ttData } = await supabase.from("master_transport_types").select("name").eq("is_active", true);
+      if (ttData && ttData.length > 0) setMasterTransportTypes(ttData.map((t: any) => t.name).filter(Boolean));
 
       const poData = poResult.data || [];
       const liftingData = liftingResult.data || [];
@@ -2310,13 +2314,12 @@ export default function FollowUpLifting() {
                               <SelectValue placeholder="Select transport type" />
                             </SelectTrigger>
                             <SelectContent className="bg-white border">
-                              <SelectItem value="Door to Door">Door to Door</SelectItem>
-                              <SelectItem value="Factory to Factory">Factory to Factory</SelectItem>
-                              <SelectItem value="Ex-Factory Only">Ex-Factory Only</SelectItem>
-                              <SelectItem value="Ex-Factory">Ex-Factory</SelectItem>
-                              <SelectItem value="Ex-Factory in Transport Office">Ex-Factory in Transport Office</SelectItem>
-                              <SelectItem value="Ex-Factory + Transport">Ex-Factory + Transport</SelectItem>
-                              <SelectItem value="F.O.R.">F.O.R.</SelectItem>
+                              {Array.from(new Set([
+                                ...(unifiedFormData.liftingData.transportType ? [unifiedFormData.liftingData.transportType] : []),
+                                ...masterTransportTypes
+                              ])).map((t) => (
+                                <SelectItem key={t} value={t}>{t}</SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>

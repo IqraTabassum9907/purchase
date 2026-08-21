@@ -479,17 +479,32 @@ export async function approveIndent(
     rejectionReason?: string;
   }
 ): Promise<void> {
-  const { error } = await supabase.from("indent_approvals").insert({
+  const payload: any = {
     indent_id: indentId,
-    approver_username: data.approverUsername,
+    approver_username: data.approverUsername || "unknown",
     approval_status: data.approvalStatus,
     approved_qty: data.approvedQty || 0,
     vendor_type: data.vendorType || "",
     remarks: data.remarks || "",
     rejection_reason: data.rejectionReason || "",
-  });
+  };
 
-  if (error) throw error;
+  let { error } = await supabase.from("indent_approvals").insert(payload);
+
+  if (error && isMissingColumnError(error)) {
+    // Retry without new fields if migration hasn't been executed yet
+    const fallbackPayload = {
+      indent_id: indentId,
+      approver_username: data.approverUsername || "unknown",
+      approval_status: data.approvalStatus,
+      remarks: data.remarks || "",
+      rejection_reason: data.rejectionReason || "",
+    };
+    const retry = await supabase.from("indent_approvals").insert(fallbackPayload);
+    if (retry.error) throw retry.error;
+  } else if (error) {
+    throw error;
+  }
 
   // Calculate cumulative approved quantity for this indent
   const { data: pastApprovals } = await supabase
@@ -516,16 +531,38 @@ export async function approveIndent(
 
   await supabase.from("indents").update({ status: newStatus }).eq("id", indentId);
 
-  // If approved as Regular Vendor, auto-create entry in approved_vendors to skip Quotation/Stage 4 and route directly to Make PO
+  // If approved as Regular Vendor, auto-create/update entry in approved_vendors to skip Quotation/Stage 4 and route directly to Make PO
   if (data.approvalStatus === "approved" && data.vendorType?.toLowerCase() === "regular") {
-    await supabase.from("approved_vendors").insert({
-      indent_id: indentId,
-      vendor_name: "Regular Vendor",
-      vendor_type: "regular",
-      final_agreed_rate: 0,
-      approved_by: data.approverUsername,
-      approval_remarks: data.remarks || "Regular Vendor Direct Flow",
-    });
+    try {
+      const { data: existingAv } = await supabase
+        .from("approved_vendors")
+        .select("id")
+        .eq("indent_id", indentId)
+        .limit(1);
+
+      if (existingAv && existingAv.length > 0) {
+        await supabase
+          .from("approved_vendors")
+          .update({
+            vendor_name: "Regular Vendor",
+            vendor_type: "regular",
+            approved_by: data.approverUsername,
+            approval_remarks: data.remarks || "Regular Vendor Direct Flow",
+          })
+          .eq("indent_id", indentId);
+      } else {
+        await supabase.from("approved_vendors").insert({
+          indent_id: indentId,
+          vendor_name: "Regular Vendor",
+          vendor_type: "regular",
+          final_agreed_rate: 0,
+          approved_by: data.approverUsername,
+          approval_remarks: data.remarks || "Regular Vendor Direct Flow",
+        });
+      }
+    } catch (avErr: any) {
+      console.warn("Could not save to approved_vendors:", avErr?.message || avErr);
+    }
   }
 }
 
@@ -670,4 +707,64 @@ export async function fetchMasterCategoriesSeparate() {
     items: itemRes.data || [],
     tatRules: tatRes.data || [],
   };
+}
+
+/**
+ * Fetch dynamic transport types from master_transport_types table.
+ */
+export async function fetchMasterTransportTypes(): Promise<string[]> {
+  const defaultTypes = ["Ex-Factory Only", "Ex-Factory in Transport Office", "F.O.R. (Free on Road)"];
+  try {
+    const { data, error } = await supabase
+      .from("master_transport_types")
+      .select("name")
+      .eq("is_active", true);
+    if (!error && data && data.length > 0) {
+      const names = data.map((d: any) => d.name).filter(Boolean);
+      if (names.length > 0) return names;
+    }
+  } catch (err) {
+    console.warn("Note fetching master_transport_types:", err);
+  }
+  return defaultTypes;
+}
+
+/**
+ * Fetch dynamic GST rates from master_gst_rates table.
+ */
+export async function fetchMasterGstRates(): Promise<string[]> {
+  const defaultRates = ["0%", "5%", "12%", "18%", "28%"];
+  try {
+    const { data, error } = await supabase
+      .from("master_gst_rates")
+      .select("name")
+      .eq("is_active", true);
+    if (!error && data && data.length > 0) {
+      const names = data.map((d: any) => d.name).filter(Boolean);
+      if (names.length > 0) return names;
+    }
+  } catch (err) {
+    console.warn("Note fetching master_gst_rates:", err);
+  }
+  return defaultRates;
+}
+
+/**
+ * Fetch dynamic payment terms from master_payment_terms table.
+ */
+export async function fetchMasterPaymentTerms(): Promise<string[]> {
+  const defaultTerms = ["Advance", "15 days", "30 days", "60 days", "90 days"];
+  try {
+    const { data, error } = await supabase
+      .from("master_payment_terms")
+      .select("name")
+      .eq("is_active", true);
+    if (!error && data && data.length > 0) {
+      const names = data.map((d: any) => d.name).filter(Boolean);
+      if (names.length > 0) return names;
+    }
+  } catch (err) {
+    console.warn("Note fetching master_payment_terms:", err);
+  }
+  return defaultTerms;
 }
