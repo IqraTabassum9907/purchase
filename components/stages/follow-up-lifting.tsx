@@ -491,6 +491,7 @@ export default function FollowUpLifting() {
                 supplierName: row.data.selectedVendorName || row.data.vendor1Name || "-",
                 vendorType: row.data.vendorType || "",
                 quantity: row.data.quantity,
+                uom: row.data.uom || "",
                 selectedVendor: row.data.selectedVendor,
                 vendor1Name: row.data.vendor1Name,
                 vendor1PoNumber: "",
@@ -539,6 +540,7 @@ export default function FollowUpLifting() {
                   itemName: po.item_name || row.data.itemName,
                   supplierName: po.vendor_name || row.data.selectedVendorName || row.data.vendor1Name || "-",
                   quantity: String(po.quantity || row.data.quantity),
+                  uom: (po as any).uom || row.data.uom || "",
                 },
                 basicValue: 0,
                 _poId: po.id,
@@ -1276,6 +1278,14 @@ export default function FollowUpLifting() {
               if (col.key === "lastFollowUpDate" || col.key === "estimatedDate") {
                 return formatDateDash(val);
               }
+              if (col.key === "quantity") {
+                return record.data.quantity && record.data.quantity !== "-"
+                  ? `${record.data.quantity}${record.data.uom ? ` ${record.data.uom}` : ""}`
+                  : "-";
+              }
+              if (col.key === "totalLifted" || col.key === "cancelledQty" || col.key === "pendingLifted") {
+                return val ? `${val}${record.data.uom ? ` ${record.data.uom}` : ""}` : "0";
+              }
               if (col.key === "logistics") {
                 const parts = [
                   record.data.logisticsTransporterName && `Transporter: ${record.data.logisticsTransporterName}`,
@@ -1655,6 +1665,16 @@ export default function FollowUpLifting() {
                                   ) : (
                                     <span className="text-slate-300">Not arranged yet</span>
                                   )
+                                ) : col.key === "quantity" ? (
+                                  <span className="font-semibold text-slate-800">
+                                    {record.data.quantity && record.data.quantity !== "-"
+                                      ? `${record.data.quantity}${record.data.uom ? ` ${record.data.uom}` : ""}`
+                                      : "-"}
+                                  </span>
+                                ) : col.key === "totalLifted" || col.key === "cancelledQty" || col.key === "pendingLifted" ? (
+                                  <span>
+                                    {record.data[col.key] || "0"}{record.data.uom ? ` ${record.data.uom}` : ""}
+                                  </span>
                                 ) : (
                                   record.data[col.key] || "-"
                                 )}
@@ -2130,9 +2150,9 @@ export default function FollowUpLifting() {
                                 <TableRow key={item.recordId} className="hover:bg-slate-50/50">
                                   <TableCell className="font-mono font-semibold text-slate-800">{record.data.indentNumber}</TableCell>
                                   <TableCell className="font-medium text-slate-700">{record.data.itemName}</TableCell>
-                                  <TableCell className="text-center font-semibold text-slate-800">{totalQty}</TableCell>
-                                  <TableCell className="text-center text-slate-500">{totalLiftedQty}</TableCell>
-                                  <TableCell className="text-center font-semibold text-amber-600">{pendingQty}</TableCell>
+                                  <TableCell className="text-center font-semibold text-slate-800">{totalQty}{record.data.uom ? ` ${record.data.uom}` : ""}</TableCell>
+                                  <TableCell className="text-center text-slate-500">{totalLiftedQty}{record.data.uom ? ` ${record.data.uom}` : ""}</TableCell>
+                                  <TableCell className="text-center font-semibold text-amber-600">{pendingQty}{record.data.uom ? ` ${record.data.uom}` : ""}</TableCell>
                                   <TableCell className="text-center">
                                     <Input
                                       type="number"
