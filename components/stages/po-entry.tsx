@@ -79,15 +79,14 @@ const parsePoRevision = (poNum: string): { base: string; rev: number } => {
 };
 
 const normalizePaymentTerms = (term?: string): string => {
-  if (!term) return "advance";
+  if (!term) return "30 days";
   const lower = String(term).toLowerCase().trim();
-  if (lower.includes("advance")) return "advance";
   if (lower.includes("pi") || lower.includes("proforma")) return "PI";
   if (lower.includes("15")) return "15";
   if (lower.includes("30")) return "30";
   if (lower.includes("60")) return "60";
   if (lower.includes("90")) return "90";
-  return "advance";
+  return "30 days";
 };
 
 const extractAdvanceAmount = (term?: string): string => {
@@ -351,7 +350,7 @@ export default function Stage5() {
   // GST rates (Master → GST Rates) — feeds the GST% dropdown below.
   const [masterGstRates, setMasterGstRates] = useState<string[]>(["0%", "5%", "12%", "18%", "28%"]);
   // Payment terms (Master → Payment Terms) — feeds the Payment Terms dropdown below.
-  const [masterPaymentTerms, setMasterPaymentTerms] = useState<string[]>(["Advance", "15 days", "30 days", "60 days", "90 days"]);
+  const [masterPaymentTerms, setMasterPaymentTerms] = useState<string[]>(["15 days", "30 days", "60 days", "90 days"]);
 
   React.useEffect(() => {
     fetchData();
@@ -779,7 +778,7 @@ export default function Stage5() {
         totalWithTax: totalNum,
         hsn: record?.data?.hsn || "",
         gst: vGst,
-        paymentTerms: vendorData.terms || "advance",
+        paymentTerms: vendorData.terms || "30 days",
         deliveryDate: (vendorData as any).delivery ? formatInputDate((vendorData as any).delivery) : "",
       };
     });
@@ -844,7 +843,7 @@ export default function Stage5() {
       supplierPan: firstVendorDetails?.pan || "AAACV1234A",
       deliveryLocation: defaultDeliveryLoc,
       transportType: defaultTransport,
-      paymentTerms: normalizePaymentTerms(firstVendor?.terms || "advance"),
+      paymentTerms: normalizePaymentTerms(firstVendor?.terms || "30 days"),
       advancePayment: "no",
       advanceAmount: "0",
       quotationNumber: `QUO-${firstRecord?.data.indentNumber || "001"}`,

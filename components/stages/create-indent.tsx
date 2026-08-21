@@ -281,7 +281,6 @@ export default function Stage1() {
     warehouseLocation: "",
     leadTime: "",
     deliveryLocation: "",
-    attachment: null as File | null,
     items: [] as Array<{
       category: string;
       itemName: string;
@@ -498,7 +497,7 @@ export default function Stage1() {
   };
 
   // submitToSheet: Creates indent rows in Supabase
-  const submitToSheet = async (data: any, globalAttachmentUrl: string): Promise<string[]> => {
+  const submitToSheet = async (data: any): Promise<string[]> => {
     const { createIndentRow } = await import("@/lib/supabase/queries");
 
     const generatedIds: string[] = [];
@@ -506,8 +505,6 @@ export default function Stage1() {
       let itemAttachmentUrl = "";
       if (item.attachment) {
         itemAttachmentUrl = await uploadOrConvertFile(item.attachment);
-      } else if (globalAttachmentUrl) {
-        itemAttachmentUrl = globalAttachmentUrl;
       }
 
       const indentNumber = await createIndentRow({
@@ -540,23 +537,17 @@ export default function Stage1() {
       setIsSubmitting(true);
 
       const submitPromise = (async () => {
-        // 1. Handle global file upload if needed
-        let attachmentUrl = "";
-        if (formData.attachment) {
-          attachmentUrl = await uploadOrConvertFile(formData.attachment);
-        }
+        // 1. Submit to Supabase
+        const generatedIds = await submitToSheet({ ...formData });
 
-        // 2. Submit to Supabase
-        const generatedIds = await submitToSheet({ ...formData }, attachmentUrl);
-
-        // 3. Save new dropdown options in background (using generated IDs for reference)
+        // 2. Save new dropdown options in background (using generated IDs for reference)
         const createdRecords = formData.items.map((item, i) => ({
           indentNumber: generatedIds[i] || "",
           ...item,
         }));
         checkAndSaveNewOptions(createdRecords);
 
-        // 4. Sync counter from returned IDs
+        // 3. Sync counter from returned IDs
         const maxFromGenerated = generatedIds.reduce((max, id) => {
           const m = id.match(/IN-(\d+)/);
           return m ? Math.max(max, parseInt(m[1], 10)) : max;
@@ -564,13 +555,13 @@ export default function Stage1() {
         if (maxFromGenerated > 0) setIndentCounter(maxFromGenerated + 1);
 
         fetchData();
-        setFormData({ createdBy: loggedInName, warehouseLocation: "", leadTime: "", deliveryLocation: "", attachment: null, items: [] });
+        setFormData({ createdBy: loggedInName, warehouseLocation: "", leadTime: "", deliveryLocation: "", items: [] });
         setOpen(false);
         return true;
       })();
 
       toast.promise(submitPromise, {
-        loading: "Creating indent and uploading attachment...",
+        loading: "Creating indent...",
         success: "Indent created successfully!",
         error: (err) => `Failed to create indent: ${err.message}`,
       });
@@ -781,41 +772,6 @@ export default function Stage1() {
                     )}
                   </SelectContent>
                 </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Attachment (Optional)</Label>
-                <div className="flex items-center gap-3">
-                  <input
-                    id="indent-attachment"
-                    type="file"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) setFormData({ ...formData, attachment: file });
-                    }}
-                    className="hidden"
-                  />
-                  <label
-                    htmlFor="indent-attachment"
-                    className="flex-1 flex items-center justify-between px-3 h-10 border border-slate-200 rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 text-xs transition-colors"
-                  >
-                    <span className="text-slate-500 truncate max-w-[200px]">
-                      {formData.attachment ? formData.attachment.name : "Choose file..."}
-                    </span>
-                    <Upload className="w-4 h-4 text-slate-500 shrink-0" />
-                  </label>
-                  {formData.attachment && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-10 w-10 text-slate-400 hover:text-red-600 hover:bg-red-50 shrink-0"
-                      onClick={() => setFormData({ ...formData, attachment: null })}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  )}
-                </div>
               </div>
             </div>
 

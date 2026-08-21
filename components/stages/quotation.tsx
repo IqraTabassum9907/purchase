@@ -54,7 +54,6 @@ const formatDateDash = (dateStr: string) => {
 };
 
 const paymentTermsOptions = [
-  { value: "Advance", label: "Advance" },
   { value: "30", label: "30 days" },
   { value: "60", label: "60 days" },
   { value: "90", label: "90 days" }
